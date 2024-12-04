@@ -2,64 +2,59 @@
 name: Build Android
 
 on:
-  [push, pull_request]
+  [workflow_dispatch]
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   build:
     strategy:
       matrix:
-        arch: [ "arm32", "aarch64", "x86_64" ]
+        arch: [ "aarch64" ]
       fail-fast: false
 
     name: "Build for ${{matrix.arch}}"
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@main
 
       - name: Build
         run: |
           ln -s vulkan_android.pc vulkan.pc
           sudo apt update
-          sudo apt install -y meson libxrandr-dev libxxf86vm-dev libxcb-*-dev libx11-xcb-dev libxfixes-dev libdrm-dev libx11-dev
+          sudo apt install -y meson libxrandr-dev libxxf86vm-dev libxcb-*-dev libx11-xcb-dev libxfixes-dev libx11-dev
           cp -R /usr/include/X11 include/
           cp -R /usr/include/xcb include/
-          cp -R /usr/include/GL/* include/GL/
           pip3 install mako
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk-bundle"
           # -Dglx=gallium-xlib \
           meson "build-android-${{matrix.arch}}" \
-            --prefix=/tmp/zink \
+            --prefix=/tmp/virgl \
             --cross-file "android-${{matrix.arch}}" \
-            --buildtype debug \
+            --buildtype release \
+            -Ddri3=enabled \
             -Dplatforms=android \
             -Dplatform-sdk-version=24 \
             -Dandroid-stub=true \
-            -Dllvm=disabled \
+            -Dllvm=enabled \
+            -Dshared-llvm=enabled \
             -Dxlib-lease=disabled \
-            -Degl=disabled \
+            -Degl=enabled \
             -Dgbm=disabled \
-            -Dglx=dri \
-            -Dglx-direct=true \
             -Dopengl=true \
             -Dosmesa=true \
             -Dvulkan-drivers= \
             -Dgallium-drivers=virgl \
+            -Dxmlconfig=disabled \
             -Dshared-glapi=false
           ninja -C "build-android-${{matrix.arch}}" install
           # cp "build-android-${{matrix.arch}}/src/gallium/drivers/zink/libzink.a" /tmp/zink/lib/
           rm /tmp/zink/lib/libOSMesa.so /tmp/zink/lib/libOSMesa.so.8
           mv /tmp/zink/lib/libOSMesa.so.8.0.0 /tmp/zink/lib/libOSMesa.so.8
-          cp /tmp/zink/lib/libOSMesa.so.8 /tmp/zink/lib/libOSMesa_unstripped.so.8
-          if [ "${{matrix.arch}}" == "arm32" ]; then
-            /usr/local/lib/android/sdk/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/bin/arm-linux-androideabi-strip /tmp/zink/lib/libOSMesa.so.8
-          else
-            /usr/local/lib/android/sdk/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/bin/${{matrix.arch}}-linux-android-strip /tmp/zink/lib/libOSMesa.so.8
-          fi
+          $ANDROID_SDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip /tmp/zink/lib/libOSMesa.so.8
       - name: Upload libraries
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@main
         with:
           name: libzink_${{matrix.arch}}
-          path: /tmp/zink
+          path: /tmp/virgl
