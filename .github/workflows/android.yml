@@ -50,7 +50,7 @@ jobs:
           # -Dglx=gallium-xlib \
           meson "build-android" \
             --prefix=/tmp/virgl \
-            --cross-file "android-${{matrix.arch}}" \
+            --cross-file "../build-crossfile" \
             --buildtype release \
             -Ddri3=enabled \
             -Dplatforms=android \
