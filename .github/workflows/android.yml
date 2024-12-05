@@ -28,8 +28,26 @@ jobs:
           cp -R /usr/include/xcb include/
           pip3 install mako
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk-bundle"
+          envsubst <android-drm-${{matrix.arch}} >build-crossfile-drm
+          git clone --depth 1 https://gitlab.freedesktop.org/mesa/drm.git
+          cd drm
+          meson setup "build-android" \
+            --prefix=/tmp/drm-static \
+            --cross-file "../build-crossfile-drm" \
+            -Ddefault_library=static \
+            -Dintel=disabled \
+            -Dradeon=disabled \
+            -Damdgpu=disabled \
+            -Dnouveau=disabled \
+            -Dvmwgfx=disabled \
+            -Dfreedreno=disabled \
+            -Dvc4=disabled \
+            -Detnaviv=disabled \
+            -Dfreedreno-kgsl=false
+          ninja -C "build-android" install
+          cd ..
           # -Dglx=gallium-xlib \
-          meson "build-android-${{matrix.arch}}" \
+          meson "build-android" \
             --prefix=/tmp/virgl \
             --cross-file "android-${{matrix.arch}}" \
             --buildtype release \
@@ -48,13 +66,13 @@ jobs:
             -Dgallium-drivers=virgl \
             -Dxmlconfig=disabled \
             -Dshared-glapi=false
-          ninja -C "build-android-${{matrix.arch}}" install
-          # cp "build-android-${{matrix.arch}}/src/gallium/drivers/zink/libzink.a" /tmp/zink/lib/
-          rm /tmp/zink/lib/libOSMesa.so /tmp/zink/lib/libOSMesa.so.8
-          mv /tmp/zink/lib/libOSMesa.so.8.0.0 /tmp/zink/lib/libOSMesa.so.8
-          $ANDROID_SDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip /tmp/zink/lib/libOSMesa.so.8
+          ninja -C "build-android" install
+          # cp "build-android/src/gallium/drivers/zink/libzink.a" /tmp/virgl/lib/
+          rm /tmp/virgl/lib/libOSMesa.so /tmp/virgl/lib/libOSMesa.so.8
+          mv /tmp/virgl/lib/libOSMesa.so.8.0.0 /tmp/virgl/lib/libOSMesa.so.8
+          $ANDROID_SDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip /tmp/virgl/lib/libOSMesa.so.8
       - name: Upload libraries
         uses: actions/upload-artifact@main
         with:
-          name: libzink_${{matrix.arch}}
+          name: libmesa_${{matrix.arch}}
           path: /tmp/virgl
