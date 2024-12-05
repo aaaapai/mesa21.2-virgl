@@ -70,7 +70,7 @@ jobs:
           # cp "build-android/src/gallium/drivers/zink/libzink.a" /tmp/virgl/lib/
           rm /tmp/virgl/lib/libOSMesa.so /tmp/virgl/lib/libOSMesa.so.8
           mv /tmp/virgl/lib/libOSMesa.so.8.0.0 /tmp/virgl/lib/libOSMesa.so.8
-          $ANDROID_SDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip /tmp/virgl/lib/libOSMesa.so.8
+          $ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip /tmp/virgl/lib/libOSMesa.so.8
       - name: Upload libraries
         uses: actions/upload-artifact@main
         with:
