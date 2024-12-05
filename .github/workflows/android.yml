@@ -46,6 +46,7 @@ jobs:
             -Dfreedreno-kgsl=false
           ninja -C "build-android" install
           cd ..
+          envsubst <android-${{matrix.arch}} >build-crossfile
           # -Dglx=gallium-xlib \
           meson "build-android" \
             --prefix=/tmp/virgl \
