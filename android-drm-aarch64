@@ -14,7 +14,7 @@ strip = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
 pkgconfig = ['env', 'PKG_CONFIG_LIBDIR=.', '/usr/bin/pkg-config']
 
 [host_machine]
-system = 'linux'
+system = 'android'
 cpu_family = 'arm'
 cpu = 'armv8'
 endian = 'little'
