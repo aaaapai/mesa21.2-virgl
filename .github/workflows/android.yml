@@ -52,12 +52,11 @@ jobs:
             --prefix=/tmp/virgl \
             --cross-file "build-crossfile" \
             --buildtype release \
-            -Ddri3=enabled \
             -Dplatforms=android \
             -Dplatform-sdk-version=24 \
             -Dandroid-stub=true \
-            -Dllvm=enabled \
-            -Dshared-llvm=enabled \
+            -Dllvm=disabled \
+            -Dshared-llvm=disabled \
             -Dxlib-lease=disabled \
             -Degl=disabled \
             -Dgbm=disabled \
