@@ -24,11 +24,9 @@
 #ifndef DISK_CACHE_H
 #define DISK_CACHE_H
 
-#ifdef HAVE_DLFCN_H
 #include <dlfcn.h>
 #include <stdio.h>
 #include "util/build_id.h"
-#endif
 #include <assert.h>
 #include <stdint.h>
 #include <stdbool.h>
