@@ -64,6 +64,7 @@ jobs:
             -Dosmesa=true \
             -Dvulkan-drivers= \
             -Dgallium-drivers=virgl \
+            -Dc_link_args='-flto=thin -Wl,-plugin-opt=-emulated-tls=0 -fuse-ld=lld' \
             -Dshared-glapi=false
           ninja -C "build-android" install
           # cp "build-android/src/gallium/drivers/zink/libzink.a" /tmp/virgl/lib/
