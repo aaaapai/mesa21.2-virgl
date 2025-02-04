@@ -58,7 +58,7 @@ jobs:
             -Dllvm=disabled \
             -Dshared-llvm=disabled \
             -Dxlib-lease=disabled \
-            -Degl=enabled \
+            -Degl=disabled \
             -Dgbm=disabled \
             -Dopengl=true \
             -Dosmesa=true \
