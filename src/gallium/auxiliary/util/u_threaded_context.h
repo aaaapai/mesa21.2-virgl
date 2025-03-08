@@ -309,6 +309,13 @@ struct threaded_resource {
     */
    struct pipe_resource *latest;
 
+   /* Optional CPU storage of the buffer. When we get partial glBufferSubData(implemented by
+    * copy_buffer) + glDrawElements, we don't want to drain the gfx pipeline before executing
+    * the copy. For ideal pipelining, we upload to this CPU storage and then reallocate
+    * the GPU storage completely and reupload everything without copy_buffer.
+    */
+   void *cpu_storage;
+
    /* The buffer range which is initialized (with a write transfer, streamout,
     * or writable shader resources). The remainder of the buffer is considered
     * invalid and can be mapped unsynchronized.
@@ -324,20 +331,20 @@ struct threaded_resource {
 
    /* Drivers are required to update this for shared resources and user
     * pointers. */
-   bool	is_shared;
+   bool is_shared;
    bool is_user_ptr;
+   bool allow_cpu_storage;
+
+   /* internal tag for tc indicating which batch last touched this resource */
+   int8_t last_batch_usage;
+   /* for disambiguating last_batch_usage across batch cycles */
+   uint32_t batch_generation;
 
    /* Unique buffer ID. Drivers must set it to non-zero for buffers and it must
     * be unique. Textures must set 0. Low bits are used as a hash of the ID.
     * Use util_idalloc_mt to generate these IDs.
     */
    uint32_t buffer_id_unique;
-
-   /* If positive, prefer DISCARD_RANGE with a staging buffer over any other
-    * method of CPU access when map flags allow it. Useful for buffers that
-    * are too large for the visible VRAM window.
-    */
-   int max_forced_staging_uploads;
 
    /* If positive, then a staging transfer is in progress.
     */
