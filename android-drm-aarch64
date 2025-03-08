@@ -1,14 +1,14 @@
 [binaries]
-ar = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-c = ['ccache', '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang', '-DANDROID', '-Ofast', '-DVK_USE_PLATFORM_ANDROID_KHR', '-fPIC', '-DPIC', '-fwhole-program-vtables', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-DLLVM_AVAILABLE']
-cpp = ['ccache', '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++', '-DANDROID', '-Ofast', '-DVK_USE_PLATFORM_ANDROID_KHR', '-fPIC', '-DPIC', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-fwhole-program-vtables', '-D__USE_GNU', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-D__USE_GNU', '-DLLVM_AVAILABLE', '-static-libstdc++', '-static-libgcc']
-nm = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm'
-llvm-config = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
-llvm_config = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
-LLVM_CONFIG = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
+ar = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+c = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang', '-DANDROID', '-Ofast', '-DVK_USE_PLATFORM_ANDROID_KHR', '-fPIC', '-DPIC', '-fwhole-program-vtables', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-DLLVM_AVAILABLE']
+cpp = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++', '-DANDROID', '-Ofast', '-DVK_USE_PLATFORM_ANDROID_KHR', '-fPIC', '-DPIC', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-fwhole-program-vtables', '-D__USE_GNU', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-D__USE_GNU', '-DLLVM_AVAILABLE', '-static-libstdc++', '-static-libgcc']
+nm = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm'
+llvm-config = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
+llvm_config = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
+LLVM_CONFIG = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
 c_ld = 'lld'
 cpp_ld = 'lld'
-strip = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'# Android doesn't come with a pkg-config, but we need one for meson to be happy not
+strip = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'# Android doesn't come with a pkg-config, but we need one for meson to be happy not
 # finding all the optional deps it looks for.  Use system pkg-config pointing at a
 # directory we get to populate with any .pc files we want to add for Android
 pkgconfig = ['env', 'PKG_CONFIG_LIBDIR=.', '/usr/bin/pkg-config']
