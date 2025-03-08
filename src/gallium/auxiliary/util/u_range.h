@@ -57,6 +57,13 @@ util_range_set_empty(struct util_range *range)
    range->end = 0;
 }
 
+static inline bool
+util_ranges_covered(const struct util_range *range,
+                    unsigned start, unsigned end)
+{
+   return (start <= range->start) && (end >= range->end);
+}
+
 /* This is like a union of two sets. */
 static inline void
 util_range_add(struct pipe_resource *resource, struct util_range *range,
