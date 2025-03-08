@@ -1,11 +1,11 @@
 [binaries]
 ar = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-c = ['ccache', '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang', '-DANDROID', '-Ofast', '-DVK_USE_PLATFORM_ANDROID_KHR', '-fPIC', '-DPIC', '-fwhole-program-vtables', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-DLLVM_AVAILABLE', '-rdynamic', '-march=armv8-a+simd+crc+crypto+fp16', '-mcpu=cortex-a76', '-fdata-sections', '-ffunction-sections', '-fmerge-all-constants', '-fno-emulated-tls']
-cpp = ['ccache', '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++', '-DANDROID', '-Ofast', '-DVK_USE_PLATFORM_ANDROID_KHR', '-fPIC', '-DPIC', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-fwhole-program-vtables', '-D__USE_GNU', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-D__USE_GNU', '-DLLVM_AVAILABLE', '-static-libstdc++', '-static-libgcc', '-rdynamic', '-march=armv8-a+simd+crc+crypto+fp16', '-mcpu=cortex-a76', '-fdata-sections', '-ffunction-sections', '-fmerge-all-constants', '-fno-emulated-tls']
-nm = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm'
-llvm-config = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
-llvm_config = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
-LLVM_CONFIG = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
+c = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang', '-DANDROID', '-Ofast', '-DVK_USE_PLATFORM_ANDROID_KHR', '-fPIC', '-DPIC', '-fwhole-program-vtables', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-DLLVM_AVAILABLE', '-rdynamic', '-march=armv8-a+simd+crc+crypto+fp16', '-mcpu=cortex-a76', '-fdata-sections', '-ffunction-sections', '-fmerge-all-constants', '-fno-emulated-tls']
+cpp = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++', '-DANDROID', '-Ofast', '-DVK_USE_PLATFORM_ANDROID_KHR', '-fPIC', '-DPIC', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-fwhole-program-vtables', '-D__USE_GNU', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-D__USE_GNU', '-DLLVM_AVAILABLE', '-static-libstdc++', '-static-libgcc', '-rdynamic', '-march=armv8-a+simd+crc+crypto+fp16', '-mcpu=cortex-a76', '-fdata-sections', '-ffunction-sections', '-fmerge-all-constants', '-fno-emulated-tls']
+nm = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm'
+llvm-config = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
+llvm_config = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
+LLVM_CONFIG = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
 c_ld = 'lld'
 cpp_ld = 'lld'
 strip = '$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'# Android doesn't come with a pkg-config, but we need one for meson to be happy not
