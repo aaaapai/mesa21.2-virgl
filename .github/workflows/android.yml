@@ -43,10 +43,9 @@ jobs:
             -Dfreedreno=disabled \
             -Dvc4=disabled \
             -Detnaviv=disabled \
--Dc_link_args='-ldl -lc -flto=thin -Wl,-plugin-opt=-emulated-tls=0 -fuse-ld=lld' \
--Dcpp_link_args='-ldl -lc++ -flto=thin -Wl,-plugin-opt=-emulated-tls=0 -fuse-ld=lld' \
--Dc_link_args='-ldl -lc -flto=thin -Wl,-plugin-opt=-emulated-tls=0 -fuse-ld=lld' \
-                        -Dfreedreno-kgsl=false
+           -Dc_link_args='-ldl -lc -flto=thin -Wl,-plugin-opt=-emulated-tls=0 -fuse-ld=lld' \
+           -Dcpp_link_args='-ldl -lc++ -flto=thin -Wl,-plugin-opt=-emulated-tls=0 -fuse-ld=lld' \
+           -Dfreedreno-kgsl=false
           ninja -C "build-android" install
           cd ..
           envsubst <android-${{matrix.arch}} >build-crossfile
