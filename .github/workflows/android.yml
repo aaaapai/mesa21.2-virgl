@@ -66,7 +66,8 @@ jobs:
             -Dvulkan-drivers= \
             -Dgallium-drivers=virgl \
             -Dc_link_args='-ldl -lc -flto=thin -Wl,-plugin-opt=-emulated-tls=0 -fuse-ld=lld' \
-            -Dcpp_link_args='-ldl -lc++ -flto=thin -Wl,-plugin-opt=-emulated-tls=0 -fuse-ld=lld' \            -Dshared-glapi=false
+            -Dcpp_link_args='-ldl -lc++ -flto=thin -Wl,-plugin-opt=-emulated-tls=0 -fuse-ld=lld' \
+            -Dshared-glapi=false
           ninja -C "build-android" install
           # cp "build-android/src/gallium/drivers/zink/libzink.a" /tmp/virgl/lib/
           rm /tmp/virgl/lib/libOSMesa.so /tmp/virgl/lib/libOSMesa.so.8
