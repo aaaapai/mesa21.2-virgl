@@ -23,3 +23,6 @@ cpu_family = 'arm'
 cpu = 'armv8'
 
 endian = 'little'
+
+[properties]
+android_ndk_stl = 'c++_static'
