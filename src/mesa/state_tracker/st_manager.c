@@ -989,33 +989,44 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
       return NULL;
    }
 
+   printf("56\n");
    st_visual_to_context_mode(&attribs->visual, &mode);
-   if (attribs->visual.color_format == PIPE_FORMAT_NONE)
+   if (attribs->visual.color_format == PIPE_FORMAT_NONE) {
+      printf("57\n");
       mode_ptr = NULL;
+   }
+   printf("58\n");
    st = st_create_context(attribs->profile, pipe, mode_ptr, shared_ctx,
                           &attribs->options, no_error,
                           !!fscreen->validate_egl_image);
    if (!st) {
+      printf("59\n");
       *error = ST_CONTEXT_ERROR_NO_MEMORY;
       pipe->destroy(pipe);
       return NULL;
    }
 
    if (attribs->flags & ST_CONTEXT_FLAG_DEBUG) {
+      printf("60\n");
       if (!_mesa_set_debug_state_int(st->ctx, GL_DEBUG_OUTPUT, GL_TRUE)) {
+         printf("61\n");
          *error = ST_CONTEXT_ERROR_NO_MEMORY;
          return NULL;
       }
 
+      printf("62\n");
       st->ctx->Const.ContextFlags |= GL_CONTEXT_FLAG_DEBUG_BIT;
    }
 
    if (st->ctx->Const.ContextFlags & GL_CONTEXT_FLAG_DEBUG_BIT) {
+      printf("63\n");
       _mesa_update_debug_callback(st->ctx);
    }
 
-   if (attribs->flags & ST_CONTEXT_FLAG_FORWARD_COMPATIBLE)
+   if (attribs->flags & ST_CONTEXT_FLAG_FORWARD_COMPATIBLE) {
+      printf("64\n");
       st->ctx->Const.ContextFlags |= GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT;
+   }
 
    if (attribs->context_flags & PIPE_CONTEXT_ROBUST_BUFFER_ACCESS) {
       st->ctx->Const.ContextFlags |= GL_CONTEXT_FLAG_ROBUST_ACCESS_BIT_ARB;
@@ -1037,6 +1048,7 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
       if (st->ctx->Version < attribs->major * 10U + attribs->minor) {
          *error = ST_CONTEXT_ERROR_BAD_VERSION;
          st_destroy_context(st);
+         printf("65 and return NULL\n");
          return NULL;
       }
    }
@@ -1053,6 +1065,7 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
       st->pipe->set_frontend_noop(st->pipe, st->ctx->IntelBlackholeRender);
 
    *error = ST_CONTEXT_SUCCESS;
+   printf("65 and return successfully\n");
    return st;
 }
 
