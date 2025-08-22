@@ -174,8 +174,10 @@ get_st_manager(void)
 {
    static once_flag create_once_flag = ONCE_FLAG_INIT;
 
+   printf("45");
    call_once(&create_once_flag, create_st_manager);
 
+   printf("46");
    return global_fscreen;
 }
 
@@ -573,15 +575,18 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
    int i;
 
    if (sharelist) {
+      printf("1\n");
       st_shared = sharelist->st;
    }
    else {
+      printf("2\n");
       st_shared = NULL;
    }
 
    for (i = 0; attribList[i]; i += 2) {
       switch (attribList[i]) {
       case OSMESA_FORMAT:
+         printf("3\n");
          format = attribList[i+1];
          switch (format) {
          case OSMESA_COLOR_INDEX:
@@ -592,104 +597,152 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
          case OSMESA_BGR:
          case OSMESA_RGB_565:
             /* legal */
+            printf("4\n");
             break;
          default:
+            printf("5\n");
             return NULL;
          }
          break;
       case OSMESA_DEPTH_BITS:
+         printf("6\n");
          depthBits = attribList[i+1];
-         if (depthBits < 0)
+         if (depthBits < 0) {
+            printf("7\n");
             return NULL;
+         }
          break;
       case OSMESA_STENCIL_BITS:
+         printf("8\n");
          stencilBits = attribList[i+1];
-         if (stencilBits < 0)
+         if (stencilBits < 0) {
+            printf("9\n");
             return NULL;
+         }
          break;
       case OSMESA_ACCUM_BITS:
+         printf("10\n");
          accumBits = attribList[i+1];
-         if (accumBits < 0)
+         if (accumBits < 0) {
+            printf("11\n");
             return NULL;
+         }
          break;
       case OSMESA_PROFILE:
+         printf("12\n");
          profile = attribList[i+1];
          if (profile != OSMESA_CORE_PROFILE &&
-             profile != OSMESA_COMPAT_PROFILE)
+             profile != OSMESA_COMPAT_PROFILE) {
+            printf("13\n");
             return NULL;
+         }
          break;
       case OSMESA_CONTEXT_MAJOR_VERSION:
+         printf("14\n");
          version_major = attribList[i+1];
-         if (version_major < 1)
+         if (version_major < 1) {
+            printf("15\n");
             return NULL;
+         }
          break;
       case OSMESA_CONTEXT_MINOR_VERSION:
+         printf("16\n");
          version_minor = attribList[i+1];
-         if (version_minor < 0)
+         if (version_minor < 0) {
+            printf("17\n");
             return NULL;
+         }
          break;
       case 0:
+         printf("18\n");
          /* end of list */
          break;
       default:
+         printf("19\n");
          fprintf(stderr, "Bad attribute in OSMesaCreateContextAttribs()\n");
          return NULL;
       }
    }
 
+   printf("20\n");
    osmesa = (OSMesaContext) CALLOC_STRUCT(osmesa_context);
-   if (!osmesa)
+   if (!osmesa) {
+      printf("21\n");
       return NULL;
+   }
 
    /* Choose depth/stencil/accum buffer formats */
    if (accumBits > 0) {
+      printf("22\n");
       osmesa->accum_format = PIPE_FORMAT_R16G16B16A16_SNORM;
    }
    if (depthBits > 0 && stencilBits > 0) {
+      printf("23\n");
       osmesa->depth_stencil_format = PIPE_FORMAT_Z24_UNORM_S8_UINT;
    }
    else if (stencilBits > 0) {
+      printf("24\n");
       osmesa->depth_stencil_format = PIPE_FORMAT_S8_UINT;
    }
    else if (depthBits >= 24) {
+      printf("25\n");
       osmesa->depth_stencil_format = PIPE_FORMAT_Z24X8_UNORM;
    }
    else if (depthBits >= 16) {
+      printf("26\n");
       osmesa->depth_stencil_format = PIPE_FORMAT_Z16_UNORM;
    }
 
    /*
     * Create the rendering context
     */
+   printf("27\n");
    memset(&attribs, 0, sizeof(attribs));
+   printf("28\n");
    attribs.profile = (profile == OSMESA_CORE_PROFILE)
       ? API_OPENGL_CORE : API_OPENGL_COMPAT;
+   printf("29\n");
    attribs.major = version_major;
+   printf("30\n");
    attribs.minor = version_minor;
+   printf("31\n");
    attribs.flags = 0;  /* ST_CONTEXT_FLAG_x */
+   printf("32\n");
    attribs.options.force_glsl_extensions_warn = false;
+   printf("33\n");
    attribs.options.disable_blend_func_extended = false;
+   printf("34\n");
    attribs.options.disable_glsl_line_continuations = false;
+   printf("35\n");
    attribs.options.force_glsl_version = 0;
 
+   printf("36\n");
    osmesa_init_st_visual(&attribs.visual,
                          PIPE_FORMAT_NONE,
                          osmesa->depth_stencil_format,
                          osmesa->accum_format);
 
+   printf("37\n");
    osmesa->st = st_api_create_context(get_st_manager(),
                                          &attribs, &st_error, st_shared);
    if (!osmesa->st) {
+      printf("38\n");
       FREE(osmesa);
+      printf("39\n");
       return NULL;
    }
 
+   printf("40\n");
    osmesa->st->frontend_context = osmesa;
 
+   printf("41\n");
    osmesa->format = format;
+   printf("42\n");
    osmesa->user_row_length = 0;
+   printf("43\n");
    osmesa->y_up = GL_TRUE;
 
+   printf("44\n");
    return osmesa;
 }
 

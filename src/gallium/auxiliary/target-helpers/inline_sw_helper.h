@@ -7,6 +7,7 @@
 #include "util/u_debug.h"
 #include "frontend/sw_winsys.h"
 #include "target-helpers/inline_debug_helper.h"
+#include "../../drivers/zink/zink_public.h"
 
 /* Helper function to choose and instantiate one of the software rasterizers:
  * llvmpipe, softpipe.

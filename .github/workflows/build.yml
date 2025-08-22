@@ -66,14 +66,14 @@ jobs:
             -Dllvm=disabled \
             -Dshared-llvm=disabled \
             -Dxlib-lease=disabled \
-            -Degl=enabled \
+            -Degl=disabled \
             -Degl-native-platform=android \
             -Dgbm=disabled \
             -Dopengl=true \
-            -Dgles2=enabled \
+            -Dgles2=disabled \
             -Dvulkan-drivers= \
             -Dtools= \
-            -Dgallium-drivers=virgl
+            -Dgallium-drivers=zink
           meson compile -C "build-android" -j 4
           meson install -C "build-android"
       - name: Upload libraries

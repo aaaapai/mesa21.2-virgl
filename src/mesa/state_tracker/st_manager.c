@@ -939,6 +939,7 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
    struct gl_config mode, *mode_ptr = &mode;
    bool no_error = false;
 
+   printf("47\n");
    _mesa_initialize(attribs->options.mesa_extension_override);
 
    /* Create a hash table for the framebuffer interface objects
@@ -947,7 +948,9 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
    if (fscreen->st_screen == NULL) {
       struct st_screen *screen;
 
+      printf("48\n");
       screen = CALLOC_STRUCT(st_screen);
+      printf("49\n");
       simple_mtx_init(&screen->st_mutex, mtx_plain);
 
       /* We'll use drawable->ID as prehashed value to prevent the hash function
@@ -955,9 +958,12 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
        * doing lookups from st_framebuffers_purge and not dereference framebuffer
        * in time.
        */
+      printf("50\n");
       screen->drawable_ht = _mesa_hash_table_create(NULL,
                                                     NULL,
-                                                    _mesa_key_pointer_equal);
+                                                 _mesa_key_pointer_equal);
+      
+      printf("51\n");
       fscreen->st_screen = screen;
    }
 
@@ -967,14 +973,18 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
    /* OpenGL ES 2.0+ does not support sampler state LOD bias. If we are creating
     * a GLES context, communicate that to the the driver to allow optimization.
     */
+   printf("52\n");
    bool is_gles = attribs->profile == API_OPENGLES2;
+   printf("53\n");
    unsigned lod_bias_flag = is_gles ? PIPE_CONTEXT_NO_LOD_BIAS : 0;
 
+   printf("54\n");
    pipe = fscreen->screen->context_create(fscreen->screen, NULL,
                                           PIPE_CONTEXT_PREFER_THREADED |
                                           lod_bias_flag |
                                           attribs->context_flags);
    if (!pipe) {
+      printf("55\n");
       *error = ST_CONTEXT_ERROR_NO_MEMORY;
       return NULL;
    }
