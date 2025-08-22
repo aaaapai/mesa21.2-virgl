@@ -967,22 +967,8 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
       fscreen->st_screen = screen;
    }
 
-   if (attribs->flags & ST_CONTEXT_FLAG_ROBUST_ACCESS)
-      attribs->context_flags |= PIPE_CONTEXT_ROBUST_BUFFER_ACCESS;
-
    if (attribs->flags & ST_CONTEXT_FLAG_NO_ERROR)
       no_error = true;
-
-   if (attribs->flags & ST_CONTEXT_FLAG_LOW_PRIORITY)
-      attribs->context_flags |= PIPE_CONTEXT_LOW_PRIORITY;
-   else if (attribs->flags & ST_CONTEXT_FLAG_HIGH_PRIORITY)
-      attribs->context_flags |= PIPE_CONTEXT_HIGH_PRIORITY;
-
-   if (attribs->flags & ST_CONTEXT_FLAG_RESET_NOTIFICATION_ENABLED)
-      attribs->context_flags |= PIPE_CONTEXT_LOSE_CONTEXT_ON_RESET;
-
-   /*if (attribs->flags & ST_CONTEXT_FLAG_NO_ERROR)
-      no_error = true;*/
 
    /* OpenGL ES 2.0+ does not support sampler state LOD bias. If we are creating
     * a GLES context, communicate that to the the driver to allow optimization.
