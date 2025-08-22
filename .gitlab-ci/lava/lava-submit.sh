@@ -79,6 +79,16 @@ if [ -n "${ANDROID_CTS_TAG:-}" ]; then
 		  --compression=zstd
 	)
 fi
+if [ -n "${FLUSTER_TAG:-}" ]; then
+	LAVA_EXTRA_OVERLAYS+=(
+		- append-overlay
+		  --name=vkd3d-proton
+		  --url="$(find_s3_project_artifact "${DATA_STORAGE_PATH}/fluster/${FLUSTER_TAG}/vectors.tar.zst")"
+		  --path="/"
+		  --format=tar
+		  --compression=zstd
+	)
+fi
 if [ -n "${VKD3D_PROTON_TAG:-}" ]; then
 	LAVA_EXTRA_OVERLAYS+=(
 		- append-overlay
@@ -126,7 +136,6 @@ PYTHONPATH=/ /lava/lava_job_submitter.py \
 	--rootfs-url "${ROOTFS_URL}" \
 	--kernel-url-prefix "${KERNEL_IMAGE_BASE}/${DEBIAN_ARCH}" \
 	--dtb-filename "${DTB}" \
-	--first-stage-init /lava/init-stage1.sh \
 	--env-file dut-env-vars.sh \
 	--jwt-file "${S3_JWT_FILE}" \
 	--kernel-image-name "${KERNEL_IMAGE_NAME}" \

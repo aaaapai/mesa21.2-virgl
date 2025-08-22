@@ -628,7 +628,7 @@ visit_load_var(struct lp_build_nir_aos_context *bld,
                nir_intrinsic_instr *instr,
                LLVMValueRef result[NIR_MAX_VEC_COMPONENTS])
 {
-   nir_deref_instr *deref = nir_instr_as_deref(instr->src[0].ssa->parent_instr);
+   nir_deref_instr *deref = nir_def_as_deref(instr->src[0].ssa);
    nir_variable *var = nir_deref_instr_get_variable(deref);
    assert(util_bitcount(deref->modes) == 1);
    nir_variable_mode mode = deref->modes;
@@ -640,7 +640,7 @@ static void
 visit_store_var(struct lp_build_nir_aos_context *bld,
                 nir_intrinsic_instr *instr)
 {
-   nir_deref_instr *deref = nir_instr_as_deref(instr->src[0].ssa->parent_instr);
+   nir_deref_instr *deref = nir_def_as_deref(instr->src[0].ssa);
    nir_variable *var = nir_deref_instr_get_variable(deref);
    assert(util_bitcount(deref->modes) == 1);
    nir_variable_mode mode = deref->modes;
@@ -890,13 +890,13 @@ lp_build_nir_aos(struct gallivm_state *gallivm,
    bld.outputs = outputs;
    bld.consts_ptr = consts_ptr;
 
-   NIR_PASS_V(shader, nir_convert_to_lcssa, true, true);
-   NIR_PASS_V(shader, nir_convert_from_ssa, true, false);
-   NIR_PASS_V(shader, nir_lower_locals_to_regs, 32);
-   NIR_PASS_V(shader, nir_remove_dead_derefs);
-   NIR_PASS_V(shader, nir_remove_dead_variables, nir_var_function_temp, NULL);
-   NIR_PASS_V(shader, nir_move_vec_src_uses_to_dest, false);
-   NIR_PASS_V(shader, nir_lower_vec_to_regs, NULL, NULL);
+   NIR_PASS(_, shader, nir_convert_to_lcssa, true, true);
+   NIR_PASS(_, shader, nir_convert_from_ssa, true, false);
+   NIR_PASS(_, shader, nir_lower_locals_to_regs, 32);
+   NIR_PASS(_, shader, nir_remove_dead_derefs);
+   NIR_PASS(_, shader, nir_remove_dead_variables, nir_var_function_temp, NULL);
+   NIR_PASS(_, shader, nir_move_vec_src_uses_to_dest, false);
+   NIR_PASS(_, shader, nir_lower_vec_to_regs, NULL, NULL);
 
    nir_foreach_shader_out_variable(variable, shader)
       emit_var_decl(&bld, variable);

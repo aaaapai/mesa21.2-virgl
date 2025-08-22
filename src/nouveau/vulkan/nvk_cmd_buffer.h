@@ -288,11 +288,11 @@ void nvk_cmd_invalidate_compute_state(struct nvk_cmd_buffer *cmd);
 
 void nvk_cmd_bind_shaders(struct vk_command_buffer *vk_cmd,
                           uint32_t stage_count,
-                          const gl_shader_stage *stages,
+                          const mesa_shader_stage *stages,
                           struct vk_shader ** const shaders);
 
 void nvk_cmd_bind_graphics_shader(struct nvk_cmd_buffer *cmd,
-                                  const gl_shader_stage stage,
+                                  const mesa_shader_stage stage,
                                   struct nvk_shader *shader);
 
 void nvk_cmd_bind_compute_shader(struct nvk_cmd_buffer *cmd,
@@ -314,7 +314,7 @@ nvk_get_descriptors_state(struct nvk_cmd_buffer *cmd,
    case VK_PIPELINE_BIND_POINT_COMPUTE:
       return &cmd->state.cs.descriptors;
    default:
-      unreachable("Unhandled bind point");
+      UNREACHABLE("Unhandled bind point");
    }
 }
 
@@ -329,7 +329,7 @@ nvk_get_descriptor_state_for_stages(struct nvk_cmd_buffer *cmd,
       assert(!(stages & ~NVK_SHADER_STAGE_GRAPHICS_BITS));
       return &cmd->state.gfx.descriptors;
    } else {
-      unreachable("Unknown shader stage");
+      UNREACHABLE("Unknown shader stage");
    }
 }
 

@@ -64,13 +64,15 @@ emit_split_buffer_load(nir_builder *b, unsigned num_components, unsigned bit_siz
    for (unsigned i = 0; i < full_dwords; ++i)
       comps[i] = nir_load_buffer_amd(b, 1, 32, desc, v_off, s_off, zero,
                                      .base = component_stride * i, .memory_modes = nir_var_shader_in,
-                                     .access = ACCESS_COHERENT);
+                                     .access = ACCESS_COHERENT | ACCESS_CAN_REORDER |
+                                               ACCESS_CAN_SPECULATE);
 
    if (remaining_bytes)
       comps[full_dwords] = nir_load_buffer_amd(b, 1, remaining_bytes * 8, desc, v_off, s_off, zero,
                                                .base = component_stride * full_dwords,
                                                .memory_modes = nir_var_shader_in,
-                                               .access = ACCESS_COHERENT);
+                                               .access = ACCESS_COHERENT | ACCESS_CAN_REORDER |
+                                                         ACCESS_CAN_SPECULATE);
 
    return nir_extract_bits(b, comps, full_dwords + !!remaining_bytes, 0, num_components, bit_size);
 }
@@ -242,9 +244,9 @@ gs_per_vertex_input_vertex_offset_gfx9(nir_builder *b, lower_esgs_io_state *st,
 
    for (unsigned i = 1; i < b->shader->info.gs.vertices_in; i++) {
       nir_def *cond = nir_ieq_imm(b, vertex_src->ssa, i);
-      nir_def *elem = gs_get_vertex_offset(b, st, i / 2u * 2u);
+      nir_def *elem = gs_get_vertex_offset(b, st, i / 2u);
       if (i % 2u)
-         elem = nir_ishr_imm(b, elem, 16u);
+         elem = nir_ushr_imm(b, elem, 16u);
 
       vertex_offset = nir_bcsel(b, cond, elem, vertex_offset);
    }

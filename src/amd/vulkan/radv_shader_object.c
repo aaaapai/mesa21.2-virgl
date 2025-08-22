@@ -6,6 +6,7 @@
 
 #include "vk_log.h"
 
+#include "util/blob.h"
 #include "radv_device.h"
 #include "radv_entrypoints.h"
 #include "radv_physical_device.h"
@@ -13,7 +14,6 @@
 #include "radv_pipeline_compute.h"
 #include "radv_pipeline_graphics.h"
 #include "radv_shader_object.h"
-#include "util/blob.h"
 
 static void
 radv_shader_object_destroy_variant(struct radv_device *device, VkShaderCodeTypeEXT code_type,
@@ -104,7 +104,7 @@ radv_shader_stage_init(const VkShaderCreateInfoEXT *sinfo, struct radv_shader_st
       else if (subgroup_size->requiredSubgroupSize == 64)
          out_stage->key.subgroup_required_size = RADV_REQUIRED_WAVE64;
       else
-         unreachable("Unsupported required subgroup size.");
+         UNREACHABLE("Unsupported required subgroup size.");
    }
 
    if (sinfo->flags & VK_SHADER_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT) {
@@ -123,11 +123,12 @@ static VkResult
 radv_shader_object_init_graphics(struct radv_shader_object *shader_obj, struct radv_device *device,
                                  const VkShaderCreateInfoEXT *pCreateInfo)
 {
-   gl_shader_stage stage = vk_to_mesa_shader_stage(pCreateInfo->stage);
+   mesa_shader_stage stage = vk_to_mesa_shader_stage(pCreateInfo->stage);
    struct radv_shader_stage stages[MESA_VULKAN_SHADER_STAGES];
 
    for (unsigned i = 0; i < MESA_VULKAN_SHADER_STAGES; i++) {
       stages[i].stage = MESA_SHADER_NONE;
+      stages[i].gs_copy_shader = NULL;
       stages[i].nir = NULL;
       stages[i].spirv.size = 0;
       stages[i].next_stage = MESA_SHADER_NONE;
@@ -162,6 +163,8 @@ radv_shader_object_init_graphics(struct radv_shader_object *shader_obj, struct r
       binary = binaries[stage];
 
       ralloc_free(stages[stage].nir);
+      if (stages[MESA_SHADER_GEOMETRY].gs_copy_shader)
+         ralloc_free(stages[MESA_SHADER_GEOMETRY].gs_copy_shader);
 
       shader_obj->shader = shader;
       shader_obj->binary = binary;
@@ -189,6 +192,8 @@ radv_shader_object_init_graphics(struct radv_shader_object *shader_obj, struct r
          binary = binaries[stage];
 
          ralloc_free(stages[stage].nir);
+         if (stages[MESA_SHADER_GEOMETRY].gs_copy_shader)
+            ralloc_free(stages[MESA_SHADER_GEOMETRY].gs_copy_shader);
 
          if (stage == MESA_SHADER_VERTEX) {
             if (next_stage == MESA_SHADER_TESS_CTRL) {
@@ -414,6 +419,7 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
 
    for (unsigned i = 0; i < MESA_VULKAN_SHADER_STAGES; i++) {
       stages[i].stage = MESA_SHADER_NONE;
+      stages[i].gs_copy_shader = NULL;
       stages[i].nir = NULL;
       stages[i].spirv.size = 0;
       stages[i].next_stage = MESA_SHADER_NONE;
@@ -434,7 +440,7 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
 
    for (unsigned i = 0; i < createInfoCount; i++) {
       const VkShaderCreateInfoEXT *pCreateInfo = &pCreateInfos[i];
-      gl_shader_stage s = vk_to_mesa_shader_stage(pCreateInfo->stage);
+      mesa_shader_stage s = vk_to_mesa_shader_stage(pCreateInfo->stage);
 
       radv_shader_stage_init(pCreateInfo, &stages[s]);
    }
@@ -491,7 +497,7 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
 
    for (unsigned i = 0; i < createInfoCount; i++) {
       const VkShaderCreateInfoEXT *pCreateInfo = &pCreateInfos[i];
-      gl_shader_stage s = vk_to_mesa_shader_stage(pCreateInfo->stage);
+      mesa_shader_stage s = vk_to_mesa_shader_stage(pCreateInfo->stage);
       struct radv_shader_object *shader_obj;
 
       shader_obj = vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*shader_obj), 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
@@ -538,6 +544,9 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
 
       pShaders[i] = radv_shader_object_to_handle(shader_obj);
    }
+
+   if (stages[MESA_SHADER_GEOMETRY].gs_copy_shader)
+      ralloc_free(stages[MESA_SHADER_GEOMETRY].gs_copy_shader);
 
    return VK_SUCCESS;
 }

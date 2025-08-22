@@ -314,7 +314,7 @@ opt_cap_bool(uint32_t val)
 {
    if (val == VIRTGPU_CAP_BOOL_TRUE)  return true;
    if (val == VIRTGPU_CAP_BOOL_FALSE) return false;
-   unreachable("invalid val");
+   UNREACHABLE("invalid val");
 }
 
 static bool
@@ -602,13 +602,18 @@ tu_bo_init(struct tu_device *dev,
       dev->submit_bo_list_size = new_len;
    }
 
+   bool implicit_sync = flags & TU_BO_ALLOC_IMPLICIT_SYNC;
    bool dump = flags & TU_BO_ALLOC_ALLOW_DUMP;
    dev->submit_bo_list[idx] = (struct drm_msm_gem_submit_bo) {
       .flags = MSM_SUBMIT_BO_READ | MSM_SUBMIT_BO_WRITE |
-               COND(dump, MSM_SUBMIT_BO_DUMP),
+               COND(dump, MSM_SUBMIT_BO_DUMP) |
+               COND(!implicit_sync, MSM_SUBMIT_BO_NO_IMPLICIT),
       .handle = bo->res_id,
       .presumed = iova,
    };
+
+   if (implicit_sync)
+      dev->implicit_sync_bo_count++;
 
    *bo = (struct tu_bo) {
       .gem_handle = gem_handle,
@@ -618,6 +623,7 @@ tu_bo_init(struct tu_device *dev,
       .name = name,
       .refcnt = 1,
       .submit_bo_list_idx = idx,
+      .implicit_sync = implicit_sync,
       .base = base,
    };
 
@@ -999,7 +1005,7 @@ virtio_queue_submit(struct tu_queue *queue, void *_submit,
       struct vk_sync *sync = waits[i].sync;
 
       in_syncobjs[i] = (struct drm_virtgpu_execbuffer_syncobj) {
-         .handle = tu_syncobj_from_vk_sync(sync),
+         .handle = vk_sync_as_drm_syncobj(sync)->syncobj,
          .flags = 0,
          .point = waits[i].wait_value,
       };
@@ -1009,7 +1015,7 @@ virtio_queue_submit(struct tu_queue *queue, void *_submit,
       struct vk_sync *sync = signals[i].sync;
 
       out_syncobjs[i] = (struct drm_virtgpu_execbuffer_syncobj) {
-         .handle = tu_syncobj_from_vk_sync(sync),
+         .handle = vk_sync_as_drm_syncobj(sync)->syncobj,
          .flags = 0,
          .point = signals[i].signal_value,
       };
@@ -1089,35 +1095,6 @@ virtio_queue_submit(struct tu_queue *queue, void *_submit,
 
    if (u_trace_submission_data) {
       u_trace_submission_data->gpu_ts_offset = gpu_offset;
-   }
-
-   for (uint32_t i = 0; i < wait_count; i++) {
-      if (!vk_sync_is_tu_timeline_sync(waits[i].sync))
-         continue;
-
-      struct tu_timeline_sync *sync =
-         container_of(waits[i].sync, struct tu_timeline_sync, base);
-
-      assert(sync->state != TU_TIMELINE_SYNC_STATE_RESET);
-
-      /* Set SIGNALED to the state of the wait timeline sync since this means the syncobj
-       * is done and ready again so this can be garbage-collectioned later.
-       */
-      sync->state = TU_TIMELINE_SYNC_STATE_SIGNALED;
-   }
-
-   for (uint32_t i = 0; i < signal_count; i++) {
-      if (!vk_sync_is_tu_timeline_sync(signals[i].sync))
-         continue;
-
-      struct tu_timeline_sync *sync =
-         container_of(signals[i].sync, struct tu_timeline_sync, base);
-
-      assert(sync->state == TU_TIMELINE_SYNC_STATE_RESET);
-      /* Set SUBMITTED to the state of the signal timeline sync so we could wait for
-       * this timeline sync until completed if necessary.
-       */
-      sync->state = TU_TIMELINE_SYNC_STATE_SUBMITTED;
    }
 
 fail_submit:
@@ -1293,9 +1270,11 @@ tu_knl_drm_virtio_load(struct tu_instance *instance,
 
    device->syncobj_type = syncobj_type;
 
-   /* we don't support DRM_CAP_SYNCOBJ_TIMELINE, but drm-shim does */
+   /* msm didn't expose DRM_CAP_SYNCOBJ_TIMELINE until kernel 6.15, so emulate timeline
+    * semaphores if necessary.
+    */
    if (!(device->syncobj_type.features & VK_SYNC_FEATURE_TIMELINE))
-      device->timeline_type = vk_sync_timeline_get_type(&tu_timeline_sync_type);
+      device->timeline_type = vk_sync_timeline_get_type(&device->syncobj_type);
 
    device->sync_types[0] = &device->syncobj_type;
    device->sync_types[1] = &device->timeline_type.sync;

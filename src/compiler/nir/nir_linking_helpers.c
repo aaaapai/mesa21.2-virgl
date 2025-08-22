@@ -36,7 +36,7 @@
  * bitfield corresponding to this variable.
  */
 static uint64_t
-get_variable_io_mask(nir_variable *var, gl_shader_stage stage)
+get_variable_io_mask(nir_variable *var, mesa_shader_stage stage)
 {
    if (var->data.location < 0)
       return 0;
@@ -326,7 +326,7 @@ static void
 get_unmoveable_components_masks(nir_shader *shader,
                                 nir_variable_mode mode,
                                 struct assigned_comps *comps,
-                                gl_shader_stage stage,
+                                mesa_shader_stage stage,
                                 bool default_to_smooth_interp)
 {
    nir_foreach_variable_with_modes_safe(var, shader, mode) {
@@ -423,7 +423,7 @@ remap_slots_and_components(nir_shader *shader, nir_variable_mode mode,
                            uint64_t *slots_used, uint64_t *out_slots_read,
                            uint32_t *p_slots_used, uint32_t *p_out_slots_read)
 {
-   const gl_shader_stage stage = shader->info.stage;
+   const mesa_shader_stage stage = shader->info.stage;
    uint64_t out_slots_read_tmp[2] = { 0 };
    uint64_t slots_used_tmp[2] = { 0 };
 
@@ -1061,7 +1061,7 @@ replace_varying_input_by_constant_load(nir_shader *shader,
          b.cursor = nir_before_instr(instr);
 
          nir_load_const_instr *out_const =
-            nir_instr_as_load_const(store_intr->src[1].ssa->parent_instr);
+            nir_def_as_load_const(store_intr->src[1].ssa);
 
          /* Add new const to replace the input */
          nir_def *nconst = nir_build_imm(&b, store_intr->num_components,
@@ -1144,7 +1144,7 @@ is_direct_uniform_load(nir_def *def, nir_scalar *s)
    if (ssa->parent_instr->type != nir_instr_type_intrinsic)
       return false;
 
-   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(ssa->parent_instr);
+   nir_intrinsic_instr *intr = nir_def_as_intrinsic(ssa);
    if (intr->intrinsic != nir_intrinsic_load_deref)
       return false;
 
@@ -1213,13 +1213,13 @@ nir_clone_deref_instr(nir_builder *b, nir_variable *var,
           * we don't implement cloning the index SSA here.
           */
          nir_load_const_instr *index =
-            nir_instr_as_load_const(deref->arr.index.ssa->parent_instr);
+            nir_def_as_load_const(deref->arr.index.ssa);
          return nir_build_deref_array_imm(b, parent, index->value->i64);
       }
    }
    case nir_deref_type_ptr_as_array: {
       nir_load_const_instr *index =
-         nir_instr_as_load_const(deref->arr.index.ssa->parent_instr);
+         nir_def_as_load_const(deref->arr.index.ssa);
       nir_def *ssa = nir_imm_intN_t(b, index->value->i64,
                                     parent->def.bit_size);
       return nir_build_deref_ptr_as_array(b, parent, ssa);
@@ -1227,7 +1227,7 @@ nir_clone_deref_instr(nir_builder *b, nir_variable *var,
    case nir_deref_type_struct:
       return nir_build_deref_struct(b, parent, deref->strct.index);
    default:
-      unreachable("invalid type");
+      UNREACHABLE("invalid type");
       return NULL;
    }
 }
@@ -1243,7 +1243,7 @@ replace_varying_input_by_uniform_load(nir_shader *shader,
 
    nir_variable *out_var = nir_intrinsic_get_var(store_intr, 0);
 
-   nir_intrinsic_instr *load = nir_instr_as_intrinsic(scalar->def->parent_instr);
+   nir_intrinsic_instr *load = nir_def_as_intrinsic(scalar->def);
    nir_deref_instr *deref = nir_src_as_deref(load->src[0]);
    nir_variable *uni_var = nir_deref_instr_get_variable(deref);
    uni_var = nir_clone_uniform_variable(shader, uni_var, false);
@@ -1484,7 +1484,7 @@ nir_sort_variables_by_location(nir_shader *shader, nir_variable_mode mode)
 
 void
 nir_assign_io_var_locations(nir_shader *shader, nir_variable_mode mode,
-                            unsigned *size, gl_shader_stage stage)
+                            unsigned *size, mesa_shader_stage stage)
 {
    unsigned location = 0;
    unsigned assigned_locations[VARYING_SLOT_TESS_MAX][2];

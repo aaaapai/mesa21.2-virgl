@@ -18,7 +18,7 @@ vtn_cooperative_matrix_use_to_glsl(SpvCooperativeMatrixUse use)
    case SpvCooperativeMatrixUseMatrixAccumulatorKHR:
       return GLSL_CMAT_USE_ACCUMULATOR;
    default:
-      unreachable("Unexpected cooperative matrix use");
+      UNREACHABLE("Unexpected cooperative matrix use");
    }
 }
 
@@ -65,7 +65,7 @@ vtn_matrix_layout_to_glsl(SpvCooperativeMatrixLayout layout)
    case SpvCooperativeMatrixLayoutColumnMajorKHR:
       return GLSL_MATRIX_LAYOUT_COLUMN_MAJOR;
    default:
-      unreachable("Unexpected cooperative matrix layout");
+      UNREACHABLE("Unexpected cooperative matrix layout");
    }
 }
 
@@ -84,6 +84,18 @@ vtn_get_cmat_deref(struct vtn_builder *b, uint32_t value_id)
    return deref;
 }
 
+static struct vtn_pointer *
+vtn_cast_pointer_to_byte_pointer(struct vtn_builder *b, struct vtn_pointer *p)
+{
+   assert(!p->type->pointed);
+
+   struct vtn_type *t = vtn_zalloc(b, struct vtn_type);
+   t->base_type = vtn_base_type_scalar;
+   t->type = glsl_uint8_t_type();
+   t->length = 1;
+   return vtn_cast_pointer(b, p, t);
+}
+
 void
 vtn_handle_cooperative_instruction(struct vtn_builder *b, SpvOp opcode,
                                    const uint32_t *w, unsigned count)
@@ -93,6 +105,10 @@ vtn_handle_cooperative_instruction(struct vtn_builder *b, SpvOp opcode,
       struct vtn_value *src_val = vtn_value(b, w[3], vtn_value_type_pointer);
       struct vtn_pointer *src = vtn_value_to_pointer(b, src_val);
       struct vtn_type *dst_type = vtn_get_type(b, w[1]);
+
+      /* Untyped pointers are effectively used as byte pointers. */
+      if (!src->type->pointed)
+         src = vtn_cast_pointer_to_byte_pointer(b, src);
 
       const SpvCooperativeMatrixLayout layout = vtn_constant_uint(b, w[4]);
       nir_def *stride = count > 5 ? vtn_get_nir_ssa(b, w[5]) : nir_imm_zero(&b->nb, 1, 32);
@@ -116,8 +132,16 @@ vtn_handle_cooperative_instruction(struct vtn_builder *b, SpvOp opcode,
       struct vtn_value *dest_val = vtn_value(b, w[1], vtn_value_type_pointer);
       struct vtn_pointer *dest = vtn_value_to_pointer(b, dest_val);
 
+      /* Untyped pointers are effectively used as byte pointers. */
+      if (!dest->type->pointed)
+         dest = vtn_cast_pointer_to_byte_pointer(b, dest);
+
       const SpvCooperativeMatrixLayout layout = vtn_constant_uint(b, w[3]);
       nir_def *stride = count > 4 ? vtn_get_nir_ssa(b, w[4]) : nir_imm_zero(&b->nb, 1, 32);
+
+      nir_deref_instr *src = vtn_get_cmat_deref(b, w[2]);
+      nir_cmat_store(&b->nb, vtn_pointer_to_ssa(b, dest), &src->def, stride,
+                     .matrix_layout = vtn_matrix_layout_to_glsl(layout));
 
       SpvMemoryAccessMask access = SpvMemoryAccessMaskNone;
       if (count > 5) {
@@ -127,9 +151,6 @@ vtn_handle_cooperative_instruction(struct vtn_builder *b, SpvOp opcode,
          vtn_emit_make_available_barrier(b, access, scope, dest->mode);
       }
 
-      nir_deref_instr *src = vtn_get_cmat_deref(b, w[2]);
-      nir_cmat_store(&b->nb, vtn_pointer_to_ssa(b, dest), &src->def, stride,
-                     .matrix_layout = vtn_matrix_layout_to_glsl(layout));
       break;
    }
 
@@ -200,7 +221,7 @@ vtn_handle_cooperative_instruction(struct vtn_builder *b, SpvOp opcode,
    }
 
    default:
-      unreachable("Unexpected opcode for cooperative matrix instruction");
+      UNREACHABLE("Unexpected opcode for cooperative matrix instruction");
    }
 }
 
@@ -299,7 +320,7 @@ vtn_handle_cooperative_alu(struct vtn_builder *b, struct vtn_value *dest_val,
       }
 
       default:
-         unreachable("invalid cooperative matrix alu instruction");
+         UNREACHABLE("invalid cooperative matrix alu instruction");
       }
 }
 

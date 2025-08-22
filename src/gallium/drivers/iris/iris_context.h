@@ -695,7 +695,7 @@ struct iris_compiled_shader {
 
    struct iris_binding_table bt;
 
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
 
    /**
     * Data derived from prog_data.
@@ -766,7 +766,7 @@ iris_vue_data(struct iris_compiled_shader *shader)
    case MESA_SHADER_TESS_EVAL: return &shader->tes.base;
    case MESA_SHADER_GEOMETRY:  return &shader->gs.base;
    default:
-      unreachable("invalid shader stage for vue prog data");
+      UNREACHABLE("invalid shader stage for vue prog data");
       return NULL;
    }
 }
@@ -1051,8 +1051,6 @@ struct iris_context {
       /** Aux usage of the fb's depth buffer (which may or may not exist). */
       enum isl_aux_usage hiz_usage;
 
-      enum intel_urb_deref_block_size urb_deref_block_size;
-
       /** Are depth writes enabled?  (Depth buffer may or may not exist.) */
       bool depth_writes_enabled;
 
@@ -1106,7 +1104,7 @@ struct iris_context {
        * Query BO with a MI_PREDICATE_RESULT snapshot calculated on the
        * render context that needs to be uploaded to the compute context.
        */
-      struct iris_bo *compute_predicate;
+      struct iris_address compute_predicate;
 
       /** Is a PIPE_QUERY_PRIMITIVES_GENERATED query active? */
       bool prims_generated_query_active;
@@ -1222,9 +1220,10 @@ struct iris_gen_indirect_params {
 };
 
 #define perf_debug(dbg, ...) do {                      \
+   void *__var = (void*)(dbg);                         \
    if (INTEL_DEBUG(DEBUG_PERF))                        \
       dbg_printf(__VA_ARGS__);                         \
-   if (unlikely(dbg))                                  \
+   if (unlikely(__var))                                \
       util_debug_message(dbg, PERF_INFO, __VA_ARGS__); \
 } while(0)
 
@@ -1293,7 +1292,7 @@ iris_blorp_batch_usage(struct iris_batch *batch, bool is_dest)
    case IRIS_BATCH_BLITTER:
       return is_dest ? ISL_SURF_USAGE_BLITTER_DST_BIT : ISL_SURF_USAGE_BLITTER_SRC_BIT;
    default:
-      unreachable("Unhandled batch type");
+      UNREACHABLE("Unhandled batch type");
    }
 }
 
@@ -1334,10 +1333,10 @@ void iris_upload_ubo_ssbo_surf_state(struct iris_context *ice,
                                      struct iris_state_ref *surf_state,
                                      isl_surf_usage_flags_t usage);
 const struct shader_info *iris_get_shader_info(const struct iris_context *ice,
-                                               gl_shader_stage stage);
+                                               mesa_shader_stage stage);
 struct iris_bo *iris_get_scratch_space(struct iris_context *ice,
                                        unsigned per_thread_scratch,
-                                       gl_shader_stage stage);
+                                       mesa_shader_stage stage);
 const struct iris_state_ref *iris_get_scratch_surf(struct iris_context *ice,
                                                    unsigned per_thread_scratch);
 uint32_t iris_group_index_to_bti(const struct iris_binding_table *bt,
@@ -1362,9 +1361,9 @@ iris_fs_barycentric_modes(const struct iris_compiled_shader *shader,
                           enum intel_msaa_flags pushed_msaa_flags);
 bool iris_use_tcs_multi_patch(struct iris_screen *screen);
 bool iris_indirect_ubos_use_sampler(struct iris_screen *screen);
-const void *iris_get_compiler_options(struct pipe_screen *pscreen,
-                                      enum pipe_shader_ir ir,
-                                      enum pipe_shader_type pstage);
+const struct nir_shader_compiler_options *
+iris_get_compiler_options(struct pipe_screen *pscreen,
+                          mesa_shader_stage pstage);
 
 /* iris_disk_cache.c */
 
@@ -1392,7 +1391,7 @@ struct iris_compiled_shader *iris_find_cached_shader(struct iris_context *ice,
 
 struct iris_compiled_shader *iris_create_shader_variant(const struct iris_screen *,
                                                         void *mem_ctx,
-                                                        gl_shader_stage stage,
+                                                        mesa_shader_stage stage,
                                                         enum iris_program_cache_id cache_id,
                                                         uint32_t key_size,
                                                         const void *key);
@@ -1468,17 +1467,17 @@ void iris_ensure_indirect_generation_shader(struct iris_batch *batch);
 void iris_predraw_resolve_inputs(struct iris_context *ice,
                                  struct iris_batch *batch,
                                  bool *draw_aux_buffer_disabled,
-                                 gl_shader_stage stage,
+                                 mesa_shader_stage stage,
                                  bool consider_framebuffer);
 void iris_predraw_resolve_framebuffer(struct iris_context *ice,
                                       struct iris_batch *batch,
                                       bool *draw_aux_buffer_disabled);
 void iris_predraw_flush_buffers(struct iris_context *ice,
                                 struct iris_batch *batch,
-                                gl_shader_stage stage);
+                                mesa_shader_stage stage);
 void iris_postdraw_update_resolve_tracking(struct iris_context *ice);
 void iris_postdraw_update_image_resolve_tracking(struct iris_context *ice,
-                                                 gl_shader_stage stage);
+                                                 mesa_shader_stage stage);
 int iris_get_driver_query_info(struct pipe_screen *pscreen, unsigned index,
                                struct pipe_driver_query_info *info);
 int iris_get_driver_query_group_info(struct pipe_screen *pscreen,

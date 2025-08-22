@@ -146,6 +146,9 @@ brw_swizzle_for_mask(unsigned mask)
 
 uint32_t brw_swizzle_immediate(enum brw_reg_type type, uint32_t x, unsigned swz);
 
+struct brw_reg;
+static inline bool brw_reg_is_arf(struct brw_reg reg, unsigned arf);
+
 #define REG_SIZE (8*4)
 
 /* These aren't hardware structs, just something useful for us to pass around:
@@ -225,9 +228,9 @@ typedef struct brw_reg {
    bool is_zero() const;
    bool is_one() const;
    bool is_negative_one() const;
-   bool is_null() const;
-   bool is_accumulator() const;
-   bool is_ip() const;
+   bool is_null() const { return brw_reg_is_arf(*this, BRW_ARF_NULL); }
+   bool is_accumulator() const { return brw_reg_is_arf(*this, BRW_ARF_ACCUMULATOR); }
+   bool is_ip() const { return brw_reg_is_arf(*this, BRW_ARF_IP); }
    bool is_address() const;
 
    unsigned address_slot(unsigned byte_offset) const;
@@ -253,7 +256,7 @@ phys_file(const struct brw_reg reg)
       return ARF;
 
    default:
-      unreachable("register type should have been lowered");
+      UNREACHABLE("register type should have been lowered");
    }
 }
 
@@ -265,9 +268,7 @@ phys_nr(const struct intel_device_info *devinfo, const struct brw_reg reg)
          return reg.nr / 2;
       else if (reg.file == ADDRESS)
          return BRW_ARF_ADDRESS;
-      else if (reg.file == ARF &&
-               reg.nr >= BRW_ARF_ACCUMULATOR &&
-               reg.nr < BRW_ARF_FLAG)
+      else if (brw_reg_is_arf(reg, BRW_ARF_ACCUMULATOR))
          return BRW_ARF_ACCUMULATOR + (reg.nr - BRW_ARF_ACCUMULATOR) / 2;
       else
          return reg.nr;
@@ -282,10 +283,7 @@ static inline unsigned
 phys_subnr(const struct intel_device_info *devinfo, const struct brw_reg reg)
 {
    if (devinfo->ver >= 20) {
-      if (reg.file == FIXED_GRF ||
-          (reg.file == ARF &&
-           reg.nr >= BRW_ARF_ACCUMULATOR &&
-           reg.nr < BRW_ARF_FLAG))
+      if (reg.file == FIXED_GRF || brw_reg_is_arf(reg, BRW_ARF_ACCUMULATOR))
          return (reg.nr & 1) * REG_SIZE + reg.subnr;
       else
          return reg.subnr;
@@ -341,7 +339,7 @@ brw_regs_negative_equal(const struct brw_reg *a, const struct brw_reg *b)
       case BRW_TYPE_UB:
       case BRW_TYPE_B:
       default:
-         unreachable("not reached");
+         UNREACHABLE("not reached");
       }
    } else {
       struct brw_reg tmp = *a;
@@ -386,7 +384,7 @@ brw_int_type(unsigned sz, bool is_signed)
    case 8:
       return (is_signed ? BRW_TYPE_Q : BRW_TYPE_UQ);
    default:
-      unreachable("Not reached.");
+      UNREACHABLE("Not reached.");
    }
 }
 
@@ -559,7 +557,7 @@ brw_vecn_reg(unsigned width, enum brw_reg_file file,
    case 16:
       return brw_vec16_reg(file, nr, subnr);
    default:
-      unreachable("Invalid register width");
+      UNREACHABLE("Invalid register width");
    }
 }
 
@@ -718,13 +716,7 @@ brw_imm_q(int64_t q)
 }
 
 /** Construct int64_t immediate register */
-static inline struct brw_reg
-brw_imm_uq(uint64_t uq)
-{
-   struct brw_reg imm = brw_imm_reg(BRW_TYPE_UQ);
-   imm.u64 = uq;
-   return imm;
-}
+#define brw_imm_uq(uq) brw_imm_u64(uq)
 
 /** Construct integer immediate register */
 static inline struct brw_reg
@@ -1069,6 +1061,14 @@ brw_uniform_reg(unsigned nr, enum brw_reg_type type)
    return reg;
 }
 
+static inline bool
+brw_reg_is_arf(struct brw_reg reg, unsigned arf)
+{
+   assert((arf & 0x0f) == 0 && arf <= BRW_ARF_TIMESTAMP);
+
+   return reg.file == ARF && (reg.nr & 0xF0) == arf;
+}
+
 /* This is almost always called with a numeric constant argument, so
  * make things easy to evaluate at compile time:
  */
@@ -1358,7 +1358,7 @@ horiz_offset(const brw_reg &reg, unsigned delta)
          }
       }
    }
-   unreachable("Invalid register file");
+   UNREACHABLE("Invalid register file");
 }
 
 static inline brw_reg
@@ -1560,7 +1560,7 @@ byte_stride(const brw_reg &reg)
          }
       }
    default:
-      unreachable("Invalid register file");
+      UNREACHABLE("Invalid register file");
    }
 }
 

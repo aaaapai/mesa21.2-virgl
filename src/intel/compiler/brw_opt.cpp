@@ -186,6 +186,17 @@ brw_optimize(brw_shader &s)
    OPT(brw_opt_dead_code_eliminate);
    OPT(brw_opt_register_coalesce);
 
+   /* Logical sends and load_payload can have large VGRFs that cannot be
+    * split. Once all of the lowering passes and optimization passes that
+    * might eliminate any of those instructions have completed, try to split
+    * larger VGRFs one last time.
+    *
+    * Register allocation can only handle VGRFs up to a certain size, so this
+    * is the last opportunity to prevent later failures due to VGRFs that are
+    * too large.
+    */
+   OPT(brw_opt_split_virtual_grfs);
+
    if (progress)
       OPT(brw_lower_simd_width);
 
@@ -330,7 +341,7 @@ brw_opt_split_sends(brw_shader &s)
    foreach_block_and_inst(block, brw_inst, send, s.cfg) {
       if (send->opcode != SHADER_OPCODE_SEND ||
           send->mlen <= reg_unit(s.devinfo) || send->ex_mlen > 0 ||
-          send->src[2].file != VGRF)
+          send->src[SEND_SRC_PAYLOAD1].file != VGRF)
          continue;
 
       /* Currently don't split sends that reuse a previously used payload. */
@@ -339,7 +350,8 @@ brw_opt_split_sends(brw_shader &s)
       if (lp->is_head_sentinel() || lp->opcode != SHADER_OPCODE_LOAD_PAYLOAD)
          continue;
 
-      if (lp->dst.file != send->src[2].file || lp->dst.nr != send->src[2].nr)
+      if (lp->dst.file != send->src[SEND_SRC_PAYLOAD1].file ||
+          lp->dst.nr != send->src[SEND_SRC_PAYLOAD1].nr)
          continue;
 
       /* Split either after the header (if present), or when consecutive
@@ -378,9 +390,10 @@ brw_opt_split_sends(brw_shader &s)
       lp1->dst = retype(brw_allocate_vgrf_units(s, lp1->size_written / REG_SIZE), lp1->dst.type);
       lp2->dst = retype(brw_allocate_vgrf_units(s, lp2->size_written / REG_SIZE), lp2->dst.type);
 
-      send->resize_sources(4);
-      send->src[2] = lp1->dst;
-      send->src[3] = lp2->dst;
+      assert(send->sources == SEND_NUM_SRCS);
+
+      send->src[SEND_SRC_PAYLOAD1] = lp1->dst;
+      send->src[SEND_SRC_PAYLOAD2] = lp2->dst;
       send->ex_mlen = lp2->size_written / REG_SIZE;
       send->mlen -= send->ex_mlen;
 
@@ -486,6 +499,8 @@ brw_opt_eliminate_find_live_channel(brw_shader &s)
       case SHADER_OPCODE_FIND_LIVE_CHANNEL:
          if (depth == 0) {
             inst->opcode = BRW_OPCODE_MOV;
+
+            inst->resize_sources(1);
             inst->src[0] = brw_imm_ud(0u);
             inst->force_writemask_all = true;
 
@@ -496,7 +511,6 @@ brw_opt_eliminate_find_live_channel(brw_shader &s)
             if (inst->size_written == inst->dst.component_size(8 * reg_unit(s.devinfo)))
                inst->exec_size = 8 * reg_unit(s.devinfo);
 
-            inst->resize_sources(1);
             progress = true;
 
             /* emit_uniformize() frequently emits FIND_LIVE_CHANNEL paired
@@ -614,8 +628,8 @@ brw_opt_send_to_send_gather(brw_shader &s)
          brw_reg src;
          unsigned phys_len;
       } payload[2] = {
-         { inst->src[2], inst->mlen / unit },
-         { inst->src[3], inst->ex_mlen / unit },
+         { inst->src[SEND_SRC_PAYLOAD1], inst->mlen / unit },
+         { inst->src[SEND_SRC_PAYLOAD2], inst->ex_mlen / unit },
       };
 
       const unsigned num_payload_sources = payload[0].phys_len + payload[1].phys_len;
@@ -629,11 +643,11 @@ brw_opt_send_to_send_gather(brw_shader &s)
          continue;
       }
 
-      inst->resize_sources(3 + num_payload_sources);
+      inst->resize_sources(SEND_GATHER_SRC_PAYLOAD + num_payload_sources);
       /* Sources 0 and 1 remain the same.  Source 2 will be filled
        * after register allocation.
        */
-      inst->src[2] = {};
+      inst->src[SEND_GATHER_SRC_SCALAR] = {};
 
       int idx = 3;
       for (unsigned p = 0; p < ARRAY_SIZE(payload); p++) {
@@ -683,7 +697,7 @@ brw_opt_send_gather_to_send(brw_shader &s)
          continue;
 
       assert(inst->sources > 2);
-      assert(inst->src[2].file == BAD_FILE);
+      assert(inst->src[SEND_GATHER_SRC_SCALAR].file == BAD_FILE);
 
       const int num_payload_sources = inst->sources - 3;
       assert(num_payload_sources > 0);
@@ -696,7 +710,7 @@ brw_opt_send_gather_to_send(brw_shader &s)
        * and there's no need to use SEND_GATHER (which would set ARF scalar register
        * adding an extra instruction).
        */
-      const brw_reg *payload = &inst->src[3];
+      const brw_reg *payload = &inst->src[SEND_GATHER_SRC_PAYLOAD];
       brw_reg payload1       = payload[0];
       brw_reg payload2       = {};
       int payload1_len       = 0;
@@ -747,10 +761,10 @@ brw_opt_send_gather_to_send(brw_shader &s)
             continue;
       }
 
-      inst->resize_sources(4);
+      inst->resize_sources(SEND_NUM_SRCS);
       inst->opcode  = SHADER_OPCODE_SEND;
-      inst->src[2]  = payload1;
-      inst->src[3]  = payload2;
+      inst->src[SEND_SRC_PAYLOAD1] = payload1;
+      inst->src[SEND_SRC_PAYLOAD2] = payload2;
       inst->mlen    = payload1_len * unit;
       inst->ex_mlen = payload2_len * unit;
 

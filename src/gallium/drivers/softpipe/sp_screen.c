@@ -94,18 +94,9 @@ static const nir_shader_compiler_options sp_compiler_options = {
     * workgroup id.
     */
    .lower_cs_local_index_to_id = true,
-   .support_indirect_inputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
-   .support_indirect_outputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
+   .support_indirect_inputs = (uint8_t)BITFIELD_MASK(MESA_SHADER_STAGES),
+   .support_indirect_outputs = (uint8_t)BITFIELD_MASK(MESA_SHADER_STAGES),
 };
-
-static const void *
-softpipe_get_compiler_options(struct pipe_screen *pscreen,
-                              enum pipe_shader_ir ir,
-                              enum pipe_shader_type shader)
-{
-   assert(ir == PIPE_SHADER_IR_NIR);
-   return &sp_compiler_options;
-}
 
 /**
  * Query format support for creating a texture, drawing surface, etc.
@@ -209,20 +200,20 @@ softpipe_is_format_supported( struct pipe_screen *screen,
 static void
 softpipe_init_shader_caps(struct softpipe_screen *sp_screen)
 {
-   for (unsigned i = 0; i <= PIPE_SHADER_COMPUTE; i++) {
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
          (struct pipe_shader_caps *)&sp_screen->base.shader_caps[i];
 
       switch(i) {
-      case PIPE_SHADER_VERTEX:
-      case PIPE_SHADER_GEOMETRY:
+      case MESA_SHADER_VERTEX:
+      case MESA_SHADER_GEOMETRY:
          if (sp_screen->use_llvm) {
             draw_init_shader_caps(caps);
             break;
          }
          FALLTHROUGH;
-      case PIPE_SHADER_FRAGMENT:
-      case PIPE_SHADER_COMPUTE:
+      case MESA_SHADER_FRAGMENT:
+      case MESA_SHADER_COMPUTE:
          tgsi_exec_init_shader_caps(caps);
          break;
       default:
@@ -465,8 +456,10 @@ softpipe_create_screen(struct sw_winsys *winsys)
    screen->base.is_format_supported = softpipe_is_format_supported;
    screen->base.context_create = softpipe_create_context;
    screen->base.flush_frontbuffer = softpipe_flush_frontbuffer;
-   screen->base.get_compiler_options = softpipe_get_compiler_options;
    screen->use_llvm = sp_debug & SP_DBG_USE_LLVM;
+
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
+      screen->base.nir_options[i] = &sp_compiler_options;
 
    softpipe_init_screen_texture_funcs(&screen->base);
    softpipe_init_screen_fence_funcs(&screen->base);

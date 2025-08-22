@@ -37,7 +37,7 @@
 #include "main/hash.h"
 #include "program/prog_cache.h"
 #include "vbo/vbo.h"
-#include "glapi/glapi.h"
+#include "glapi/glapi/glapi.h"
 #include "st_manager.h"
 #include "st_context.h"
 #include "st_debug.h"
@@ -67,6 +67,7 @@
 #include "util/u_memory.h"
 #include "util/hash_table.h"
 #include "util/thread_sched.h"
+#include "util/u_threaded_context.h"
 #include "cso_cache/cso_context.h"
 #include "compiler/glsl/glsl_parser_extras.h"
 #include "nir.h"
@@ -209,7 +210,7 @@ st_save_zombie_sampler_view(struct st_context *st,
  */
 void
 st_save_zombie_shader(struct st_context *st,
-                      enum pipe_shader_type type,
+                      mesa_shader_stage type,
                       struct pipe_shader_state *shader)
 {
    struct st_zombie_shader_node *entry;
@@ -282,32 +283,32 @@ free_zombie_shaders(struct st_context *st)
       list_del(&entry->node);  // remove this entry from the list
 
       switch (entry->type) {
-      case PIPE_SHADER_VERTEX:
+      case MESA_SHADER_VERTEX:
          st->ctx->NewDriverState |= ST_NEW_VS_STATE;
          st->pipe->delete_vs_state(st->pipe, entry->shader);
          break;
-      case PIPE_SHADER_FRAGMENT:
+      case MESA_SHADER_FRAGMENT:
          st->ctx->NewDriverState |= ST_NEW_FS_STATE;
          st->pipe->delete_fs_state(st->pipe, entry->shader);
          break;
-      case PIPE_SHADER_GEOMETRY:
+      case MESA_SHADER_GEOMETRY:
          st->ctx->NewDriverState |= ST_NEW_GS_STATE;
          st->pipe->delete_gs_state(st->pipe, entry->shader);
          break;
-      case PIPE_SHADER_TESS_CTRL:
+      case MESA_SHADER_TESS_CTRL:
          st->ctx->NewDriverState |= ST_NEW_TCS_STATE;
          st->pipe->delete_tcs_state(st->pipe, entry->shader);
          break;
-      case PIPE_SHADER_TESS_EVAL:
+      case MESA_SHADER_TESS_EVAL:
          st->ctx->NewDriverState |= ST_NEW_TES_STATE;
          st->pipe->delete_tes_state(st->pipe, entry->shader);
          break;
-      case PIPE_SHADER_COMPUTE:
+      case MESA_SHADER_COMPUTE:
          st->ctx->NewDriverState |= ST_NEW_CS_STATE;
          st->pipe->delete_compute_state(st->pipe, entry->shader);
          break;
       default:
-         unreachable("invalid shader type in free_zombie_shaders()");
+         UNREACHABLE("invalid shader type in free_zombie_shaders()");
       }
       free(entry);
    }
@@ -466,6 +467,7 @@ st_create_context_priv(struct gl_context *ctx, struct pipe_context *pipe,
       cso_flags = 0;
       break;
    }
+   st->is_threaded_context = pipe->draw_vbo == tc_draw_vbo;
 
    st->cso_context = cso_create_context(pipe, cso_flags);
    ctx->cso_context = st->cso_context;
@@ -627,7 +629,7 @@ st_create_context_priv(struct gl_context *ctx, struct pipe_context *pipe,
       screen->caps.call_finalize_nir_in_linker;
 
    st->has_hw_atomics =
-      screen->shader_caps[PIPE_SHADER_FRAGMENT].max_hw_atomic_counters
+      screen->shader_caps[MESA_SHADER_FRAGMENT].max_hw_atomic_counters
       ? true : false;
 
    st->validate_all_dirty_states =
@@ -681,9 +683,9 @@ st_create_context_priv(struct gl_context *ctx, struct pipe_context *pipe,
    ctx->Const.ForceFloat32TexNearest =
       !screen->caps.texture_float_linear;
 
-   ctx->Const.ShaderCompilerOptions[MESA_SHADER_VERTEX].PositionAlwaysInvariant = options->vs_position_always_invariant;
+   ctx->Const.VSPositionAlwaysInvariant = options->vs_position_always_invariant;
 
-   ctx->Const.ShaderCompilerOptions[MESA_SHADER_TESS_EVAL].PositionAlwaysPrecise = options->vs_position_always_precise;
+   ctx->Const.TESPositionAlwaysPrecise = options->vs_position_always_precise;
 
    /* Set which shader types can be compiled at link time. */
    st->shader_has_one_variant[MESA_SHADER_VERTEX] =
@@ -715,7 +717,7 @@ st_create_context_priv(struct gl_context *ctx, struct pipe_context *pipe,
    st->shader_has_one_variant[MESA_SHADER_COMPUTE] = st->has_shareable_shaders;
 
    if (!st->pipe->set_context_param || !util_thread_scheduler_enabled())
-      st->pin_thread_counter = ST_THREAD_SCHEDULER_DISABLED;
+      st->thread_scheduler_disabled = true;
 
    st->bitmap.cache.empty = true;
 
@@ -978,10 +980,4 @@ st_destroy_context(struct st_context *st)
       /* Restore the current context and draw/read buffers (may be NULL) */
       _mesa_make_current(save_ctx, save_drawbuffer, save_readbuffer);
    }
-}
-
-const struct nir_shader_compiler_options *
-st_get_nir_compiler_options(struct st_context *st, gl_shader_stage stage)
-{
-   return st->ctx->Const.ShaderCompilerOptions[stage].NirOptions;
 }

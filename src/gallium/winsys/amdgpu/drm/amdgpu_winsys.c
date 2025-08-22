@@ -324,7 +324,7 @@ radeon_to_amdgpu_pstate(enum radeon_ctx_pstate pstate)
    case RADEON_CTX_PSTATE_PEAK:
       return AMDGPU_CTX_STABLE_PSTATE_PEAK;
    default:
-      unreachable("Invalid pstate");
+      UNREACHABLE("Invalid pstate");
    }
 }
 
@@ -547,6 +547,7 @@ amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
 
    amdgpu_bo_init_functions(sws);
    amdgpu_cs_init_functions(sws);
+   amdgpu_userq_init_functions(sws);
    amdgpu_surface_init_functions(sws);
 
    simple_mtx_lock(&aws->sws_list_lock);

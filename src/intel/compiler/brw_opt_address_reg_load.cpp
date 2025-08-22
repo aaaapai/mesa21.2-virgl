@@ -37,7 +37,7 @@ opt_address_reg_load_local(brw_shader &s, bblock_t *block, const brw_def_analysi
           src_inst->sources > 2)
          continue;
 
-      brw_builder ubld = brw_builder(&s).at(block, inst).uniform();
+      brw_builder ubld = brw_builder(&s).before(inst).uniform();
       brw_reg sources[3];
       for (unsigned i = 0; i < src_inst->sources; i++) {
          sources[i] = inst->src[i].file == VGRF ? component(src_inst->src[i], 0) : src_inst->src[i];
@@ -59,9 +59,7 @@ brw_opt_address_reg_load(brw_shader &s)
    const brw_def_analysis &defs = s.def_analysis.require();
 
    foreach_block(block, s.cfg) {
-      foreach_inst_in_block_safe(brw_inst, inst, block) {
-         progress = opt_address_reg_load_local(s, block, defs) || progress;
-      }
+      progress = opt_address_reg_load_local(s, block, defs) || progress;
    }
 
    if (progress) {

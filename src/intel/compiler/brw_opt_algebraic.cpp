@@ -32,7 +32,7 @@ src_as_uint(const brw_reg &src)
       return src.u64;
 
    default:
-      unreachable("Invalid integer type.");
+      UNREACHABLE("Invalid integer type.");
    }
 }
 
@@ -52,7 +52,7 @@ src_as_float(const brw_reg &src)
       return src.df;
 
    default:
-      unreachable("Invalid float type.");
+      UNREACHABLE("Invalid float type.");
    }
 }
 
@@ -79,7 +79,7 @@ brw_imm_for_type(uint64_t value, enum brw_reg_type type)
       return brw_imm_uq(value);
 
    default:
-      unreachable("Invalid integer type.");
+      UNREACHABLE("Invalid integer type.");
    }
 }
 
@@ -120,11 +120,11 @@ fold_multiplicands_of_MAD(brw_inst *inst)
          break;
 
       case BRW_TYPE_DF:
-         unreachable("float64 should be impossible.");
+         UNREACHABLE("float64 should be impossible.");
          break;
 
       default:
-         unreachable("Invalid float type.");
+         UNREACHABLE("Invalid float type.");
       }
    }
 
@@ -181,12 +181,12 @@ brw_opt_constant_fold_instruction(const intel_device_info *devinfo, brw_inst *in
       break;
 
    case BRW_OPCODE_MAD:
-      if (inst->src[1].file == IMM &&
+      if (inst->src[0].file == IMM &&
+          inst->src[1].file == IMM &&
           inst->src[2].file == IMM &&
-          inst->src[3].file == IMM &&
+          !brw_type_is_vector_imm(inst->src[0].type) &&
           !brw_type_is_vector_imm(inst->src[1].type) &&
-          !brw_type_is_vector_imm(inst->src[2].type) &&
-          !brw_type_is_vector_imm(inst->src[3].type)) {
+          !brw_type_is_vector_imm(inst->src[2].type)) {
          fold_multiplicands_of_MAD(inst);
          assert(inst->opcode == BRW_OPCODE_ADD);
 
@@ -269,7 +269,7 @@ brw_opt_constant_fold_instruction(const intel_device_info *devinfo, brw_inst *in
             break;
          default:
             /* Just in case a future platform re-enables B or UB types. */
-            unreachable("Invalid source size.");
+            UNREACHABLE("Invalid source size.");
          }
 
          result = retype(result, inst->dst.type);
@@ -426,7 +426,7 @@ brw_opt_algebraic(brw_shader &s)
             if (inst->dst.type != inst->src[0].type &&
                 inst->dst.type != BRW_TYPE_DF &&
                 inst->src[0].type != BRW_TYPE_F)
-               unreachable("unimplemented: saturate mixed types");
+               UNREACHABLE("unimplemented: saturate mixed types");
 
             if (brw_reg_saturate_immediate(&inst->src[0])) {
                inst->saturate = false;
@@ -670,7 +670,7 @@ brw_opt_algebraic(brw_shader &s)
                   progress = true;
                   break;
                default:
-                  unreachable("Impossible icsel condition.");
+                  UNREACHABLE("Impossible icsel condition.");
                }
             }
          }
@@ -741,9 +741,9 @@ brw_opt_algebraic(brw_shader &s)
             inst->resize_sources(1);
             progress = true;
          } else if (inst->src[1].file == IMM) {
+            const unsigned comp = inst->src[1].ud & (inst->exec_size - 1);
             inst->opcode = BRW_OPCODE_MOV;
-            inst->src[0] = component(inst->src[0],
-                                     inst->src[1].ud);
+            inst->src[0] = component(inst->src[0], comp);
             inst->resize_sources(1);
             progress = true;
          }

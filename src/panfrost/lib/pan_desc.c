@@ -147,7 +147,7 @@ translate_zs_format(enum pipe_format in)
       return MALI_ZS_FORMAT_D32_S8X24;
 #endif
    default:
-      unreachable("Unsupported depth/stencil format.");
+      UNREACHABLE("Unsupported depth/stencil format.");
    }
 }
 
@@ -172,7 +172,7 @@ translate_s_format(enum pipe_format in)
 #endif
 
    default:
-      unreachable("Unsupported stencil format.");
+      UNREACHABLE("Unsupported stencil format.");
    }
 }
 
@@ -274,7 +274,7 @@ GENX(pan_emit_afbc_s_attachment)(const struct pan_fb_info *fb,
                           &body_offset, &hdr_row_stride);
    pan_cast_and_pack(payload, AFBC_S_TARGET, cfg) {
       cfg.msaa = mali_sampling_mode(s);
-      cfg.write_format = translate_zs_format(s->format);
+      cfg.write_format = translate_s_format(s->format);
       cfg.block_format = get_afbc_block_format(pref.image->props.modifier);
       cfg.header = header;
       cfg.body_offset = body_offset;
@@ -586,7 +586,7 @@ pan_mfbd_raw_format(unsigned bits)
    case 1024: return MALI_COLOR_FORMAT_RAW1024;
    case 1536: return MALI_COLOR_FORMAT_RAW1536;
    case 2048: return MALI_COLOR_FORMAT_RAW2048;
-   default: unreachable("invalid raw bpp");
+   default: UNREACHABLE("invalid raw bpp");
    }
    /* clang-format on */
 }
@@ -1219,7 +1219,7 @@ pan_sfbd_raw_format(unsigned bits)
    case   64: return MALI_COLOR_FORMAT_2_32B_CHANNELS;
    case   96: return MALI_COLOR_FORMAT_3_32B_CHANNELS;
    case  128: return MALI_COLOR_FORMAT_4_32B_CHANNELS;
-   default: unreachable("invalid raw bpp");
+   default: UNREACHABLE("invalid raw bpp");
    }
    /* clang-format on */
 }

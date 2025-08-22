@@ -281,7 +281,7 @@ panvk_meta_desc_copy_rsd(struct panvk_device *dev)
    nir_builder b = nir_builder_init_simple_shader(
       MESA_SHADER_COMPUTE,
       pan_shader_get_compiler_options(
-         pan_arch(phys_dev->kmod.props.gpu_prod_id)),
+         pan_arch(phys_dev->kmod.props.gpu_id)),
       "%s", "desc_copy");
 
    /* We actually customize that at execution time to issue the
@@ -295,10 +295,11 @@ panvk_meta_desc_copy_rsd(struct panvk_device *dev)
    single_desc_copy(&b, desc_copy_id);
 
    struct pan_compile_inputs inputs = {
-      .gpu_id = phys_dev->kmod.props.gpu_prod_id,
+      .gpu_id = phys_dev->kmod.props.gpu_id,
    };
 
    pan_shader_preprocess(b.shader, inputs.gpu_id);
+   pan_shader_postprocess(b.shader, inputs.gpu_id);
 
    VkResult result = panvk_per_arch(create_internal_shader)(
       dev, b.shader, &inputs, &shader);
@@ -334,7 +335,7 @@ out:
 
 VkResult
 panvk_per_arch(meta_get_copy_desc_job)(
-   struct panvk_cmd_buffer *cmdbuf, const struct panvk_shader *shader,
+   struct panvk_cmd_buffer *cmdbuf, const struct panvk_shader_variant *shader,
    const struct panvk_descriptor_state *desc_state,
    const struct panvk_shader_desc_state *shader_desc_state,
    uint32_t attrib_buf_idx_offset, struct pan_ptr *job_desc)

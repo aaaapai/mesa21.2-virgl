@@ -20,9 +20,11 @@
 #include "panvk_cmd_push_constant.h"
 #include "panvk_device.h"
 #include "panvk_entrypoints.h"
+#include "panvk_instr.h"
 #include "panvk_macros.h"
 #include "panvk_meta.h"
 #include "panvk_physical_device.h"
+#include "panvk_tracepoints.h"
 
 #include "pan_desc.h"
 #include "pan_encoder.h"
@@ -42,7 +44,8 @@ prepare_driver_set(struct panvk_cmd_buffer *cmdbuf)
 
    const struct panvk_descriptor_state *desc_state =
       &cmdbuf->state.compute.desc_state;
-   const struct panvk_shader *cs = cmdbuf->state.compute.shader;
+   const struct panvk_shader_variant *cs =
+      panvk_shader_only_variant(cmdbuf->state.compute.shader);
    uint32_t desc_count = cs->desc_info.dyn_bufs.count + 1;
    struct pan_ptr driver_set = panvk_cmd_alloc_dev_mem(
       cmdbuf, desc, desc_count * PANVK_DESCRIPTOR_SIZE, PANVK_DESCRIPTOR_SIZE);
@@ -66,10 +69,9 @@ prepare_driver_set(struct panvk_cmd_buffer *cmdbuf)
 }
 
 uint64_t
-panvk_per_arch(cmd_dispatch_prepare_tls)(struct panvk_cmd_buffer *cmdbuf,
-                                         const struct panvk_shader *shader,
-                                         const struct pan_compute_dim *dim,
-                                         bool indirect)
+panvk_per_arch(cmd_dispatch_prepare_tls)(
+   struct panvk_cmd_buffer *cmdbuf, const struct panvk_shader_variant *shader,
+   const struct pan_compute_dim *dim, bool indirect)
 {
    struct panvk_physical_device *phys_dev =
       to_panvk_physical_device(cmdbuf->vk.base.device->physical);
@@ -121,7 +123,8 @@ panvk_per_arch(cmd_dispatch_prepare_tls)(struct panvk_cmd_buffer *cmdbuf,
 static void
 cmd_dispatch(struct panvk_cmd_buffer *cmdbuf, struct panvk_dispatch_info *info)
 {
-   const struct panvk_shader *shader = cmdbuf->state.compute.shader;
+   const struct panvk_shader_variant *shader =
+      panvk_shader_only_variant(cmdbuf->state.compute.shader);
    VkResult result;
 
    /* If there's no compute shader, we can skip the dispatch. */
@@ -169,8 +172,7 @@ cmd_dispatch(struct panvk_cmd_buffer *cmdbuf, struct panvk_dispatch_info *info)
    if (result != VK_SUCCESS)
       return;
 
-   result = panvk_per_arch(cmd_prepare_push_uniforms)(
-      cmdbuf, cmdbuf->state.compute.shader, 1);
+   result = panvk_per_arch(cmd_prepare_push_uniforms)(cmdbuf, shader, 1);
    if (result != VK_SUCCESS)
       return;
 
@@ -224,12 +226,15 @@ cmd_dispatch(struct panvk_cmd_buffer *cmdbuf, struct panvk_dispatch_info *info)
       }
       cs_move32_to(b, cs_sr_reg32(b, COMPUTE, WG_SIZE),
                    wg_size.opaque[0]);
-      cs_move32_to(b, cs_sr_reg32(b, COMPUTE, JOB_OFFSET_X),
-                   info->wg_base.x * shader->cs.local_size.x);
-      cs_move32_to(b, cs_sr_reg32(b, COMPUTE, JOB_OFFSET_Y),
-                   info->wg_base.y * shader->cs.local_size.y);
-      cs_move32_to(b, cs_sr_reg32(b, COMPUTE, JOB_OFFSET_Z),
-                   info->wg_base.z * shader->cs.local_size.z);
+
+      /* global_id and wg_id in NIR are expected to have base_workgroup_id added.
+       * Because job offset doesn't apply to wg_id on Mali, we set this to 0.
+       * XXX: We could teach nir_lower_system_values how to handle Mali weird
+       * case. */
+      cs_move32_to(b, cs_sr_reg32(b, COMPUTE, JOB_OFFSET_X), 0);
+      cs_move32_to(b, cs_sr_reg32(b, COMPUTE, JOB_OFFSET_Y), 0);
+      cs_move32_to(b, cs_sr_reg32(b, COMPUTE, JOB_OFFSET_Z), 0);
+
       if (indirect) {
          /* Load parameters from indirect buffer and update workgroup count
           * registers and sysvals */
@@ -308,8 +313,9 @@ cmd_dispatch(struct panvk_cmd_buffer *cmdbuf, struct panvk_dispatch_info *info)
    cs_add64(b, sync_addr, sync_addr,
             PANVK_SUBQUEUE_COMPUTE * sizeof(struct panvk_cs_sync64));
    cs_move64_to(b, add_val, 1);
-   cs_sync64_add(b, true, MALI_CS_SYNC_SCOPE_CSG, add_val, sync_addr,
-                 cs_defer_indirect());
+   panvk_instr_sync64_add(cmdbuf, PANVK_SUBQUEUE_COMPUTE, true,
+                          MALI_CS_SYNC_SCOPE_CSG, add_val, sync_addr,
+                          cs_defer_indirect());
 #else
    struct cs_index sync_addr = cs_scratch_reg64(b, 0);
    struct cs_index iter_sb = cs_scratch_reg32(b, 2);
@@ -327,8 +333,9 @@ cmd_dispatch(struct panvk_cmd_buffer *cmdbuf, struct panvk_dispatch_info *info)
    cs_match(b, iter_sb, cmp_scratch) {
 #define CASE(x)                                                                \
    cs_case(b, SB_ITER(x)) {                                                    \
-      cs_sync64_add(b, true, MALI_CS_SYNC_SCOPE_CSG, add_val, sync_addr,       \
-                    cs_defer(SB_WAIT_ITER(x), SB_ID(DEFERRED_SYNC)));          \
+      panvk_instr_sync64_add(cmdbuf, PANVK_SUBQUEUE_COMPUTE, true,             \
+                             MALI_CS_SYNC_SCOPE_CSG, add_val, sync_addr,       \
+                             cs_defer(SB_WAIT_ITER(x), SB_ID(DEFERRED_SYNC))); \
    }
 
       CASE(0)
@@ -351,11 +358,34 @@ panvk_per_arch(CmdDispatchBase)(VkCommandBuffer commandBuffer,
                                 uint32_t groupCountY, uint32_t groupCountZ)
 {
    VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
+   const struct panvk_shader_variant *shader =
+      panvk_shader_only_variant(cmdbuf->state.compute.shader);
    struct panvk_dispatch_info info = {
       .wg_base = {baseGroupX, baseGroupY, baseGroupZ},
       .direct.wg_count = {groupCountX, groupCountY, groupCountZ},
    };
+
+   panvk_per_arch(panvk_instr_begin_work)(PANVK_SUBQUEUE_COMPUTE, cmdbuf,
+                                          PANVK_INSTR_WORK_TYPE_DISPATCH);
+
    cmd_dispatch(cmdbuf, &info);
+
+   struct panvk_instr_end_args instr_info = {
+      .dispatch = {
+         .base_group_x = baseGroupX,
+         .base_group_y = baseGroupY,
+         .base_group_z = baseGroupZ,
+         .group_count_x = groupCountX,
+         .group_count_y = groupCountY,
+         .group_count_z = groupCountZ,
+         .group_size_x = shader->cs.local_size.x,
+         .group_size_y = shader->cs.local_size.y,
+         .group_size_z = shader->cs.local_size.z,
+      }};
+   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+   panvk_per_arch(panvk_instr_end_work_async)(
+      PANVK_SUBQUEUE_COMPUTE, cmdbuf, PANVK_INSTR_WORK_TYPE_DISPATCH,
+      &instr_info, cs_defer(dev->csf.sb.all_iters_mask, 0));
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -368,5 +398,17 @@ panvk_per_arch(CmdDispatchIndirect)(VkCommandBuffer commandBuffer,
    struct panvk_dispatch_info info = {
       .indirect.buffer_dev_addr = buffer_gpu,
    };
+
+   panvk_per_arch(panvk_instr_begin_work)(
+      PANVK_SUBQUEUE_COMPUTE, cmdbuf, PANVK_INSTR_WORK_TYPE_DISPATCH_INDIRECT);
+
    cmd_dispatch(cmdbuf, &info);
+
+   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+   struct panvk_instr_end_args instr_info = {.dispatch_indirect = {
+                                                .buffer_gpu = buffer_gpu,
+                                             }};
+   panvk_per_arch(panvk_instr_end_work_async)(
+      PANVK_SUBQUEUE_COMPUTE, cmdbuf, PANVK_INSTR_WORK_TYPE_DISPATCH_INDIRECT,
+      &instr_info, cs_defer(dev->csf.sb.all_iters_mask, 0));
 }

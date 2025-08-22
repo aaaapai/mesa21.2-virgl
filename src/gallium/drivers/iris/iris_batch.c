@@ -248,7 +248,7 @@ iris_init_batch(struct iris_context *ice,
                                          stderr, decode_flags, NULL,
                                          decode_get_bo, decode_get_state_size, batch);
 #else
-         unreachable("no elk support");
+         UNREACHABLE("no elk support");
 #endif
       }
       batch->decoder.dynamic_base = IRIS_MEMZONE_DYNAMIC_START;
@@ -281,7 +281,7 @@ iris_init_batches(struct iris_context *ice)
       iris_xe_init_batches(ice);
       break;
    default:
-      unreachable("missing");
+      UNREACHABLE("missing");
    }
 
    iris_foreach_batch(ice, batch)
@@ -540,7 +540,7 @@ iris_batch_free(const struct iris_context *ice, struct iris_batch *batch)
       iris_xe_destroy_batch(batch);
       break;
    default:
-      unreachable("missing");
+      UNREACHABLE("missing");
    }
 
    iris_destroy_batch_measure(batch->measure);
@@ -664,7 +664,7 @@ iris_finish_batch(struct iris_batch *batch)
 {
    const struct intel_device_info *devinfo = batch->screen->devinfo;
 
-   if (devinfo->ver == 12 && batch->name == IRIS_BATCH_RENDER) {
+   if (devinfo->ver == 12) {
       /* We re-emit constants at the beginning of every batch as a hardware
        * bug workaround, so invalidate indirect state pointers in order to
        * save ourselves the overhead of restoring constants redundantly when
@@ -717,7 +717,7 @@ replace_kernel_ctx(struct iris_batch *batch)
    case INTEL_KMD_TYPE_XE:
       return iris_xe_replace_batch(batch);
    default:
-      unreachable("missing");
+      UNREACHABLE("missing");
       return false;
    }
 }

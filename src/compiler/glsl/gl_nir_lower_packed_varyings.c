@@ -270,8 +270,8 @@ create_or_update_packed_varying(struct lower_packed_varyings_state *state,
       assert(state->components[slot] != 0);
       assert(name);
 
-      nir_variable *packed_var = rzalloc(state->shader, nir_variable);
-      packed_var->name = ralloc_asprintf(packed_var, "packed:%s", name);
+      nir_variable *packed_var = nir_variable_create_zeroed(state->shader);
+      nir_variable_set_namef(state->shader, packed_var, "packed:%s", name);
       packed_var->data.mode = state->mode;
 
       bool is_interpolation_flat =
@@ -316,7 +316,7 @@ create_or_update_packed_varying(struct lower_packed_varyings_state *state,
        */
       if (state->gs_input_vertices == 0 || vertex_index == 0) {
          assert(name);
-         ralloc_asprintf_append((char **) &var->name, ",%s", name);
+         nir_variable_append_namef(state->shader, var, ",%s", name);
       }
    }
 }
@@ -1028,9 +1028,9 @@ gl_nir_lower_packed_varyings(const struct gl_constants *consts,
                                            locations_used);
 
    /* Determine if the shader interface is exposed to api query */
-   struct gl_linked_shader *linked_shaders[MESA_SHADER_STAGES];
+   struct gl_linked_shader *linked_shaders[MESA_SHADER_MESH_STAGES];
    unsigned num_shaders = 0;
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       if (prog->_LinkedShaders[i])
          linked_shaders[num_shaders++] = prog->_LinkedShaders[i];
    }

@@ -34,7 +34,7 @@
  * for fragment shaders to insert conditional kills based on the inter-
  * polated CLIPDIST
  *
- * NOTE: should be run after nir_lower_outputs_to_temporaries() (or at
+ * NOTE: should be run after nir_lower_io_var_to_temporaries() (or at
  * least in scenarios where you can count on each output written once
  * and only once).
  */
@@ -43,7 +43,7 @@ static nir_variable *
 create_clipdist_var(nir_shader *shader,
                     bool output, gl_varying_slot slot, unsigned array_size)
 {
-   nir_variable *var = rzalloc(shader, nir_variable);
+   nir_variable *var = nir_variable_create_zeroed(shader);
 
    if (output) {
       var->data.driver_location = shader->num_outputs;
@@ -54,7 +54,7 @@ create_clipdist_var(nir_shader *shader,
       var->data.mode = nir_var_shader_in;
       shader->num_inputs += MAX2(1, DIV_ROUND_UP(array_size, 4));
    }
-   var->name = ralloc_asprintf(var, "clipdist_%d", slot - VARYING_SLOT_CLIP_DIST0);
+   nir_variable_set_namef(shader, var, "clipdist_%d", slot - VARYING_SLOT_CLIP_DIST0);
    var->data.index = 0;
    var->data.location = slot;
 
@@ -386,7 +386,7 @@ nir_lower_clip_vs(nir_shader *shader, unsigned ucp_enables, bool use_vars,
     * if there is a good way to sanity check this, but for now the
     * users of this pass don't support sub-routines.
     */
-   assert(impl->end_block->predecessors->entries == 1);
+   assert(impl->end_block->predecessors.entries == 1);
    b.cursor = nir_after_impl(impl);
 
    struct lower_clip_state state = { NULL };

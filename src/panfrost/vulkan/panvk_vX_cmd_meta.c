@@ -6,6 +6,14 @@
 
 #include "panvk_cmd_meta.h"
 #include "panvk_entrypoints.h"
+#include "panvk_tracepoints.h"
+#if PAN_ARCH >= 10
+#include "csf/panvk_instr.h"
+#endif
+
+#include "panvk_cmd_precomp.h"
+#include "libpan.h"
+#include "libpan_dgc.h"
 
 static bool
 copy_to_image_use_gfx_pipeline(struct panvk_device *dev,
@@ -45,6 +53,11 @@ panvk_per_arch(cmd_meta_compute_start)(
    save_ctx->push_constants = cmdbuf->state.push_constants;
    save_ctx->cs.shader = cmdbuf->state.compute.shader;
    save_ctx->cs.desc = cmdbuf->state.compute.cs.desc;
+
+#if PAN_ARCH >= 10
+   panvk_per_arch(panvk_instr_begin_work)(PANVK_SUBQUEUE_COMPUTE, cmdbuf,
+                                          PANVK_INSTR_WORK_TYPE_META);
+#endif
 }
 
 void
@@ -54,6 +67,13 @@ panvk_per_arch(cmd_meta_compute_end)(
 {
    struct panvk_descriptor_set *push_set0 =
       cmdbuf->state.compute.desc_state.push_sets[0];
+
+#if PAN_ARCH >= 10
+   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+   panvk_per_arch(panvk_instr_end_work_async)(
+      PANVK_SUBQUEUE_COMPUTE, cmdbuf, PANVK_INSTR_WORK_TYPE_META, NULL,
+      cs_defer(dev->csf.sb.all_iters_mask, 0));
+#endif
 
    cmdbuf->state.compute.desc_state.sets[0] = save_ctx->set0;
    if (save_ctx->push_set0.desc_count) {
@@ -103,11 +123,21 @@ panvk_per_arch(cmd_meta_gfx_start)(
    save_ctx->occlusion_query = cmdbuf->state.gfx.occlusion_query;
 
    /* Ensure occlusion queries are disabled */
+#if PAN_ARCH >= 10
+   cmdbuf->state.gfx.occlusion_query.syncobj = 0;
+#endif
    cmdbuf->state.gfx.occlusion_query.ptr = 0;
    cmdbuf->state.gfx.occlusion_query.mode = MALI_OCCLUSION_MODE_DISABLED;
    gfx_state_set_dirty(cmdbuf, OQ);
 
    cmdbuf->state.gfx.vk_meta = true;
+
+#if PAN_ARCH >= 10
+   panvk_per_arch(panvk_instr_begin_work)(PANVK_SUBQUEUE_VERTEX_TILER, cmdbuf,
+                                          PANVK_INSTR_WORK_TYPE_META);
+   panvk_per_arch(panvk_instr_begin_work)(PANVK_SUBQUEUE_FRAGMENT, cmdbuf,
+                                          PANVK_INSTR_WORK_TYPE_META);
+#endif
 }
 
 void
@@ -117,6 +147,16 @@ panvk_per_arch(cmd_meta_gfx_end)(
 {
    struct panvk_descriptor_set *push_set0 =
       cmdbuf->state.gfx.desc_state.push_sets[0];
+
+#if PAN_ARCH >= 10
+   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+   panvk_per_arch(panvk_instr_end_work_async)(
+      PANVK_SUBQUEUE_VERTEX_TILER, cmdbuf, PANVK_INSTR_WORK_TYPE_META, NULL,
+      cs_defer(dev->csf.sb.all_iters_mask, 0));
+   panvk_per_arch(panvk_instr_end_work_async)(
+      PANVK_SUBQUEUE_FRAGMENT, cmdbuf, PANVK_INSTR_WORK_TYPE_META, NULL,
+      cs_defer(dev->csf.sb.all_iters_mask, 0));
+#endif
 
    cmdbuf->state.gfx.desc_state.sets[0] = save_ctx->set0;
    if (save_ctx->push_set0.desc_count) {
@@ -139,6 +179,9 @@ panvk_per_arch(cmd_meta_gfx_end)(
 #if PAN_ARCH < 9
    cmdbuf->state.gfx.vs.attribs = 0;
    cmdbuf->state.gfx.vs.attrib_bufs = 0;
+   cmdbuf->state.gfx.vs.indirect_attribs_infos = 0;
+   cmdbuf->state.gfx.vs.indirect_attrib_bufs_infos = 0;
+   cmdbuf->state.gfx.vs.indirect_varying_bufs_infos = 0;
    cmdbuf->state.gfx.fs.rsd = 0;
 #else
    cmdbuf->state.gfx.fs.desc.res_table = 0;
@@ -533,4 +576,137 @@ panvk_per_arch(CmdCopyImage2)(VkCommandBuffer commandBuffer,
                          VK_PIPELINE_BIND_POINT_COMPUTE);
       panvk_per_arch(cmd_meta_compute_end)(cmdbuf, &save);
    }
+}
+
+static bool
+panvk_image_has_afbc(struct panvk_image *img, VkImageSubresourceRange range)
+{
+   VkImageAspectFlags aspect_mask =
+      vk_image_expand_aspect_mask(&img->vk, range.aspectMask);
+   u_foreach_bit(aspect, aspect_mask) {
+      unsigned plane_index = panvk_plane_index(img->vk.format, aspect);
+      struct panvk_image_plane *plane = &img->planes[plane_index];
+
+      if (drm_is_afbc(plane->image.props.modifier))
+         return true;
+   }
+
+   return false;
+}
+
+static void
+cmd_clear_afbc_metadata(VkCommandBuffer _cmdbuf,
+                        const VkImageMemoryBarrier2 *barrier)
+{
+   VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, _cmdbuf);
+   struct panvk_precomp_ctx precomp_ctx = panvk_per_arch(precomp_cs)(cmdbuf);
+   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+   VK_FROM_HANDLE(panvk_image, img, barrier->image);
+   VkImageSubresourceRange range = barrier->subresourceRange;
+   VkImageAspectFlags aspect_mask =
+      vk_image_expand_aspect_mask(&img->vk, range.aspectMask);
+   uint32_t level_count = vk_image_subresource_level_count(&img->vk, &range);
+   struct panvk_cmd_meta_compute_save_ctx save = {0};
+
+   panvk_per_arch(cmd_meta_compute_start)(cmdbuf, &save);
+
+   u_foreach_bit(aspect, aspect_mask) {
+      unsigned plane_index = panvk_plane_index(img->vk.format, aspect);
+      struct panvk_image_plane *plane = &img->planes[plane_index];
+
+      if (!drm_is_afbc(plane->image.props.modifier))
+         continue;
+
+      for (uint32_t level = range.baseMipLevel;
+            level < range.baseMipLevel + level_count;
+            level++) {
+         const struct pan_image_slice_layout *slayout =
+            &plane->plane.layout.slices[level];
+
+         uint32_t layers_or_slices;
+         if (img->vk.image_type == VK_IMAGE_TYPE_2D) {
+            layers_or_slices =
+               vk_image_subresource_layer_count(&img->vk, &range);
+         } else if (img->vk.image_type == VK_IMAGE_TYPE_3D) {
+            layers_or_slices =
+               vk_image_subresource_slice_count(&dev->vk,
+                  &img->vk,
+                  &(VkImageSubresourceLayers) {
+                     .mipLevel = level,
+                     .baseArrayLayer = range.baseArrayLayer,
+                     .layerCount = range.layerCount,
+                  });
+         } else {
+            UNREACHABLE("Unsupported image type");
+         }
+
+         uint32_t layer_or_slice_stride = slayout->afbc.surface_stride_B;
+
+         uint32_t ptr = plane->plane.base + slayout->offset_B +
+            range.baseArrayLayer * layer_or_slice_stride;
+
+         struct panlib_clear_afbc_metadata_args args = {
+            .p = ptr,
+            .layer_or_slice_stride = layer_or_slice_stride,
+         };
+         panlib_clear_afbc_metadata_struct(&precomp_ctx,
+            panlib_3d(
+               slayout->afbc.header.surface_size_B / 16,
+               layers_or_slices, 1),
+            PANLIB_BARRIER_NONE, args);
+      }
+   }
+
+   panvk_per_arch(cmd_meta_compute_end)(cmdbuf, &save);
+}
+
+/* TODO: pass less data than what's in a VkImageMemoryBarrier2 */
+
+struct panvk_image_layout_transition_handler {
+   void (*cmd)(VkCommandBuffer cmdbuf, const VkImageMemoryBarrier2 *barrier);
+   VkPipelineStageFlags2 stages;
+   VkAccessFlags2 access;
+};
+
+static struct panvk_image_layout_transition_handler
+panvk_get_image_layout_transition_handler(const VkImageMemoryBarrier2 *barrier)
+{
+   VK_FROM_HANDLE(panvk_image, img, barrier->image);
+
+   if (barrier->oldLayout == barrier->newLayout)
+      return (struct panvk_image_layout_transition_handler){0};
+
+   if (barrier->oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
+       panvk_image_has_afbc(img, barrier->subresourceRange)) {
+      return (struct panvk_image_layout_transition_handler){
+         .cmd = cmd_clear_afbc_metadata,
+         .stages = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+         .access = VK_ACCESS_2_MEMORY_WRITE_BIT,
+      };
+   }
+
+   return (struct panvk_image_layout_transition_handler){0};
+}
+
+void
+panvk_per_arch(transition_image_layout_sync_scope)(
+   const VkImageMemoryBarrier2 *barrier,
+   VkPipelineStageFlags2 *out_stages, VkAccessFlags2 *out_access)
+{
+   struct panvk_image_layout_transition_handler handler =
+      panvk_get_image_layout_transition_handler(barrier);
+
+   *out_stages = handler.stages;
+   *out_access = handler.access;
+}
+
+void
+panvk_per_arch(cmd_transition_image_layout)(
+   VkCommandBuffer cmdbuf, const VkImageMemoryBarrier2 *barrier)
+{
+   struct panvk_image_layout_transition_handler handler =
+      panvk_get_image_layout_transition_handler(barrier);
+
+   if (handler.cmd)
+      handler.cmd(cmdbuf, barrier);
 }

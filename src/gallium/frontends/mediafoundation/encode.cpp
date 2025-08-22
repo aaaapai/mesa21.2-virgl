@@ -35,6 +35,8 @@ HRESULT
 CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12EncodeContext )
 {
    HRESULT hr = S_OK;
+   struct pipe_fence_handle *pPipeEncoderInputFenceHandle = nullptr;
+   UINT64 pipeEncoderInputFenceHandleValue = 0u;
    UINT unDiscontinuity = 0;
    LPDX12EncodeContext pDX12EncodeContext;
    UINT uiSubresourceIndex = 0;
@@ -88,33 +90,50 @@ CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12E
       ComPtr<ID3D11DeviceContext4> spDeviceContext4;
       D3D11_TEXTURE2D_DESC d3d11textureDescSrc;
       D3D11_TEXTURE2D_DESC d3d11textureDescDst;
-      CHECKHR_GOTO( spDXGIBuffer->GetResource( IID_PPV_ARGS( &spTexture ) ), done );
-
       D3D11_TEXTURE2D_DESC desc = {};
+      CHECKHR_GOTO( spDXGIBuffer->GetResource( IID_PPV_ARGS( &spTexture ) ), done );
       spTexture->GetDesc( &desc );
       textureWidth = desc.Width;
       textureHeight = desc.Height;
 
-      CHECKHR_GOTO( spTexture.As( &spDXGIResource1 ), done );
-      spTexture->GetDesc( &d3d11textureDescSrc );
-      if( SUCCEEDED( spDXGIResource1->CreateSharedHandle( nullptr, DXGI_SHARED_RESOURCE_READ, nullptr, &hTexture ) ) )
+      //
+      // Attempt to create a shared handle from the DX11 texture that can
+      // be opened as an ID3D12Resource to avoid a copy from DX11 -> DX12
+      // and place the opened video buffer from the shared resource in
+      // pDX12EncodeContext->pPipeVideoBuffer
+      // video_buffer_from_handle expects data to be on first subresource (e.g no texture array)
+      //
+      if (uiSubresourceIndex == 0)
       {
-         // If the CreateSharedHandle() call works, then the DX11 texture being given to us was created with sharing
-         // ability. This will simplify our live as we can map it more easily into DX12 space on the same device, and
-         // then use it.
-         CHECKBOOL_GOTO( uiSubresourceIndex == 0,
-                         MF_E_UNEXPECTED,
-                         done );   // video_buffer_from_handle expects data to be on first subresource (e.g no texture array)
+         CHECKHR_GOTO( spTexture.As( &spDXGIResource1 ), done );
+         if(SUCCEEDED(spDXGIResource1->CreateSharedHandle( nullptr, DXGI_SHARED_RESOURCE_READ, nullptr, &hTexture )))
+         {
+            // Open the pipe video buffer from the hTexture of the source DX11 texture directly
+            // as an ID3D12Resource, wrapped in pDX12EncodeContext->pPipeVideoBuffer
+            winsysHandle.handle = hTexture;
+            winsysHandle.type = WINSYS_HANDLE_TYPE_FD;
+            pDX12EncodeContext->pPipeVideoBuffer = m_pPipeContext->video_buffer_from_handle( m_pPipeContext, NULL, &winsysHandle, 0 );
+         }
+      }
 
+      // On successful opening of the DX11 shared texture as an ID3D12Resource, wrapped in pDX12EncodeContext->pPipeVideoBuffer
+      // signal readiness to the consumer of the texture's fence
+      //
+      // Otherwise, if the interop without a copy into pDX12EncodeContext->pPipeVideoBuffer failed, fallback to doing the copy
+      // and placing the copy destination texture in pDX12EncodeContext->pPipeVideoBuffer
+      //
+      if (pDX12EncodeContext->pPipeVideoBuffer != nullptr)
+      {
          m_spDevice11->GetImmediateContext3( &spDeviceContext3 );
          CHECKHR_GOTO( spDeviceContext3.As( &spDeviceContext4 ), done );
 
          // This will signal the staging fence the d3d12 mesa backend is consuming
-         spDeviceContext4->Signal( m_spStagingFence11.Get(), m_SyncFenceValue );
+         spDeviceContext4->Signal( m_spStagingFence11.Get(), m_CurrentSyncFenceValue );
          debug_printf( "[dx12 hmft 0x%p] DX11 *shared* input sample\n", this );
       }
       else
       {
+         spTexture->GetDesc( &d3d11textureDescSrc );
          // We need to create a shareable texture and copy into it
          ComPtr<ID3D11Texture2D> spSharedTexture;
          D3D11_BOX d3d11Box = { 0 };
@@ -125,6 +144,19 @@ CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12E
          d3d11textureDescDst.Width = textureWidth;
          d3d11textureDescDst.Height = textureHeight;
          CHECKHR_GOTO( m_spDevice11->CreateTexture2D( &d3d11textureDescDst, nullptr, &spSharedTexture ), done );
+
+         // Open the pipe video buffer from the hTexture of the copy destination texture
+         CHECKHR_GOTO( spSharedTexture.As( &spDXGIResource1 ), done );
+         CHECKHR_GOTO( spDXGIResource1->CreateSharedHandle( nullptr, DXGI_SHARED_RESOURCE_READ, nullptr, &hTexture ), done );
+         debug_printf( "[dx12 hmft 0x%p] DX11 input sample\n", this );
+         winsysHandle.handle = hTexture;
+         winsysHandle.type = WINSYS_HANDLE_TYPE_FD;
+         CHECKNULL_GOTO(
+            pDX12EncodeContext->pPipeVideoBuffer = m_pPipeContext->video_buffer_from_handle( m_pPipeContext, NULL, &winsysHandle, 0 ),
+            MF_E_UNEXPECTED,
+            done );
+
+         // On successful opening of shared texture, submit the copy and signal readiness to the consumer of the texture
          m_spDevice11->GetImmediateContext3( &spDeviceContext3 );
          d3d11Box.right = d3d11textureDescSrc.Width;
          d3d11Box.bottom = d3d11textureDescSrc.Height;
@@ -135,19 +167,8 @@ CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12E
          // Since we're signaling from the D3D11 context on a shared fence, the signal
          // will happen after the d3d11 context copy is done.
          CHECKHR_GOTO( spDeviceContext3.As( &spDeviceContext4 ), done );
-         spDeviceContext4->Signal( m_spStagingFence11.Get(), m_SyncFenceValue );
-         CHECKHR_GOTO( spSharedTexture.As( &spDXGIResource1 ), done );
-         CHECKHR_GOTO( spDXGIResource1->CreateSharedHandle( nullptr, DXGI_SHARED_RESOURCE_READ, nullptr, &hTexture ), done );
-         debug_printf( "[dx12 hmft 0x%p] DX11 input sample\n", this );
+         spDeviceContext4->Signal( m_spStagingFence11.Get(), m_CurrentSyncFenceValue );
       }
-
-      // We have an hTexture from one of the two paths above
-      winsysHandle.handle = hTexture;
-      winsysHandle.type = WINSYS_HANDLE_TYPE_FD;
-      CHECKNULL_GOTO(
-         pDX12EncodeContext->pPipeVideoBuffer = m_pPipeContext->video_buffer_from_handle( m_pPipeContext, NULL, &winsysHandle, 0 ),
-         MF_E_UNEXPECTED,
-         done );
    }
    else
    {
@@ -169,7 +190,7 @@ CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12E
       // This will signal the staging fence the d3d12 mesa backend is consuming
       // Since we have a Wait() on spStagingQueue added by EnqueueResourceReadyWait, this will only happen after MF
       // triggered completion on the input
-      m_spStagingQueue->Signal( m_spStagingFence12.Get(), m_SyncFenceValue );
+      m_spStagingQueue->Signal( m_spStagingFence12.Get(), m_CurrentSyncFenceValue );
 
       winsysHandle.com_obj = spResource.Get();
       winsysHandle.type = WINSYS_HANDLE_TYPE_D3D12_RES;
@@ -183,9 +204,25 @@ CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12E
       debug_printf( "[dx12 hmft 0x%p] DX12 input sample\n", this );
    }
 
-#if ENCODE_WITH_TWO_PASS
-   if( m_pPipeVideoCodec->two_pass.enable && ( m_pPipeVideoCodec->two_pass.pow2_downscale_factor > 0 ) )
+
+   //
+   // If two pass is disabled, we just need to set the input fence and input fence value
+   // to the input texture fence/value.
+   //
+   // Otherwise, when two pass is enabled, we need to downscale the input texture
+   // for which we need to sync the readiness of the input texture against
+   // the vpblit input fence, and then sync the encoder readiness fence (e.g pPicInfo->base.in_fence)
+   // against the vpblit output fence
+   //
+
+   if( !m_pPipeVideoCodec->two_pass.enable || ( m_pPipeVideoCodec->two_pass.pow2_downscale_factor == 0 ) )
    {
+      pPipeEncoderInputFenceHandle = m_pPipeFenceHandle;
+      pipeEncoderInputFenceHandleValue = m_CurrentSyncFenceValue;
+   }
+   else
+   {  // ENCODE_WITH_TWO_PASS code block
+      
       // TODO: In case the app sends the downscaled input remove this
 
       //
@@ -202,10 +239,12 @@ CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12E
       pDX12EncodeContext->pDownscaledTwoPassPipeVideoBuffer = m_pPipeContext->create_video_buffer( m_pPipeContext, &templ );
 
       struct pipe_vpp_desc vpblit_params = {};
-      struct pipe_fence_handle *dst_surface_fence = nullptr;
 
-      vpblit_params.src_surface_fence = m_pPipeFenceHandle;   // input surface fence (driver input)
-      vpblit_params.base.fence = &dst_surface_fence;          // Output surface fence (driver output)
+      vpblit_params.base.in_fence = m_pPipeFenceHandle;   // input surface fence (driver input)
+      vpblit_params.base.in_fence_value = pipeEncoderInputFenceHandleValue;   // input surface fence value (driver input)
+
+      vpblit_params.base.out_fence = &pPipeEncoderInputFenceHandle;          // Output surface fence (driver output)
+      pipeEncoderInputFenceHandleValue = 0u; // pPipeEncoderInputFenceHandle is PIPE_FD_TYPE_NATIVE_SYNC so doesn't need the value
 
       vpblit_params.base.input_format = pDX12EncodeContext->pPipeVideoBuffer->buffer_format;
       vpblit_params.base.output_format = pDX12EncodeContext->pDownscaledTwoPassPipeVideoBuffer->buffer_format;
@@ -234,16 +273,9 @@ CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12E
                       done );
       m_pPipeVideoBlitter->flush( m_pPipeVideoBlitter );
 
-      assert( *vpblit_params.base.fence );   // Driver must have returned the completion fence
-      // Wait for downscaling completion before encode can proceed
-
-      ASSERTED bool finished = m_pPipeVideoCodec->context->screen->fence_finish( m_pPipeVideoCodec->context->screen,
-                                                                                 NULL, /*passing non NULL resets GRFX context*/
-                                                                                 *vpblit_params.base.fence,
-                                                                                 OS_TIMEOUT_INFINITE );
-      assert( finished );
+      assert(pPipeEncoderInputFenceHandle);   // Driver must have returned the completion fence
+      pDX12EncodeContext->pDownscaledTwoPassPipeVideoBufferCompletionFence = pPipeEncoderInputFenceHandle; // For destruction of the fence later
    }
-#endif   // ENCODE_WITH_TWO_PASS
 
    // validate texture dimensions with surface alignment here for now, will add handling for non-aligned textures later
    if( textureWidth % surfaceWidthAlignment != 0 || textureHeight % surfaceHeightAlignment != 0 )
@@ -345,7 +377,7 @@ CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12E
             done );
       }
 
-      if( m_EncoderCapabilities.m_HWSupportStatsSATDMapOutput.bits.supported )
+      if( m_EncoderCapabilities.m_HWSupportStatsSATDMapOutput.bits.supported && m_uiVideoSatdMapBlockSize > 0 )
       {
          uint32_t block_size = ( 1 << m_EncoderCapabilities.m_HWSupportStatsSATDMapOutput.bits.log2_values_block_size );
          templ.format = (enum pipe_format) m_EncoderCapabilities.m_HWSupportStatsSATDMapOutput.bits.pipe_pixel_format;
@@ -423,6 +455,8 @@ CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12E
    pDX12EncodeContext->pVlScreen = m_pVlScreen;   // weakref
 
    // Call the helper for encoder specific work
+   pDX12EncodeContext->encoderPicInfo.base.in_fence = pPipeEncoderInputFenceHandle;
+   pDX12EncodeContext->encoderPicInfo.base.in_fence_value = pipeEncoderInputFenceHandleValue;
    CHECKHR_GOTO( PrepareForEncodeHelper( pDX12EncodeContext, bReceivedDirtyRectBlob, dirtyRectFrameNum ), done );
 
    {
@@ -499,8 +533,7 @@ CDX12EncHMFT::PrepareForEncode( IMFSample *pSample, LPDX12EncodeContext *ppDX12E
       }
    }
 
-   // Set the fence to be waited on m_SyncFenceValue and increment the value for the next frame
-   m_pVlScreen->pscreen->set_fence_timeline_value( m_pVlScreen->pscreen, m_pPipeFenceHandle, m_SyncFenceValue++ );
+   m_CurrentSyncFenceValue++;   // increment the fence value for the next sync fence
 
 done:
    if( SUCCEEDED( hr ) )

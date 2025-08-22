@@ -4,11 +4,9 @@ use crate::pipe::resource::*;
 use crate::pipe::screen::*;
 use crate::pipe::transfer::*;
 
-use mesa_rust_gen::pipe_fd_type::*;
 use mesa_rust_gen::*;
 use mesa_rust_util::has_required_feature;
 
-use std::mem::size_of;
 use std::os::raw::*;
 use std::ptr;
 use std::ptr::*;
@@ -235,6 +233,35 @@ impl PipeContext {
         self.resource_copy_region(src, dst, dst_offset, bx)
     }
 
+    pub fn has_buffer_texture_copies(&self) -> bool {
+        unsafe { self.pipe.as_ref() }.image_copy_buffer.is_some()
+    }
+
+    /// Copies between a buffer and a texture if supported by the context
+    /// ([Self::has_buffer_texture_copies]).
+    pub fn resource_copy_buffer_texture(
+        &self,
+        src: &PipeResource,
+        dst: &PipeResource,
+        buffer_offset: u32,
+        bx: &pipe_box,
+    ) {
+        debug_assert_ne!(src.is_buffer(), dst.is_buffer());
+
+        unsafe {
+            self.pipe.as_ref().image_copy_buffer.unwrap()(
+                self.pipe.as_ptr(),
+                dst.pipe(),
+                src.pipe(),
+                buffer_offset,
+                0,
+                0,
+                0,
+                bx,
+            );
+        }
+    }
+
     fn resource_map(
         &self,
         res: &PipeResource,
@@ -366,7 +393,7 @@ impl PipeContext {
         unsafe {
             self.pipe.as_ref().bind_sampler_states.unwrap()(
                 self.pipe.as_ptr(),
-                pipe_shader_type::PIPE_SHADER_COMPUTE,
+                mesa_shader_stage::MESA_SHADER_COMPUTE,
                 0,
                 samplers.len() as u32,
                 samplers.as_mut_ptr(),
@@ -379,7 +406,7 @@ impl PipeContext {
         unsafe {
             self.pipe.as_ref().bind_sampler_states.unwrap()(
                 self.pipe.as_ptr(),
-                pipe_shader_type::PIPE_SHADER_COMPUTE,
+                mesa_shader_stage::MESA_SHADER_COMPUTE,
                 0,
                 count,
                 samplers.as_mut_ptr(),
@@ -401,7 +428,7 @@ impl PipeContext {
         unsafe {
             self.pipe.as_ref().set_constant_buffer.unwrap()(
                 self.pipe.as_ptr(),
-                pipe_shader_type::PIPE_SHADER_COMPUTE,
+                mesa_shader_stage::MESA_SHADER_COMPUTE,
                 idx,
                 false,
                 &cb,
@@ -419,7 +446,7 @@ impl PipeContext {
         unsafe {
             self.pipe.as_ref().set_constant_buffer.unwrap()(
                 self.pipe.as_ptr(),
-                pipe_shader_type::PIPE_SHADER_COMPUTE,
+                mesa_shader_stage::MESA_SHADER_COMPUTE,
                 idx,
                 false,
                 if data.is_empty() { ptr::null() } else { &cb },
@@ -456,7 +483,7 @@ impl PipeContext {
 
             self.pipe.as_ref().set_constant_buffer.unwrap()(
                 self.pipe.as_ptr(),
-                pipe_shader_type::PIPE_SHADER_COMPUTE,
+                mesa_shader_stage::MESA_SHADER_COMPUTE,
                 idx,
                 true,
                 &cb,
@@ -512,14 +539,14 @@ impl PipeContext {
         }
     }
 
-    pub fn set_sampler_views(&self, mut views: Vec<PipeSamplerView>) {
+    pub fn set_sampler_views(&self, mut views: Vec<PipeSamplerView>, unbind_trailing: u32) {
         unsafe {
             self.pipe.as_ref().set_sampler_views.unwrap()(
                 self.pipe.as_ptr(),
-                pipe_shader_type::PIPE_SHADER_COMPUTE,
+                mesa_shader_stage::MESA_SHADER_COMPUTE,
                 0,
                 views.len() as u32,
-                0,
+                unbind_trailing,
                 PipeSamplerView::as_pipe(views.as_mut_slice()),
             );
         }
@@ -530,7 +557,7 @@ impl PipeContext {
         unsafe {
             self.pipe.as_ref().set_sampler_views.unwrap()(
                 self.pipe.as_ptr(),
-                pipe_shader_type::PIPE_SHADER_COMPUTE,
+                mesa_shader_stage::MESA_SHADER_COMPUTE,
                 0,
                 count,
                 0,
@@ -539,15 +566,15 @@ impl PipeContext {
         }
     }
 
-    pub fn set_shader_images(&self, images: &[PipeImageView]) {
+    pub fn set_shader_images(&self, images: &[PipeImageView], unbind_trailing: u32) {
         let images = PipeImageView::slice_to_pipe(images);
         unsafe {
             self.pipe.as_ref().set_shader_images.unwrap()(
                 self.pipe.as_ptr(),
-                pipe_shader_type::PIPE_SHADER_COMPUTE,
+                mesa_shader_stage::MESA_SHADER_COMPUTE,
                 0,
                 images.len() as u32,
-                0,
+                unbind_trailing,
                 images.as_ptr(),
             )
         }
@@ -557,7 +584,7 @@ impl PipeContext {
         unsafe {
             self.pipe.as_ref().set_shader_images.unwrap()(
                 self.pipe.as_ptr(),
-                pipe_shader_type::PIPE_SHADER_COMPUTE,
+                mesa_shader_stage::MESA_SHADER_COMPUTE,
                 0,
                 count,
                 0,
@@ -604,18 +631,19 @@ impl PipeContext {
         unsafe {
             let mut fence = ptr::null_mut();
             self.pipe.as_ref().flush.unwrap()(self.pipe.as_ptr(), &mut fence, 0);
-            PipeFence::new(fence, &self.screen)
+            // TODO: handle properly
+            PipeFence::new(fence, &self.screen).unwrap()
         }
     }
 
-    pub fn import_fence(&self, fence_fd: &FenceFd) -> PipeFence {
+    pub fn import_fence(&self, fence_fd: &FenceFd, fence_type: pipe_fd_type) -> Option<PipeFence> {
         unsafe {
             let mut fence = ptr::null_mut();
             self.pipe.as_ref().create_fence_fd.unwrap()(
                 self.pipe.as_ptr(),
                 &mut fence,
                 fence_fd.fd,
-                PIPE_FD_TYPE_NATIVE_SYNC,
+                fence_type,
             );
             PipeFence::new(fence, &self.screen)
         }
@@ -652,6 +680,11 @@ impl PipeContext {
             }
         }
     }
+
+    pub fn has_fence_server(&self) -> bool {
+        let pipe = unsafe { self.pipe().as_ref() };
+        pipe.fence_server_signal.is_some() && pipe.fence_server_sync.is_some()
+    }
 }
 
 impl Drop for PipeContext {
@@ -683,7 +716,7 @@ fn has_required_cbs(context: &pipe_context) -> bool {
         & has_required_feature!(context, launch_grid)
         & has_required_feature!(context, memory_barrier)
         & has_required_feature!(context, resource_copy_region)
-        // implicitly used through pipe_sampler_view_reference
+        // implicitly used through pipe_sampler_view_release
         & has_required_feature!(context, sampler_view_destroy)
         & has_required_feature!(context, set_constant_buffer)
         & has_required_feature!(context, set_global_binding)

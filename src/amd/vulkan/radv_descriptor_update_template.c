@@ -83,17 +83,17 @@ radv_CreateDescriptorUpdateTemplate(VkDevice _device, const VkDescriptorUpdateTe
          dst_stride = binding_layout->size / 4;
       }
 
-      templ->entry[i] = (struct radv_descriptor_update_template_entry){
-         .descriptor_type = entry->descriptorType,
-         .descriptor_count = entry->descriptorCount,
-         .src_offset = entry->offset,
-         .src_stride = entry->stride,
-         .dst_offset = dst_offset,
-         .dst_stride = dst_stride,
-         .buffer_offset = buffer_offset,
-         .has_sampler = !binding_layout->immutable_samplers_offset,
-         .has_ycbcr_sampler = binding_layout->has_ycbcr_sampler,
-         .immutable_samplers = immutable_samplers};
+      templ->entry[i] =
+         (struct radv_descriptor_update_template_entry){.descriptor_type = entry->descriptorType,
+                                                        .descriptor_count = entry->descriptorCount,
+                                                        .src_offset = entry->offset,
+                                                        .src_stride = entry->stride,
+                                                        .dst_offset = dst_offset,
+                                                        .dst_stride = dst_stride,
+                                                        .buffer_offset = buffer_offset,
+                                                        .has_sampler = !binding_layout->immutable_samplers_offset,
+                                                        .has_ycbcr_sampler = binding_layout->has_ycbcr_sampler,
+                                                        .immutable_samplers = immutable_samplers};
    }
 
    *pDescriptorUpdateTemplate = radv_descriptor_update_template_to_handle(templ);
@@ -174,7 +174,7 @@ radv_update_descriptor_set_with_template_impl(struct radv_device *device, struct
             }
 
             if (cmd_buffer && templ->entry[i].immutable_samplers) {
-               const uint32_t sampler_offset = RADV_COMBINED_IMAGE_SAMPLER_DESC_SAMPLER_OFFSET;
+               const uint32_t sampler_offset = radv_get_combined_image_sampler_offset(pdev);
 
                memcpy((char *)pDst + sampler_offset, templ->entry[i].immutable_samplers + 4 * j,
                       RADV_SAMPLER_DESC_SIZE);

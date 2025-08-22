@@ -213,7 +213,7 @@ st_convert_sampler_from_unit(const struct st_context *st,
  */
 static void
 update_shader_samplers(struct st_context *st,
-                       enum pipe_shader_type shader_stage,
+                       mesa_shader_stage shader_stage,
                        const struct gl_program *prog,
                        struct pipe_sampler_state *samplers,
                        unsigned *out_num_samplers)
@@ -358,7 +358,7 @@ st_update_vertex_samplers(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    update_shader_samplers(st,
-                          PIPE_SHADER_VERTEX,
+                          MESA_SHADER_VERTEX,
                           ctx->VertexProgram._Current,
                           st->state.vert_samplers,
                           &st->state.num_vert_samplers);
@@ -372,7 +372,7 @@ st_update_tessctrl_samplers(struct st_context *st)
 
    if (ctx->TessCtrlProgram._Current) {
       update_shader_samplers(st,
-                             PIPE_SHADER_TESS_CTRL,
+                             MESA_SHADER_TESS_CTRL,
                              ctx->TessCtrlProgram._Current, NULL, NULL);
    }
 }
@@ -385,7 +385,7 @@ st_update_tesseval_samplers(struct st_context *st)
 
    if (ctx->TessEvalProgram._Current) {
       update_shader_samplers(st,
-                             PIPE_SHADER_TESS_EVAL,
+                             MESA_SHADER_TESS_EVAL,
                              ctx->TessEvalProgram._Current, NULL, NULL);
    }
 }
@@ -398,7 +398,7 @@ st_update_geometry_samplers(struct st_context *st)
 
    if (ctx->GeometryProgram._Current) {
       update_shader_samplers(st,
-                             PIPE_SHADER_GEOMETRY,
+                             MESA_SHADER_GEOMETRY,
                              ctx->GeometryProgram._Current, NULL, NULL);
    }
 }
@@ -410,7 +410,7 @@ st_update_fragment_samplers(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    update_shader_samplers(st,
-                          PIPE_SHADER_FRAGMENT,
+                          MESA_SHADER_FRAGMENT,
                           ctx->FragmentProgram._Current,
                           st->state.frag_samplers,
                           &st->state.num_frag_samplers);
@@ -424,7 +424,7 @@ st_update_compute_samplers(struct st_context *st)
 
    if (ctx->ComputeProgram._Current) {
       update_shader_samplers(st,
-                             PIPE_SHADER_COMPUTE,
+                             MESA_SHADER_COMPUTE,
                              ctx->ComputeProgram._Current, NULL, NULL);
    }
 }

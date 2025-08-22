@@ -24,7 +24,7 @@
  * is hardcoded and the latter is an offsetof.
  */
 #define HANDLE(field)                                                          \
-   (uint2)(0, offsetof(struct libagx_decompress_images, field))
+   nir_bindless_image_agx(offsetof(struct libagx_decompress_images, field), 0)
 
 /*
  * The metadata buffer is fully twiddled, so interleave the X/Y coordinate bits.
@@ -150,7 +150,7 @@ stretched_sa_to_px(ushort2 px, uint samples)
    case  4: return (ushort2)(px.x / 2, px.y / 2);
    case  2: return (ushort2)(px.x, px.y / 2);
    case  1: return px;
-   default: unreachable("invalid sample count");
+   default: UNREACHABLE("invalid sample count");
    }
    /* clang-format on */
 }

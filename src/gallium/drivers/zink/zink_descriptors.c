@@ -147,7 +147,16 @@ descriptor_util_layout_get(struct zink_screen *screen, enum zink_descriptor_type
    struct zink_descriptor_layout *layout = create_layout(screen, type, bindings, num_bindings, layout_key);
    if (layout && type != ZINK_DESCRIPTOR_TYPE_UNIFORMS) {
       simple_mtx_lock(&screen->desc_set_layouts_lock);
-      _mesa_hash_table_insert_pre_hashed(&screen->desc_set_layouts[type], hash, *layout_key, layout);
+      struct hash_entry *he = _mesa_hash_table_search_pre_hashed(&screen->desc_set_layouts[type], hash, &key);
+      if (he) {
+         VKSCR(DestroyDescriptorSetLayout)(screen->dev, layout->layout, NULL);
+         ralloc_free(layout);
+         *layout_key = (void*)he->key;
+         simple_mtx_unlock(&screen->desc_set_layouts_lock);
+         return he->data;
+      } else {
+         _mesa_hash_table_insert_pre_hashed(&screen->desc_set_layouts[type], hash, *layout_key, layout);
+      }
       simple_mtx_unlock(&screen->desc_set_layouts_lock);
    }
    return layout;
@@ -193,9 +202,10 @@ descriptor_util_pool_key_get(struct zink_screen *screen, enum zink_descriptor_ty
       hash = hash_descriptor_pool_key(&key);
       simple_mtx_lock(&screen->desc_pool_keys_lock);
       struct set_entry *he = _mesa_set_search_pre_hashed(&screen->desc_pool_keys[type], hash, &key);
-      simple_mtx_unlock(&screen->desc_pool_keys_lock);
-      if (he)
+      if (he) {
+         simple_mtx_unlock(&screen->desc_pool_keys_lock);
          return (void*)he->key;
+      }
    }
 
    struct zink_descriptor_pool_key *pool_key = rzalloc(screen, struct zink_descriptor_pool_key);
@@ -204,7 +214,6 @@ descriptor_util_pool_key_get(struct zink_screen *screen, enum zink_descriptor_ty
    assert(pool_key->num_type_sizes);
    memcpy(pool_key->sizes, sizes, num_type_sizes * sizeof(VkDescriptorPoolSize));
    if (type != ZINK_DESCRIPTOR_TYPE_UNIFORMS) {
-      simple_mtx_lock(&screen->desc_pool_keys_lock);
       _mesa_set_add_pre_hashed(&screen->desc_pool_keys[type], hash, pool_key);
       pool_key->id = screen->desc_pool_keys[type].entries - 1;
       simple_mtx_unlock(&screen->desc_pool_keys_lock);
@@ -315,7 +324,7 @@ init_db_template_entry(struct zink_screen *screen, struct zink_shader *shader, e
                        unsigned idx, struct zink_descriptor_template *entry, unsigned *entry_idx)
 {
     int index = shader->bindings[type][idx].index;
-    gl_shader_stage stage = clamp_stage(&shader->info);
+    mesa_shader_stage stage = clamp_stage(&shader->info);
     entry->count = shader->bindings[type][idx].size;
 
     switch (shader->bindings[type][idx].type) {
@@ -360,7 +369,7 @@ init_db_template_entry(struct zink_screen *screen, struct zink_shader *shader, e
        entry->db_size = screen->info.db_props.robustStorageTexelBufferDescriptorSize;
        break;
     default:
-       unreachable("unknown type");
+       UNREACHABLE("unknown type");
     }
     (*entry_idx)++;
 }
@@ -370,7 +379,7 @@ init_template_entry(struct zink_shader *shader, enum zink_descriptor_type type,
                     unsigned idx, VkDescriptorUpdateTemplateEntry *entry, unsigned *entry_idx)
 {
     int index = shader->bindings[type][idx].index;
-    gl_shader_stage stage = clamp_stage(&shader->info);
+    mesa_shader_stage stage = clamp_stage(&shader->info);
     entry->dstArrayElement = 0;
     entry->dstBinding = shader->bindings[type][idx].binding;
     entry->descriptorCount = shader->bindings[type][idx].size;
@@ -408,7 +417,7 @@ init_template_entry(struct zink_shader *shader, enum zink_descriptor_type type,
        entry->stride = sizeof(VkBufferView);
        break;
     default:
-       unreachable("unknown type");
+       UNREACHABLE("unknown type");
     }
     (*entry_idx)++;
 }
@@ -443,7 +452,7 @@ descriptor_program_num_sizes(VkDescriptorPoolSize *sizes, enum zink_descriptor_t
              !!sizes[ZDS_INDEX_STORAGE_TEXELS].descriptorCount;
    default: break;
    }
-   unreachable("unknown type");
+   UNREACHABLE("unknown type");
 }
 
 static uint16_t
@@ -462,7 +471,7 @@ descriptor_program_num_sizes_compact(VkDescriptorPoolSize *sizes, unsigned desc_
    case ZINK_DESCRIPTOR_TYPE_IMAGE:
    default: break;
    }
-   unreachable("unknown type");
+   UNREACHABLE("unknown type");
 }
 
 /* create all the descriptor objects for a program:
@@ -517,7 +526,7 @@ zink_descriptor_program_init(struct zink_context *ctx, struct zink_program *pg)
       if (!shader)
          continue;
 
-      gl_shader_stage stage = clamp_stage(&shader->info);
+      mesa_shader_stage stage = clamp_stage(&shader->info);
       VkShaderStageFlagBits stage_flags = mesa_to_vk_shader_stage(stage);
       /* uniform ubos handled in push */
       if (shader->has_uniforms) {
@@ -933,7 +942,7 @@ check_pool_alloc(struct zink_context *ctx, struct zink_descriptor_pool_multi *mp
          }
       }
       if (!mpool->pool)
-         unreachable("out of descriptor memory!");
+         UNREACHABLE("out of descriptor memory!");
    }
    struct zink_descriptor_pool *pool = mpool->pool;
    /* allocate up to $current * 10, e.g., 10 -> 100;
@@ -1457,7 +1466,7 @@ zink_descriptors_update(struct zink_context *ctx, bool is_compute)
 
 /* called from gallium descriptor change hooks, e.g., set_sampler_views */
 void
-zink_context_invalidate_descriptor_state(struct zink_context *ctx, gl_shader_stage shader, enum zink_descriptor_type type, unsigned start, unsigned count)
+zink_context_invalidate_descriptor_state(struct zink_context *ctx, mesa_shader_stage shader, enum zink_descriptor_type type, unsigned start, unsigned count)
 {
    if (type == ZINK_DESCRIPTOR_TYPE_UBO && !start)
       ctx->dd.push_state_changed[shader == MESA_SHADER_COMPUTE] = true;
@@ -1465,7 +1474,7 @@ zink_context_invalidate_descriptor_state(struct zink_context *ctx, gl_shader_sta
       ctx->dd.state_changed[shader == MESA_SHADER_COMPUTE] |= BITFIELD_BIT(type);
 }
 void
-zink_context_invalidate_descriptor_state_compact(struct zink_context *ctx, gl_shader_stage shader, enum zink_descriptor_type type, unsigned start, unsigned count)
+zink_context_invalidate_descriptor_state_compact(struct zink_context *ctx, mesa_shader_stage shader, enum zink_descriptor_type type, unsigned start, unsigned count)
 {
    if (type == ZINK_DESCRIPTOR_TYPE_UBO && !start)
       ctx->dd.push_state_changed[shader == MESA_SHADER_COMPUTE] = true;
@@ -1660,10 +1669,8 @@ bool
 zink_descriptor_layouts_init(struct zink_screen *screen)
 {
    for (unsigned i = 0; i < ZINK_DESCRIPTOR_BASE_TYPES; i++) {
-      if (!_mesa_hash_table_init(&screen->desc_set_layouts[i], screen, hash_descriptor_layout, equals_descriptor_layout))
-         return false;
-      if (!_mesa_set_init(&screen->desc_pool_keys[i], screen, hash_descriptor_pool_key, equals_descriptor_pool_key))
-         return false;
+      _mesa_hash_table_init(&screen->desc_set_layouts[i], screen, hash_descriptor_layout, equals_descriptor_layout);
+      _mesa_set_init(&screen->desc_pool_keys[i], screen, hash_descriptor_pool_key, equals_descriptor_pool_key);
    }
    simple_mtx_init(&screen->desc_set_layouts_lock, mtx_plain);
    simple_mtx_init(&screen->desc_pool_keys_lock, mtx_plain);

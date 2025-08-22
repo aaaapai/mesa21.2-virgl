@@ -46,7 +46,13 @@ struct vk_shader;
 
 /** Root descriptor table. */
 struct hk_root_descriptor_table {
+   /* Address of this descriptor itself. Must be first for reflection. */
    uint64_t root_desc_addr;
+
+   /* Descriptor set base addresses. Must follow root_desc_addr to match our
+    * push layout.
+    */
+   uint64_t sets[HK_MAX_SETS];
 
    union {
       struct {
@@ -56,6 +62,7 @@ struct hk_root_descriptor_table {
          /* Vertex input state */
          uint64_t attrib_base[AGX_MAX_VBUFS];
          uint32_t attrib_clamps[AGX_MAX_VBUFS];
+         uint32_t attrib_strides[AGX_MAX_VBUFS];
 
          /* Pointer to the VS->TCS, VS->GS, or TES->GS buffer. */
          uint64_t vertex_output_buffer;
@@ -109,9 +116,6 @@ struct hk_root_descriptor_table {
 
    /* Client push constants */
    uint8_t push[HK_MAX_PUSH_SIZE];
-
-   /* Descriptor set base addresses */
-   uint64_t sets[HK_MAX_SETS];
 
    /* Dynamic buffer bindings */
    struct hk_buffer_address dynamic_buffers[HK_MAX_DYNAMIC_BUFFERS];
@@ -272,7 +276,7 @@ struct hk_graphics_state {
    struct agx_varyings_vs linked_varyings;
 
    uint32_t linked_dirty;
-   struct hk_linked_shader *linked[PIPE_SHADER_TYPES];
+   struct hk_linked_shader *linked[MESA_SHADER_STAGES];
    bool generate_primitive_id;
 
    /* Whether blend constants are required by the active blend state */
@@ -357,6 +361,12 @@ struct hk_cs {
    /* Whether there is more than just the root chunk */
    bool stream_linked;
 
+   /* Whether the sampler heap is required. Although we always must maintain the
+    * heap for correctness, it's often not necessary since we can push lots of
+    * samplers (especially for GL/DX11-era engines).
+    */
+   bool uses_sampler_heap;
+
    /* Scratch requirements */
    struct {
       union {
@@ -425,6 +435,7 @@ hk_cs_merge_cdm(struct hk_cs *a, const struct hk_cs *b)
    a->current = b->current;
    a->stream_linked = true;
 
+   a->uses_sampler_heap |= b->uses_sampler_heap;
    a->scratch.cs.main |= b->scratch.cs.main;
    a->scratch.cs.preamble |= b->scratch.cs.preamble;
 
@@ -775,11 +786,11 @@ void hk_cmd_invalidate_graphics_state(struct hk_cmd_buffer *cmd);
 void hk_cmd_invalidate_compute_state(struct hk_cmd_buffer *cmd);
 
 void hk_cmd_bind_shaders(struct vk_command_buffer *vk_cmd, uint32_t stage_count,
-                         const gl_shader_stage *stages,
+                         const mesa_shader_stage *stages,
                          struct vk_shader **const shaders);
 
 void hk_cmd_bind_graphics_shader(struct hk_cmd_buffer *cmd,
-                                 const gl_shader_stage stage,
+                                 const mesa_shader_stage stage,
                                  struct hk_api_shader *shader);
 
 void hk_cmd_bind_compute_shader(struct hk_cmd_buffer *cmd,
@@ -798,7 +809,7 @@ hk_get_descriptors_state(struct hk_cmd_buffer *cmd,
    case VK_PIPELINE_BIND_POINT_COMPUTE:
       return &cmd->state.cs.descriptors;
    default:
-      unreachable("Unhandled bind point");
+      UNREACHABLE("Unhandled bind point");
    }
 };
 
@@ -855,3 +866,8 @@ void hk_dispatch_precomp(struct hk_cmd_buffer *cmd, struct agx_grid grid,
 
 void hk_queue_write(struct hk_cmd_buffer *cmd, uint64_t address, uint32_t value,
                     bool after_gfx);
+
+void agx_fill_velem_keys(const struct vk_vertex_input_state *vi,
+                         uint64_t attribs_read, struct agx_velem_key *keys);
+
+struct agx_robustness hk_prolog_robustness(struct hk_device *dev);

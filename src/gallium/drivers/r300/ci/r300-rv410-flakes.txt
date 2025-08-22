@@ -6,6 +6,7 @@ spec@!opengl 1.4@tex-miplevel-selection
 spec@!opengl 1.4@tex-miplevel-selection-lod
 spec@!opengl 1.4@tex-miplevel-selection-lod-bias
 
+spec@!opengl 1.5@depth-tex-compare
 spec@!opengl 2.1@pbo@test_draw_pixels
 spec@arb_draw_buffers@fbo-mrt-alphatest
 spec@arb_sampler_objects@sampler-incomplete
@@ -33,3 +34,4 @@ spec@nv_texture_env_combine4@nv_texture_env_combine4-combine
 # uprev Piglit in Mesa
 spec@glsl-1.10@execution@built-in-functions@fs-op-div-mat2-mat2
 
+shaders@glsl-max-varyings >max_varying_components

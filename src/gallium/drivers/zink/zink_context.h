@@ -145,7 +145,7 @@ void
 zink_update_vk_sample_locations(struct zink_context *ctx);
 
 static inline VkPipelineStageFlags
-zink_pipeline_flags_from_pipe_stage(gl_shader_stage pstage)
+zink_pipeline_flags_from_pipe_stage(mesa_shader_stage pstage)
 {
    switch (pstage) {
    case MESA_SHADER_VERTEX:
@@ -161,7 +161,7 @@ zink_pipeline_flags_from_pipe_stage(gl_shader_stage pstage)
    case MESA_SHADER_COMPUTE:
       return VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
    default:
-      unreachable("unknown shader stage");
+      UNREACHABLE("unknown shader stage");
    }
 }
 
@@ -245,7 +245,7 @@ zink_component_mapping(enum pipe_swizzle swizzle)
    case PIPE_SWIZZLE_0: return VK_COMPONENT_SWIZZLE_ZERO;
    case PIPE_SWIZZLE_1: return VK_COMPONENT_SWIZZLE_ONE;
    default:
-      unreachable("unexpected swizzle");
+      UNREACHABLE("unexpected swizzle");
    }
 }
 
@@ -263,8 +263,10 @@ zink_set_null_fs(struct zink_context *ctx);
 
 void
 zink_copy_image_buffer(struct zink_context *ctx, struct zink_resource *dst, struct zink_resource *src,
-                       unsigned dst_level, unsigned dstx, unsigned dsty, unsigned dstz,
-                       unsigned src_level, const struct pipe_box *src_box, enum pipe_map_flags map_flags);
+                       unsigned buffer_offset,
+                       unsigned buffer_stride,
+                       unsigned buffer_layer_stride,
+                       unsigned level, const struct pipe_box *src_box, enum pipe_map_flags map_flags);
 
 #endif
 

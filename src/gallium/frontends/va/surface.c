@@ -129,14 +129,6 @@ vlVaDestroySurfaces(VADriverContextP ctx, VASurfaceID *surface_list, int num_sur
          if (surf->is_dpb)
             vlVaRemoveDpbSurface(surf, surface_list[i]);
       }
-      if (drv->last_efc_surface) {
-         vlVaSurface *efc_surf = drv->last_efc_surface;
-         if (efc_surf == surf || efc_surf->efc_surface == surf) {
-            efc_surf->efc_surface = NULL;
-            drv->last_efc_surface = NULL;
-            drv->efc_count = -1;
-         }
-      }
       if (surf->coded_buf)
          surf->coded_buf->coded_surf = NULL;
       util_dynarray_fini(&surf->subpics);
@@ -906,11 +898,9 @@ surface_from_external_win32_memory(VADriverContextP ctx, vlVaSurface *surface,
                              struct pipe_video_buffer *templat)
 {
    vlVaDriver *drv;
-   struct pipe_screen *pscreen;
    struct winsys_handle whandle;
    VAStatus result;
 
-   pscreen = VL_VA_PSCREEN(ctx);
    drv = VL_VA_DRIVER(ctx);
 
    templat->buffer_format = surface->templat.buffer_format;
@@ -1327,9 +1317,11 @@ no_res:
 }
 
 VAStatus
-vlVaQueryVideoProcFilters(VADriverContextP ctx, VAContextID context,
+vlVaQueryVideoProcFilters(VADriverContextP ctx, VAContextID context_id,
                           VAProcFilterType *filters, unsigned int *num_filters)
 {
+   vlVaDriver *drv = VL_VA_DRIVER(ctx);
+   vlVaContext *context;
    unsigned int num = 0;
 
    if (!ctx)
@@ -1338,7 +1330,18 @@ vlVaQueryVideoProcFilters(VADriverContextP ctx, VAContextID context,
    if (!num_filters || !filters)
       return VA_STATUS_ERROR_INVALID_PARAMETER;
 
-   filters[num++] = VAProcFilterDeinterlacing;
+   mtx_lock(&drv->mutex);
+   context = handle_table_get(drv->htab, context_id);
+   if (!context) {
+      mtx_unlock(&drv->mutex);
+      return VA_STATUS_ERROR_INVALID_CONTEXT;
+   }
+
+   if (context->templat.entrypoint != PIPE_VIDEO_ENTRYPOINT_ENCODE &&
+       context->templat.entrypoint != PIPE_VIDEO_ENTRYPOINT_BITSTREAM)
+      filters[num++] = VAProcFilterDeinterlacing;
+
+   mtx_unlock(&drv->mutex);
 
    *num_filters = num;
 
@@ -1346,17 +1349,32 @@ vlVaQueryVideoProcFilters(VADriverContextP ctx, VAContextID context,
 }
 
 VAStatus
-vlVaQueryVideoProcFilterCaps(VADriverContextP ctx, VAContextID context,
+vlVaQueryVideoProcFilterCaps(VADriverContextP ctx, VAContextID context_id,
                              VAProcFilterType type, void *filter_caps,
                              unsigned int *num_filter_caps)
 {
+   vlVaDriver *drv = VL_VA_DRIVER(ctx);
+   vlVaContext *context;
    unsigned int i;
+   bool supports_filters;
 
    if (!ctx)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
    if (!filter_caps || !num_filter_caps)
       return VA_STATUS_ERROR_INVALID_PARAMETER;
+
+   mtx_lock(&drv->mutex);
+   context = handle_table_get(drv->htab, context_id);
+   if (!context) {
+      mtx_unlock(&drv->mutex);
+      return VA_STATUS_ERROR_INVALID_CONTEXT;
+   }
+
+   supports_filters = context->templat.entrypoint != PIPE_VIDEO_ENTRYPOINT_ENCODE &&
+                      context->templat.entrypoint != PIPE_VIDEO_ENTRYPOINT_BITSTREAM;
+
+   mtx_unlock(&drv->mutex);
 
    i = 0;
 
@@ -1365,6 +1383,9 @@ vlVaQueryVideoProcFilterCaps(VADriverContextP ctx, VAContextID context,
       break;
    case VAProcFilterDeinterlacing: {
       VAProcFilterCapDeinterlacing *deint = filter_caps;
+
+      if (!supports_filters)
+         return VA_STATUS_ERROR_UNIMPLEMENTED;
 
       if (*num_filter_caps < 3) {
          *num_filter_caps = 3;

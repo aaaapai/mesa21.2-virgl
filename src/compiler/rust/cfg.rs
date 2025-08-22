@@ -33,7 +33,7 @@ impl<N> DerefMut for CFGNode<N> {
 }
 
 fn graph_post_dfs<N>(
-    nodes: &Vec<CFGNode<N>>,
+    nodes: &[CFGNode<N>],
     id: usize,
     seen: &mut BitSet,
     post_idx: &mut Vec<usize>,
@@ -107,7 +107,7 @@ fn rev_post_order_sort<N>(nodes: &mut Vec<CFGNode<N>>) {
 }
 
 fn find_common_dom<N>(
-    nodes: &Vec<CFGNode<N>>,
+    nodes: &[CFGNode<N>],
     mut a: usize,
     mut b: usize,
 ) -> usize {
@@ -124,7 +124,7 @@ fn find_common_dom<N>(
 
 fn dom_idx_dfs<N>(
     nodes: &mut Vec<CFGNode<N>>,
-    dom_children: &Vec<Vec<usize>>,
+    dom_children: &[Vec<usize>],
     id: usize,
     count: &mut usize,
 ) {
@@ -178,7 +178,7 @@ fn calc_dominance<N>(nodes: &mut Vec<CFGNode<N>>) {
 }
 
 fn loop_detect_dfs<N>(
-    nodes: &Vec<CFGNode<N>>,
+    nodes: &[CFGNode<N>],
     id: usize,
     pre: &mut BitSet,
     post: &mut BitSet,
@@ -275,12 +275,12 @@ impl<N> CFG<N> {
     }
 
     /// Returns an iterator over the nodes.
-    pub fn iter(&self) -> slice::Iter<CFGNode<N>> {
+    pub fn iter(&self) -> slice::Iter<'_, CFGNode<N>> {
         self.nodes.iter()
     }
 
     /// Returns a mutable iterator over the nodes.
-    pub fn iter_mut(&mut self) -> slice::IterMut<CFGNode<N>> {
+    pub fn iter_mut(&mut self) -> slice::IterMut<'_, CFGNode<N>> {
         self.nodes.iter_mut()
     }
 
@@ -338,6 +338,26 @@ impl<N> CFG<N> {
         } else {
             debug_assert!(self.is_loop_header(lph));
             Some(lph)
+        }
+    }
+
+    /// Returns the loop depth of the given node.  Nodes not in any loops have
+    /// a loop depth of zero.  For nodes inside a loop, this is the count of
+    /// number of loop headers above them in the dominance tree.
+    pub fn loop_depth(&self, idx: usize) -> usize {
+        let mut idx = idx;
+        let mut depth = 0;
+        loop {
+            let lph = self.nodes[idx].lph;
+            if lph == usize::MAX {
+                return depth;
+            }
+
+            depth += 1;
+
+            // Loop headers have themselves as the lph so we need to skip to
+            // the dominator of the loop header for the next iteration.
+            idx = self.nodes[lph].dom;
         }
     }
 

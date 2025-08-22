@@ -100,7 +100,7 @@ bi_assign_slot_read(bi_registers *regs, bi_index src)
    }
 
    bi_print_slots(regs, stderr);
-   unreachable("Failed to find a free slot for src");
+   UNREACHABLE("Failed to find a free slot for src");
 }
 
 static bi_registers
@@ -180,7 +180,7 @@ bi_pack_register_mode(bi_registers r)
    }
 
    bi_print_slots(&r, stderr);
-   unreachable("Invalid slot assignment");
+   UNREACHABLE("Invalid slot assignment");
 }
 
 static uint64_t
@@ -296,7 +296,7 @@ bi_get_src_slot(bi_registers *regs, unsigned reg)
    else if (regs->slot[2] == reg && regs->slot23.slot2 == BIFROST_OP_READ)
       return BIFROST_SRC_PORT2;
    else
-      unreachable("Tried to access register with no port");
+      UNREACHABLE("Tried to access register with no port");
 }
 
 static inline enum bifrost_packed_src
@@ -319,7 +319,7 @@ bi_get_src_new(bi_instr *ins, bi_registers *regs, unsigned s)
 
 static struct bi_packed_tuple
 bi_pack_tuple(bi_clause *clause, bi_tuple *tuple, bi_tuple *prev,
-              bool first_tuple, gl_shader_stage stage)
+              bool first_tuple, mesa_shader_stage stage)
 {
    bi_assign_slots(tuple, prev);
    tuple->regs.fau_idx = tuple->fau_idx;
@@ -615,7 +615,7 @@ bi_pack_format(struct util_dynarray *emission, unsigned index,
 static void
 bi_pack_clause(bi_context *ctx, bi_clause *clause, bi_clause *next_1,
                bi_clause *next_2, struct util_dynarray *emission,
-               gl_shader_stage stage)
+               mesa_shader_stage stage)
 {
    struct bi_packed_tuple ins[8] = {0};
 

@@ -143,7 +143,12 @@ hk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
    cmd->current_cs.post_gfx = NULL;
    cmd->current_cs.pre_gfx = NULL;
 
-   /* TODO: clear pool! */
+   assert(!cmd->in_meta);
+   cmd->geom_indirect = 0;
+   cmd->geom_index_buffer = 0;
+   cmd->geom_index_count = 0;
+   cmd->geom_instance_count = 0;
+   cmd->uses_heap = false;
 
    memset(&cmd->state, 0, sizeof(cmd->state));
 }
@@ -337,7 +342,7 @@ hk_CmdPipelineBarrier2(VkCommandBuffer commandBuffer,
 
 void
 hk_cmd_bind_shaders(struct vk_command_buffer *vk_cmd, uint32_t stage_count,
-                    const gl_shader_stage *stages,
+                    const mesa_shader_stage *stages,
                     struct vk_shader **const shaders)
 {
    struct hk_cmd_buffer *cmd = container_of(vk_cmd, struct hk_cmd_buffer, vk);
@@ -630,6 +635,9 @@ hk_reserve_scratch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
    uint32_t max_scratch_size =
       MAX2(s->b.info.scratch_size, s->b.info.preamble_scratch_size);
 
+   /* Not scratch but this is the most convenient place for this... */
+   cs->uses_sampler_heap |= s->b.info.uses_sampler_heap;
+
    if (max_scratch_size == 0)
       return;
 
@@ -642,11 +650,11 @@ hk_reserve_scratch(struct hk_cmd_buffer *cmd, struct hk_cs *cs,
               _mesa_shader_stage_to_abbrev(s->b.info.stage));
 
    switch (s->b.info.stage) {
-   case PIPE_SHADER_FRAGMENT:
+   case MESA_SHADER_FRAGMENT:
       cs->scratch.fs.main = true;
       cs->scratch.fs.preamble = MAX2(cs->scratch.fs.preamble, preamble_size);
       break;
-   case PIPE_SHADER_VERTEX:
+   case MESA_SHADER_VERTEX:
       cs->scratch.vs.main = true;
       cs->scratch.vs.preamble = MAX2(cs->scratch.vs.preamble, preamble_size);
       break;
@@ -663,7 +671,7 @@ hk_upload_usc_words(struct hk_cmd_buffer *cmd, struct hk_shader *s,
 {
    struct hk_device *dev = hk_cmd_buffer_device(cmd);
 
-   enum pipe_shader_type sw_stage = s->info.stage;
+   mesa_shader_stage sw_stage = s->info.stage;
 
    unsigned constant_push_ranges = DIV_ROUND_UP(s->b.info.rodata.size_16, 64);
    unsigned push_ranges = 2;
@@ -679,10 +687,11 @@ hk_upload_usc_words(struct hk_cmd_buffer *cmd, struct hk_shader *s,
 
    uint64_t root_ptr;
 
-   if (sw_stage == PIPE_SHADER_COMPUTE)
+   if (sw_stage == MESA_SHADER_COMPUTE) {
       root_ptr = hk_cmd_buffer_upload_root(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
-   else
+   } else {
       root_ptr = cmd->state.gfx.root;
+   }
 
    static_assert(offsetof(struct hk_root_descriptor_table, root_desc_addr) == 0,
                  "self-reflective");
@@ -739,7 +748,8 @@ hk_upload_usc_words(struct hk_cmd_buffer *cmd, struct hk_shader *s,
       root_unif = AGX_ABI_FUNI_ROOT;
    }
 
-   agx_usc_uniform(&b, root_unif, 4, root_ptr);
+   /* Address for the root and each set */
+   agx_usc_uniform(&b, root_unif, 4 * (1 + s->info.set_count), root_ptr);
 
    agx_usc_push_blob(&b, linked->usc.data, linked->usc.size);
    return agx_usc_addr(&dev->dev, t.gpu);
@@ -805,7 +815,7 @@ hk_cs_init_graphics(struct hk_cmd_buffer *cmd, struct hk_cs *cs)
    };
 
    size_t size = agx_ppp_update_size(&present);
-   struct agx_ptr T = hk_pool_alloc(cmd, size, 64);
+   struct agx_ptr T = hk_pool_alloc(cmd, size, AGX_PPP_HEADER_ALIGN);
    if (!T.cpu)
       return;
 

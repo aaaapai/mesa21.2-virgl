@@ -163,7 +163,7 @@ ac_nir_load_arg_upper_bound(nir_builder *b, const struct ac_shader_args *ac_args
                             unsigned upper_bound)
 {
    nir_def *value = ac_nir_load_arg_at_offset(b, ac_args, arg, 0);
-   nir_intrinsic_set_arg_upper_bound_u32_amd(nir_instr_as_intrinsic(value->parent_instr),
+   nir_intrinsic_set_arg_upper_bound_u32_amd(nir_def_as_intrinsic(value),
                                              upper_bound);
    return value;
 }
@@ -332,7 +332,7 @@ ac_nir_varying_expression_max_cost(nir_shader *producer, nir_shader *consumer)
       return 12;
 
    default:
-      unreachable("unexpected shader stage");
+      UNREACHABLE("unexpected shader stage");
    }
 }
 
@@ -361,7 +361,6 @@ lower_bit_size_callback(const nir_instr *instr, enum amd_gfx_level chip, bool di
    if (alu->def.bit_size & (8 | 16)) {
       unsigned bit_size = alu->def.bit_size;
       switch (alu->op) {
-      case nir_op_bitfield_select:
       case nir_op_imul_high:
       case nir_op_umul_high:
       case nir_op_uadd_carry:
@@ -382,6 +381,9 @@ lower_bit_size_callback(const nir_instr *instr, enum amd_gfx_level chip, bool di
       case nir_op_iadd_sat:
       case nir_op_isub_sat:
          return !divergence_known || bit_size == 8 || !alu->def.divergent ? 32 : 0;
+      case nir_op_extract_u8:
+      case nir_op_extract_i8:
+         return !divergence_known || !alu->def.divergent ? 32 : 0;
 
       default:
          return 0;
@@ -592,11 +594,7 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
          return false;
    }
 
-   uint32_t align;
-   if (align_offset)
-      align = 1 << (ffs(align_offset) - 1);
-   else
-      align = align_mul;
+   uint32_t align = nir_combined_align(align_mul, align_offset);
 
    /* Don't cross swizzle elements. stack/scratch intrinsics use scratch_* instructions, which
     * seem to work fine.
@@ -611,14 +609,16 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
    if (!is_shared) {
       return (align % (bit_size / 8u)) == 0 && num_components <= NIR_MAX_VEC_COMPONENTS;
    } else {
+      /* 96-bit and 128-bit LDS loads are slow. Don't use them. */
+      if (!is_store && bit_size * num_components > 64)
+         return false;
       if (bit_size >= 32 && num_components == 3) {
          /* AMD hardware can't do 3-component loads except for 96-bit loads. */
          return bit_size == 32 && align % 16 == 0;
       }
-      unsigned req = bit_size >= 32 ? bit_size * num_components : bit_size;
-      if (req == 64 || req == 128) /* 64-bit and 128-bit loads can use ds_read2_b{32,64} */
-         req /= 2u;
-      return align % (req / 8u) == 0;
+
+      /* DS loads and stores require the alignment of the size. */
+      return align % (aligned_new_size / 8u) == 0;
    }
    return false;
 }
@@ -655,37 +655,24 @@ bool ac_nir_scalarize_overfetching_loads_callback(const nir_instr *instr, const 
    return used_load_size < align_load_store_size(gfx_level, load_size, uses_smem, is_shared);
 }
 
-/* Get chip-agnostic memory instruction access flags (as opposed to chip-specific GLC/DLC/SLC)
- * from a NIR memory intrinsic.
- */
-enum gl_access_qualifier ac_nir_get_mem_access_flags(const nir_intrinsic_instr *instr)
+/* Determine if the store can be subdword (for the GFX6 TC L1 bug workaround) */
+bool ac_nir_store_may_be_subdword(const nir_intrinsic_instr *instr)
 {
-   enum gl_access_qualifier access =
-      nir_intrinsic_has_access(instr) ? nir_intrinsic_access(instr) : 0;
+   assert(!nir_intrinsic_infos[instr->intrinsic].has_dest);
+   switch (instr->intrinsic) {
+   case nir_intrinsic_store_ssbo:
+   case nir_intrinsic_store_buffer_amd:
+   case nir_intrinsic_store_global:
+   case nir_intrinsic_store_global_amd:
+      return (nir_intrinsic_has_align_offset(instr) && nir_intrinsic_align(instr) % 4 != 0) ||
+             ((instr->src[0].ssa->bit_size / 8) * instr->src[0].ssa->num_components) % 4 != 0;
 
-   /* Determine ACCESS_MAY_STORE_SUBDWORD. (for the GFX6 TC L1 bug workaround) */
-   if (!nir_intrinsic_infos[instr->intrinsic].has_dest) {
-      switch (instr->intrinsic) {
-      case nir_intrinsic_bindless_image_store:
-         access |= ACCESS_MAY_STORE_SUBDWORD;
-         break;
 
-      case nir_intrinsic_store_ssbo:
-      case nir_intrinsic_store_buffer_amd:
-      case nir_intrinsic_store_global:
-      case nir_intrinsic_store_global_amd:
-         if (access & ACCESS_USES_FORMAT_AMD ||
-             (nir_intrinsic_has_align_offset(instr) && nir_intrinsic_align(instr) % 4 != 0) ||
-             ((instr->src[0].ssa->bit_size / 8) * instr->src[0].ssa->num_components) % 4 != 0)
-            access |= ACCESS_MAY_STORE_SUBDWORD;
-         break;
-
-      default:
-         unreachable("unexpected store instruction");
-      }
+   default:
+      UNREACHABLE("unexpected store instruction");
    }
 
-   return access;
+   return false;
 }
 
 /**
@@ -757,7 +744,7 @@ summarize_repack(nir_builder *b, nir_def *packed_counts, bool mask_lane_id, unsi
          return nir_msad_4x8(b, nir_unpack_64_2x32_split_y(b, sad_op), nir_imm_int(b, 0), sum);
       }
    } else {
-      unreachable("Unimplemented NGG wave count");
+      UNREACHABLE("Unimplemented NGG wave count");
    }
 }
 
@@ -878,4 +865,14 @@ ac_nir_repack_invocations_in_workgroup(nir_builder *b, nir_def **input_bool,
       results[i].repacked_invocation_index =
          nir_mbcnt_amd(b, input_mask[i], wg_repacked_index_base);
    }
+}
+
+uint8_t
+ac_nir_lower_phis_to_scalar_cb(const nir_instr *instr, const void *_)
+{
+   nir_phi_instr *phi = nir_instr_as_phi(instr);
+   if (phi->def.bit_size == 1 || phi->def.bit_size >= 32)
+      return 1;
+
+   return 32 / phi->def.bit_size;
 }

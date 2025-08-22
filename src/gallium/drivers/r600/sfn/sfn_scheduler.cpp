@@ -40,7 +40,7 @@ public:
          if (instr->alu_slots() == 1)
             alu_vec.push_back(instr);
          else
-            alu_groups.push_back(instr->split(m_value_factory));
+            alu_multi_slot.push_back(instr);
       }
    }
    void visit(AluGroup *instr) override { alu_groups.push_back(instr); }
@@ -103,6 +103,7 @@ public:
 
    std::list<AluInstr *> alu_trans;
    std::list<AluInstr *> alu_vec;
+   std::list<AluInstr *> alu_multi_slot;
    std::list<TexInstr *> tex;
    std::list<AluGroup *> alu_groups;
    std::list<ExportInstr *> exports;
@@ -159,10 +160,11 @@ private:
    template <typename I>
    bool schedule_cf(Shader::ShaderBlocks& out_blocks, std::list<I *>& ready_list);
 
-   bool schedule_alu(Shader::ShaderBlocks& out_blocks);
+   bool schedule_alu(Shader::ShaderBlocks& out_blocks, ValueFactory& vf);
    void start_new_block(Shader::ShaderBlocks& out_blocks, Block::Type type);
 
    bool schedule_alu_to_group_vec(AluGroup *group);
+   bool schedule_alu_multislot_to_group_vec(AluGroup *group, ValueFactory& vf);
    bool schedule_alu_to_group_trans(AluGroup *group, std::list<AluInstr *>& readylist);
 
    bool schedule_exports(Shader::ShaderBlocks& out_blocks,
@@ -179,6 +181,7 @@ private:
    bool check_array_reads(const AluGroup& group);
 
    std::list<AluInstr *> alu_vec_ready;
+   std::list<AluInstr *> alu_multi_slot_ready;
    std::list<AluInstr *> alu_trans_ready;
    std::list<AluGroup *> alu_groups_ready;
    std::list<TexInstr *> tex_ready;
@@ -319,6 +322,9 @@ BlockScheduler::schedule_block(Block& in_block,
       if (alu_vec_ready.size())
          sfn_log << SfnLog::schedule << "  ALU V:" << alu_vec_ready.size() << "\n";
 
+      if (alu_multi_slot_ready.size())
+         sfn_log << SfnLog::schedule << "  ALU M:" << alu_multi_slot_ready.size() << "\n";
+
       if (alu_trans_ready.size())
          sfn_log << SfnLog::schedule << "  ALU T:" << alu_trans_ready.size() << "\n";
 
@@ -352,7 +358,7 @@ BlockScheduler::schedule_block(Block& in_block,
 
       switch (current_shed) {
       case sched_alu:
-         if (!schedule_alu(out_blocks)) {
+         if (!schedule_alu(out_blocks, vf)) {
             assert(!m_current_block->lds_group_active());
             current_shed = sched_tex;
             continue;
@@ -435,6 +441,17 @@ BlockScheduler::schedule_block(Block& in_block,
          for (auto& d : a->required_instr())
             std::cerr << "      R["<< d->block_id() << ":" << d->index() <<"]:"
                       << *d << "\n";
+      }
+      fail = true;
+   }
+
+   if (!cir.alu_multi_slot.empty()) {
+      std::cerr << "Unscheduled ALU multislot vec ops:\n";
+      for (auto& a : cir.alu_multi_slot) {
+         std::cerr << "   [" << a->block_id() << ":" << a->index() << "]:" << *a << "\n";
+         for (auto& d : a->required_instr())
+            std::cerr << "      R[" << d->block_id() << ":" << d->index() << "]:" << *d
+                      << "\n";
       }
       fail = true;
    }
@@ -522,16 +539,18 @@ BlockScheduler::finalize()
 }
 
 bool
-BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks)
+BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks, ValueFactory& vf)
 {
    bool success = false;
    AluGroup *group = nullptr;
+   int expected_ar_uses = m_current_block->expected_ar_uses();
 
    sfn_log << SfnLog::schedule << "Schedule alu with " <<
               m_current_block->expected_ar_uses()
            << " pending AR loads\n";
 
-   bool has_alu_ready = !alu_vec_ready.empty() || !alu_trans_ready.empty();
+   bool has_alu_ready =
+      !alu_vec_ready.empty() || !alu_multi_slot_ready.empty() || !alu_trans_ready.empty();
 
    bool has_lds_ready =
       !alu_vec_ready.empty() && (*alu_vec_ready.begin())->has_lds_access();
@@ -544,6 +563,7 @@ BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks)
       if (m_current_block->type() != Block::alu) {
          start_new_block(out_blocks, Block::alu);
          m_alu_groups_scheduled = 0;
+         expected_ar_uses = 0;
       }
    }
 
@@ -552,6 +572,7 @@ BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks)
     * fetch + read from queue has to be in the same ALU CF block */
    if (!alu_groups_ready.empty() && !has_lds_ready && !has_ar_read_ready) {
       group = *alu_groups_ready.begin();
+      group->update_readport_reserver();
 
       if (!check_array_reads(*group)) {
 
@@ -564,11 +585,11 @@ BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks)
             alu_groups_ready.erase(alu_groups_ready.begin());
             success = true;
          } else {
-            if (m_current_block->expected_ar_uses() == 0) {
+            if (expected_ar_uses == 0) {
                start_new_block(out_blocks, Block::alu);
 
                if (!m_current_block->try_reserve_kcache(*group))
-                  unreachable("Scheduling a group in a new block should always succeed");
+                  UNREACHABLE("Scheduling a group in a new block should always succeed");
                alu_groups_ready.erase(alu_groups_ready.begin());
                sfn_log << SfnLog::schedule << "Schedule ALU group\n";
                success = true;
@@ -591,9 +612,15 @@ BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks)
 
    assert(group);
 
-   int free_slots = group->free_slots();
+   int free_slots = group->free_slot_mask();
 
    while (free_slots && has_alu_ready) {
+
+      if (!alu_multi_slot_ready.empty()) {
+         success |= schedule_alu_multislot_to_group_vec(group, vf);
+         free_slots = group->free_slot_mask();
+      }
+
       if (!alu_vec_ready.empty())
          success |= schedule_alu_to_group_vec(group);
 
@@ -620,7 +647,9 @@ BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks)
 
          // AR is loaded but not all uses are done, we don't want
          // to start a new CF here
-         assert(m_current_block->expected_ar_uses() ==0);
+         // TODO this can explode, if kcache reservation fails with
+         // an instruction that also requires AR
+         assert(expected_ar_uses == 0);
 
          // kcache reservation failed, so we have to start a new CF
          start_new_block(out_blocks, Block::alu);
@@ -648,13 +677,13 @@ BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks)
    if (is_index) {
       if (addr->sel() == AddressRegister::idx0 && m_idx0_pending) {
          assert(!group->has_lds_group_start());
-         assert(m_current_block->expected_ar_uses() == 0);
+         assert(expected_ar_uses == 0);
          start_new_block(out_blocks, Block::alu);
          m_current_block->try_reserve_kcache(*group);
       }
       if (addr->sel() == AddressRegister::idx1 && m_idx1_pending) {
          assert(!group->has_lds_group_start());
-         assert(m_current_block->expected_ar_uses() == 0);
+         assert(expected_ar_uses == 0);
          start_new_block(out_blocks, Block::alu);
          m_current_block->try_reserve_kcache(*group);
       }
@@ -670,8 +699,7 @@ BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks)
    m_idx1_pending |= m_idx1_loading;
    m_idx1_loading = false;
 
-   if (!m_current_block->lds_group_active() &&
-       m_current_block->expected_ar_uses() == 0 &&
+   if (!m_current_block->lds_group_active() && expected_ar_uses == 0 &&
        (!addr || is_index)) {
       group->set_instr_flag(Instr::no_lds_or_addr_group);
    }
@@ -684,10 +712,10 @@ BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks)
 
    if (group->has_kill_op()) {
       assert(!group->has_lds_group_start());
-      assert(m_current_block->expected_ar_uses() == 0);
+      assert(expected_ar_uses == 0);
       start_new_block(out_blocks, Block::alu);
    }
-
+   group->update_readport_reserver();
    return success;
 }
 
@@ -788,6 +816,7 @@ void BlockScheduler::maybe_split_alu_block(Shader::ShaderBlocks& out_blocks)
          next_block_start->set_instr_flag(Instr::force_cf);
          used_slots = pending_slots;
          pending_slots = cur_group->slots();
+         next_block_start = cur_group;
       }
    }
 
@@ -911,6 +940,55 @@ BlockScheduler::schedule_alu_to_group_vec(AluGroup *group)
 }
 
 bool
+BlockScheduler::schedule_alu_multislot_to_group_vec(AluGroup *group, ValueFactory& vf)
+{
+   assert(group);
+   assert(!alu_multi_slot_ready.empty());
+
+   bool success = false;
+   auto i = alu_multi_slot_ready.begin();
+   auto e = alu_multi_slot_ready.end();
+
+   while (i != e && util_bitcount(group->free_slot_mask()) > 1) {
+      auto required_mask = (*i)->required_channels_mask();
+      if ((group->free_slot_mask() & required_mask) != required_mask) {
+         ++i;
+         continue;
+      }
+
+      if (check_array_reads(**i)) {
+         ++i;
+         continue;
+      }
+
+      if (!m_current_block->try_reserve_kcache(**i)) {
+         sfn_log << SfnLog::schedule << " failed (kcache)\n";
+         ++i;
+         continue;
+      }
+
+      if ((*i)->split(vf, *group)) {
+         success = true;
+         auto old_i = i;
+         ++i;
+
+         auto addr = std::get<0>((*old_i)->indirect_addr());
+         if (addr && addr->has_flag(Register::addr_or_idx))
+            m_current_block->dec_expected_ar_uses();
+
+         alu_multi_slot_ready.erase(old_i);
+      } else {
+         if ((group->free_slot_mask() & 0xf) == 0xf) {
+            std::cerr << **i << "\n";
+            UNREACHABLE("Splitting into an empty slot must not fail");
+         }
+         ++i;
+      }
+   }
+   return success;
+}
+
+bool
 BlockScheduler::schedule_alu_to_group_trans(AluGroup *group,
                                            std::list<AluInstr *>& readylist)
 {
@@ -1021,6 +1099,7 @@ BlockScheduler::collect_ready(CollectInstructions& available)
    bool result = false;
    result |= collect_ready_alu_vec(alu_vec_ready, available.alu_vec);
    result |= collect_ready_type(alu_trans_ready, available.alu_trans);
+   result |= collect_ready_type(alu_multi_slot_ready, available.alu_multi_slot);
    result |= collect_ready_type(alu_groups_ready, available.alu_groups);
    result |= collect_ready_type(gds_ready, available.gds_op);
    result |= collect_ready_type(tex_ready, available.tex);
@@ -1046,9 +1125,9 @@ BlockScheduler::collect_ready_alu_vec(std::list<AluInstr *>& ready,
    }
 
    int max_check = 0;
-   while (i != e && max_check++ < 64) {
-      if (ready.size() < 64 && (*i)->ready()) {
+   while (i != e && max_check++ < 64 && ready.size() < 64) {
 
+      if ((*i)->ready()) {
          int priority = 0;
          /* LDS fetches that use static offsets are usually ready ery fast,
           * so that they would get schedules early, and this leaves the

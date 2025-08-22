@@ -44,7 +44,7 @@ att_set_clear_preload(const VkRenderingAttachmentInfo *att, bool *clear, bool *p
       *preload |= att->storeOp == VK_ATTACHMENT_STORE_OP_NONE;
       break;
    default:
-      unreachable("Unsupported loadOp");
+      UNREACHABLE("Unsupported loadOp");
    }
 }
 
@@ -252,7 +252,7 @@ panvk_per_arch(cmd_init_render_state)(struct panvk_cmd_buffer *cmdbuf,
          to_panvk_physical_device(cmdbuf->vk.base.device->physical);
    struct panvk_cmd_graphics_state *state = &cmdbuf->state.gfx;
    struct pan_fb_info *fbinfo = &state->render.fb.info;
-   uint32_t att_width = 0, att_height = 0;
+   uint32_t att_width = UINT32_MAX, att_height = UINT32_MAX;
 
    state->render.flags = pRenderingInfo->flags;
 
@@ -298,8 +298,8 @@ panvk_per_arch(cmd_init_render_state)(struct panvk_cmd_buffer *cmdbuf,
          continue;
 
       render_state_set_color_attachment(cmdbuf, att, i);
-      att_width = MAX2(iview->vk.extent.width, att_width);
-      att_height = MAX2(iview->vk.extent.height, att_height);
+      att_width = MIN2(iview->vk.extent.width, att_width);
+      att_height = MIN2(iview->vk.extent.height, att_height);
    }
 
    if (pRenderingInfo->pDepthAttachment &&
@@ -310,8 +310,8 @@ panvk_per_arch(cmd_init_render_state)(struct panvk_cmd_buffer *cmdbuf,
       if (iview) {
          assert(iview->vk.image->aspects & VK_IMAGE_ASPECT_DEPTH_BIT);
          render_state_set_z_attachment(cmdbuf, att);
-         att_width = MAX2(iview->vk.extent.width, att_width);
-         att_height = MAX2(iview->vk.extent.height, att_height);
+         att_width = MIN2(iview->vk.extent.width, att_width);
+         att_height = MIN2(iview->vk.extent.height, att_height);
       }
    }
 
@@ -323,8 +323,8 @@ panvk_per_arch(cmd_init_render_state)(struct panvk_cmd_buffer *cmdbuf,
       if (iview) {
          assert(iview->vk.image->aspects & VK_IMAGE_ASPECT_STENCIL_BIT);
          render_state_set_s_attachment(cmdbuf, att);
-         att_width = MAX2(iview->vk.extent.width, att_width);
-         att_height = MAX2(iview->vk.extent.height, att_height);
+         att_width = MIN2(iview->vk.extent.width, att_width);
+         att_height = MIN2(iview->vk.extent.height, att_height);
       }
    }
 
@@ -702,7 +702,8 @@ panvk_per_arch(cmd_prepare_draw_sysvals)(struct panvk_cmd_buffer *cmdbuf,
 {
    const struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
    struct vk_color_blend_state *cb = &cmdbuf->vk.dynamic_graphics_state.cb;
-   const struct panvk_shader *fs = get_fs(cmdbuf);
+   const struct panvk_shader_variant *fs =
+      panvk_shader_only_variant(get_fs(cmdbuf));
    uint32_t noperspective_varyings = fs ? fs->info.varyings.noperspective : 0;
    BITSET_DECLARE(dirty_sysvals, MAX_SYSVAL_FAUS) = {0};
 
@@ -801,7 +802,8 @@ panvk_per_arch(cmd_prepare_draw_sysvals)(struct panvk_cmd_buffer *cmdbuf,
    if (dyn_gfx_state_dirty(cmdbuf, INPUT_ATTACHMENT_MAP))
       prepare_iam_sysvals(cmdbuf, dirty_sysvals);
 
-   const struct panvk_shader *vs = cmdbuf->state.gfx.vs.shader;
+   const struct panvk_shader_variant *vs =
+      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
 
 #if PAN_ARCH < 9
    struct panvk_descriptor_state *desc_state = &cmdbuf->state.gfx.desc_state;

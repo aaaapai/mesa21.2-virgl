@@ -187,6 +187,8 @@ struct fd_dev_info {
 
       /* See ir3_compiler::has_scalar_alu. */
       bool has_scalar_alu;
+      /* See ir3_compiler::has_scalar_predicates. */
+      bool has_scalar_predicates;
       /* See ir3_compiler::has_early_preamble. */
       bool has_early_preamble;
 
@@ -367,6 +369,12 @@ struct fd_dev_info {
 
       /* On a750 the control register layout is rearranged. */
       bool new_control_regs;
+
+      /* a740+ support a per-view list of bin scales in GRAS which can be used
+       * to modify the viewport, rather than manually patching it in the
+       * driver.
+       */
+      bool has_hw_bin_scaling;
    } a7xx;
 };
 

@@ -418,7 +418,7 @@ per_vertex_accumulator::construct_interface_instance() const
 class builtin_variable_generator
 {
 public:
-   builtin_variable_generator(exec_list *instructions,
+   builtin_variable_generator(ir_exec_list *instructions,
                               struct _mesa_glsl_parse_state *state);
    void generate_constants();
    void generate_uniforms();
@@ -511,7 +511,7 @@ private:
       add_varying(slot, type, GLSL_PRECISION_NONE, name, interp);
    }
 
-   exec_list * const instructions;
+   ir_exec_list * const instructions;
    struct _mesa_glsl_parse_state * const state;
    glsl_symbol_table * const symtab;
 
@@ -541,7 +541,7 @@ private:
 
 
 builtin_variable_generator::builtin_variable_generator(
-   exec_list *instructions, struct _mesa_glsl_parse_state *state)
+   ir_exec_list *instructions, struct _mesa_glsl_parse_state *state)
    : instructions(instructions), state(state), symtab(state->symbols),
      compatibility(state->compat_shader || state->ARB_compatibility_enable),
      bool_t(&glsl_type_builtin_bool), int_t(&glsl_type_builtin_int),
@@ -561,7 +561,7 @@ builtin_variable_generator::add_index_variable(const char *name,
                                                enum ir_variable_mode mode,
                                                int slot, int index)
 {
-   ir_variable *var = new(symtab) ir_variable(type, name, mode);
+   ir_variable *var = new(state->linalloc) ir_variable(type, name, mode);
    var->data.how_declared = ir_var_declared_implicitly;
 
    switch (var->data.mode) {
@@ -607,7 +607,7 @@ builtin_variable_generator::add_variable(const char *name,
                                          enum ir_variable_mode mode, int slot,
                                          enum glsl_interp_mode interp)
 {
-   ir_variable *var = new(symtab) ir_variable(type, name, mode);
+   ir_variable *var = new(state->linalloc) ir_variable(type, name, mode);
    var->data.how_declared = ir_var_declared_implicitly;
 
    switch (var->data.mode) {
@@ -697,8 +697,8 @@ builtin_variable_generator::add_const(const char *name, int precision,
 {
    ir_variable *const var = add_variable(name, &glsl_type_builtin_int,
                                          precision, ir_var_auto, -1);
-   var->constant_value = new(var) ir_constant(value);
-   var->constant_initializer = new(var) ir_constant(value);
+   var->constant_value = new(state->linalloc) ir_constant(value);
+   var->constant_initializer = new(state->linalloc) ir_constant(value);
    var->data.has_initializer = true;
    return var;
 }
@@ -716,9 +716,9 @@ builtin_variable_generator::add_const_ivec3(const char *name, int x, int y,
    data.i[0] = x;
    data.i[1] = y;
    data.i[2] = z;
-   var->constant_value = new(var) ir_constant(&glsl_type_builtin_ivec3, &data);
+   var->constant_value = new(state->linalloc) ir_constant(&glsl_type_builtin_ivec3, &data);
    var->constant_initializer =
-      new(var) ir_constant(&glsl_type_builtin_ivec3, &data);
+      new(state->linalloc) ir_constant(&glsl_type_builtin_ivec3, &data);
    var->data.has_initializer = true;
    return var;
 }
@@ -1543,9 +1543,6 @@ builtin_variable_generator::add_varying(int slot, const glsl_type *type,
 void
 builtin_variable_generator::generate_varyings()
 {
-   const struct gl_shader_compiler_options *options =
-      &state->consts->ShaderCompilerOptions[state->stage];
-
    /* gl_Position and gl_PointSize are not visible from fragment shaders. */
    if (state->stage != MESA_SHADER_FRAGMENT) {
       add_varying(VARYING_SLOT_POS, vec4_t, GLSL_PRECISION_HIGH, "gl_Position");
@@ -1666,11 +1663,13 @@ builtin_variable_generator::generate_varyings()
          var->data.patch = fields[i].patch;
          var->init_interface_type(per_vertex_out_type);
 
-         var->data.invariant = fields[i].location == VARYING_SLOT_POS &&
-                               options->PositionAlwaysInvariant;
+         var->data.invariant = state->stage == MESA_SHADER_VERTEX &&
+                               fields[i].location == VARYING_SLOT_POS &&
+                               state->consts->VSPositionAlwaysInvariant;
 
-         var->data.precise = fields[i].location == VARYING_SLOT_POS &&
-                               options->PositionAlwaysPrecise;
+         var->data.precise = state->stage == MESA_SHADER_TESS_EVAL &&
+                             fields[i].location == VARYING_SLOT_POS &&
+                             state->consts->TESPositionAlwaysPrecise;
       }
    }
 }
@@ -1680,7 +1679,7 @@ builtin_variable_generator::generate_varyings()
 
 
 void
-_mesa_glsl_initialize_variables(exec_list *instructions,
+_mesa_glsl_initialize_variables(ir_exec_list *instructions,
 				struct _mesa_glsl_parse_state *state)
 {
    builtin_variable_generator gen(instructions, state);

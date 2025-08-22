@@ -381,7 +381,6 @@ init_subqueue(struct panvk_gpu_queue *queue, enum panvk_subqueue_id subqueue)
 
    *cs_ctx = (struct panvk_cs_subqueue_context){
       .syncobjs = panvk_priv_mem_dev_addr(queue->syncobjs),
-      .debug.syncobjs = panvk_priv_mem_dev_addr(queue->debug_syncobjs),
       .debug.tracebuf.cs = subq->tracebuf.addr.dev,
 #if PAN_ARCH == 10
       /* Iterator scoreboard will be picked in CS and wrap back to SB_ITER(0) on
@@ -465,7 +464,7 @@ init_subqueue(struct panvk_gpu_queue *queue, enum panvk_subqueue_id subqueue)
       cs_req_res(&b, CS_COMPUTE_RES);
       break;
    default:
-      unreachable("Unknown subqueue");
+      UNREACHABLE("Unknown subqueue");
       break;
    }
 
@@ -510,7 +509,7 @@ init_subqueue(struct panvk_gpu_queue *queue, enum panvk_subqueue_id subqueue)
                          subqueue);
       pandecode_cs_binary(dev->debug.decode_ctx, qsubmit.stream_addr,
                           qsubmit.stream_size,
-                          phys_dev->kmod.props.gpu_prod_id);
+                          phys_dev->kmod.props.gpu_id);
    }
 
    return VK_SUCCESS;
@@ -529,7 +528,6 @@ cleanup_queue(struct panvk_gpu_queue *queue)
 
    finish_render_desc_ringbuf(queue);
 
-   panvk_pool_free_mem(&queue->debug_syncobjs);
    panvk_pool_free_mem(&queue->syncobjs);
 }
 
@@ -552,18 +550,6 @@ init_queue(struct panvk_gpu_queue *queue)
    if (!panvk_priv_mem_host_addr(queue->syncobjs))
       return panvk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
                           "Failed to allocate subqueue sync objects");
-
-   if (instance->debug_flags & (PANVK_DEBUG_SYNC | PANVK_DEBUG_TRACE)) {
-      alloc_info.size =
-         ALIGN_POT(sizeof(struct panvk_cs_sync32), 64) * PANVK_SUBQUEUE_COUNT,
-      queue->debug_syncobjs =
-         panvk_pool_alloc_mem(&dev->mempools.rw_nc, alloc_info);
-      if (!panvk_priv_mem_host_addr(queue->debug_syncobjs)) {
-         result = panvk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
-                               "Failed to allocate subqueue sync objects");
-         goto err_cleanup_queue;
-      }
-   }
 
    result = init_render_desc_ringbuf(queue);
    if (result != VK_SUCCESS)
@@ -764,6 +750,7 @@ static void
 panvk_queue_submit_init(struct panvk_queue_submit *submit,
                         struct vk_queue *vk_queue)
 {
+   MESA_TRACE_FUNC();
    struct vk_device *vk_dev = vk_queue->base.device;
 
    *submit = (struct panvk_queue_submit){
@@ -786,6 +773,7 @@ panvk_queue_submit_init_storage(
    struct panvk_queue_submit *submit, const struct vk_queue_submit *vk_submit,
    struct panvk_queue_submit_stack_storage *stack_storage)
 {
+   MESA_TRACE_FUNC();
    submit->utrace.first_subqueue = PANVK_SUBQUEUE_COUNT;
    for (uint32_t i = 0; i < vk_submit->command_buffer_count; i++) {
       struct panvk_cmd_buffer *cmdbuf = container_of(
@@ -876,6 +864,7 @@ static void
 panvk_queue_submit_init_utrace(struct panvk_queue_submit *submit,
                                const struct vk_queue_submit *vk_submit)
 {
+   MESA_TRACE_FUNC();
    struct panvk_device *dev = submit->dev;
 
    if (!submit->utrace.queue_mask)
@@ -910,6 +899,7 @@ static void
 panvk_queue_submit_init_waits(struct panvk_queue_submit *submit,
                               const struct vk_queue_submit *vk_submit)
 {
+   MESA_TRACE_FUNC();
    if (!submit->needs_waits)
       return;
 
@@ -942,6 +932,7 @@ static void
 panvk_queue_submit_init_cmdbufs(struct panvk_queue_submit *submit,
                                 const struct vk_queue_submit *vk_submit)
 {
+   MESA_TRACE_FUNC();
    struct panvk_device *dev = submit->dev;
 
    for (uint32_t i = 0; i < vk_submit->command_buffer_count; i++) {
@@ -1015,6 +1006,7 @@ static void
 panvk_queue_submit_init_signals(struct panvk_queue_submit *submit,
                                 const struct vk_queue_submit *vk_submit)
 {
+   MESA_TRACE_FUNC();
    struct panvk_gpu_queue *queue = submit->queue;
 
    if (!submit->needs_signals)
@@ -1034,14 +1026,6 @@ panvk_queue_submit_init_signals(struct panvk_queue_submit *submit,
             .queue_index = i,
             .syncs = DRM_PANTHOR_OBJ_ARRAY(1, &submit->signal_ops[signal_op++]),
          };
-   }
-
-   if (submit->force_sync) {
-      struct panvk_cs_sync32 *debug_syncs =
-         panvk_priv_mem_host_addr(queue->debug_syncobjs);
-
-      assert(debug_syncs);
-      memset(debug_syncs, 0, sizeof(*debug_syncs) * PANVK_SUBQUEUE_COUNT);
    }
 }
 
@@ -1145,7 +1129,7 @@ panvk_queue_submit_process_debug(const struct panvk_queue_submit *submit)
          pandecode_user_msg(decode_ctx, "CS %d on subqueue %d binaries\n\n", i,
                             qsubmit->queue_index);
          pandecode_cs_binary(decode_ctx, qsubmit->stream_addr,
-                             qsubmit->stream_size, props->gpu_prod_id);
+                             qsubmit->stream_size, props->gpu_id);
          pandecode_user_msg(decode_ctx, "\n");
       }
 
@@ -1170,7 +1154,7 @@ panvk_queue_submit_process_debug(const struct panvk_queue_submit *submit)
          uint64_t trace = queue->subqueues[i].tracebuf.addr.dev;
 
          pandecode_user_msg(decode_ctx, "\nCS traces on subqueue %d\n\n", i);
-         pandecode_cs_trace(decode_ctx, trace, trace_size, props->gpu_prod_id);
+         pandecode_cs_trace(decode_ctx, trace, trace_size, props->gpu_id);
          pandecode_user_msg(decode_ctx, "\n");
       }
    }
@@ -1182,28 +1166,14 @@ panvk_queue_submit_process_debug(const struct panvk_queue_submit *submit)
       pandecode_next_frame(decode_ctx);
 
    /* validate last after the command streams are dumped */
-   if (submit->force_sync) {
-      struct panvk_cs_sync32 *debug_syncs =
-         panvk_priv_mem_host_addr(queue->debug_syncobjs);
-      uint32_t debug_sync_points[PANVK_SUBQUEUE_COUNT] = {0};
-
-      for (uint32_t i = 0; i < submit->qsubmit_count; i++) {
-         const struct drm_panthor_queue_submit *qsubmit = &submit->qsubmits[i];
-         if (qsubmit->stream_size)
-            debug_sync_points[qsubmit->queue_index]++;
-      }
-
-      for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++) {
-         if (debug_syncs[i].seqno != debug_sync_points[i] ||
-             debug_syncs[i].error != 0)
-            vk_queue_set_lost(&queue->vk, "Incomplete job or timeout");
-      }
-   }
+   if (submit->force_sync)
+      panvk_per_arch(gpu_queue_check_status)(&queue->vk);
 }
 
 VkResult
 panvk_per_arch(gpu_queue_submit)(struct vk_queue *vk_queue, struct vk_queue_submit *vk_submit)
 {
+   MESA_TRACE_FUNC();
    struct panvk_queue_submit_stack_storage stack_storage;
    struct panvk_queue_submit submit;
    VkResult result = VK_SUCCESS;
@@ -1250,7 +1220,7 @@ get_panthor_group_priority(const VkDeviceQueueCreateInfo *create_info)
    case VK_QUEUE_GLOBAL_PRIORITY_REALTIME_KHR:
       return PANTHOR_GROUP_PRIORITY_REALTIME;
    default:
-      unreachable("Invalid global priority");
+      UNREACHABLE("Invalid global priority");
    }
 }
 
@@ -1332,6 +1302,14 @@ panvk_per_arch(gpu_queue_check_status)(struct vk_queue *vk_queue)
    struct drm_panthor_group_get_state state = {
       .group_handle = queue->group_handle,
    };
+
+   /* check for CS error and treat it as device lost */
+   for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++) {
+      const struct panvk_cs_subqueue_context *subq_ctx =
+         panvk_priv_mem_host_addr(queue->subqueues[i].context);
+      if (subq_ctx->last_error != 0)
+         return vk_queue_set_lost(&queue->vk, "CS_FAULT");
+   }
 
    int ret = pan_kmod_ioctl(dev->drm_fd, DRM_IOCTL_PANTHOR_GROUP_GET_STATE,
                             &state);

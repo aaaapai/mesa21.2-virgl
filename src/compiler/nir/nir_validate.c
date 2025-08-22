@@ -409,7 +409,7 @@ validate_deref_instr(nir_deref_instr *instr, validate_state *state)
          break;
 
       default:
-         unreachable("Invalid deref instruction type");
+         UNREACHABLE("Invalid deref instruction type");
       }
    }
 
@@ -809,6 +809,12 @@ validate_intrinsic_instr(nir_intrinsic_instr *instr, validate_state *state)
                          (state->shader->info.stage == MESA_SHADER_FRAGMENT &&
                           instr->intrinsic == nir_intrinsic_load_input_vertex));
    }
+
+   if (nir_intrinsic_has_offset_shift(instr) &&
+       nir_intrinsic_has_align(instr)) {
+      unsigned min_align = 1 << nir_intrinsic_offset_shift(instr);
+      validate_assert(state, nir_intrinsic_align(instr) >= min_align);
+   }
 }
 
 static void
@@ -911,9 +917,9 @@ validate_tex_instr(nir_tex_instr *instr, validate_state *state)
       case nir_tex_src_sampler_deref_intrinsic:
       case nir_tex_src_texture_deref_intrinsic: {
          nir_intrinsic_instr *intrin =
-            nir_instr_as_intrinsic(instr->src[i].src.ssa->parent_instr);
+            nir_def_as_intrinsic(instr->src[i].src.ssa);
          nir_deref_instr *deref =
-            nir_instr_as_deref(intrin->src[0].ssa->parent_instr);
+            nir_def_as_deref(intrin->src[0].ssa);
          if (!validate_assert(state, deref))
             break;
 
@@ -1049,7 +1055,7 @@ validate_phi_instr(nir_phi_instr *instr, validate_state *state)
 
    exec_list_validate(&instr->srcs);
    validate_assert(state, exec_list_length(&instr->srcs) ==
-                             state->block->predecessors->entries);
+                             state->block->predecessors.entries);
 }
 
 static void
@@ -1231,7 +1237,7 @@ collect_blocks(struct exec_list *cf_list, validate_state *state)
          break;
 
       default:
-         unreachable("Invalid CF node type");
+         UNREACHABLE("Invalid CF node type");
       }
    }
 }
@@ -1288,16 +1294,16 @@ validate_block_predecessors(nir_block *block, validate_state *state)
 
       /* And we have to be in our successor's predecessors set */
       validate_assert(state,
-                      _mesa_set_search(block->successors[i]->predecessors, block));
+                      _mesa_set_search(&block->successors[i]->predecessors, block));
 
       validate_phi_srcs(block, block->successors[i], state);
    }
 
    /* The start block cannot have any predecessors */
    if (block == nir_start_block(state->impl))
-      validate_assert(state, block->predecessors->entries == 0);
+      validate_assert(state, block->predecessors.entries == 0);
 
-   set_foreach(block->predecessors, entry) {
+   set_foreach(&block->predecessors, entry) {
       const nir_block *pred = entry->key;
       validate_assert(state, _mesa_set_search(state->blocks, pred));
       validate_assert(state, pred->successors[0] == block ||
@@ -1362,7 +1368,7 @@ validate_block(nir_block *block, validate_state *state)
             break;
 
          default:
-            unreachable("unknown control flow node type");
+            UNREACHABLE("unknown control flow node type");
          }
       } else {
          if (next->type == nir_cf_node_if) {
@@ -1487,7 +1493,7 @@ validate_cf_node(nir_cf_node *node, validate_state *state)
       break;
 
    default:
-      unreachable("Invalid CF node type");
+      UNREACHABLE("Invalid CF node type");
    }
 }
 
@@ -1594,12 +1600,12 @@ validate_src_dominance(nir_src *src, void *_state)
 {
    validate_state *state = _state;
 
-   if (src->ssa->parent_instr->block == nir_src_parent_instr(src)->block) {
+   if (nir_def_block(src->ssa) == nir_src_parent_instr(src)->block) {
       validate_assert(state, src->ssa->index < state->impl->ssa_alloc);
       validate_assert(state, BITSET_TEST(state->ssa_defs_found,
                                          src->ssa->index));
    } else {
-      validate_assert(state, nir_block_dominates(src->ssa->parent_instr->block,
+      validate_assert(state, nir_block_dominates(nir_def_block(src->ssa),
                                                  nir_src_parent_instr(src)->block));
    }
    return true;
@@ -1618,7 +1624,7 @@ validate_ssa_dominance(nir_function_impl *impl, validate_state *state)
             nir_phi_instr *phi = nir_instr_as_phi(instr);
             nir_foreach_phi_src(src, phi) {
                validate_assert(state,
-                               nir_block_dominates(src->src.ssa->parent_instr->block,
+                               nir_block_dominates(nir_def_block(src->src.ssa),
                                                    src->pred));
             }
          } else {
@@ -1629,7 +1635,7 @@ validate_ssa_dominance(nir_function_impl *impl, validate_state *state)
 
       nir_if *nif = nir_block_get_following_if(block);
       if (nif) {
-         validate_assert(state, nir_block_dominates(nif->condition.ssa->parent_instr->block,
+         validate_assert(state, nir_block_dominates(nir_def_block(nif->condition.ssa),
                                                     block));
       }
    }
@@ -1676,7 +1682,7 @@ typedef struct {
    uint32_t index;
    unsigned num_dom_children;
    struct nir_block **dom_children;
-   struct set *dom_frontier;
+   struct set dom_frontier;
    uint32_t dom_pre_index, dom_post_index;
 } block_dom_metadata;
 
@@ -1697,9 +1703,10 @@ validate_dominance(nir_function_impl *impl, validate_state *state)
       md->dom_post_index = block->dom_post_index;
       md->dom_children = block->dom_children;
       md->dom_frontier = block->dom_frontier;
+      memset(&block->dom_frontier, 0, sizeof(struct set));
 
       block->dom_children = NULL;
-      block->dom_frontier = _mesa_pointer_set_create(block);
+      _mesa_pointer_set_init(&block->dom_frontier, block);
    }
 
    /* Call metadata passes and compare it against the preserved metadata and call SSA dominance
@@ -1725,9 +1732,9 @@ validate_dominance(nir_function_impl *impl, validate_state *state)
                                            block->num_dom_children * sizeof(md->dom_children[0])));
          }
 
-         validate_assert(state, block->dom_frontier->entries == md->dom_frontier->entries);
-         set_foreach(block->dom_frontier, entry) {
-            validate_assert(state, _mesa_set_search_pre_hashed(md->dom_frontier,
+         validate_assert(state, block->dom_frontier.entries == md->dom_frontier.entries);
+         set_foreach(&block->dom_frontier, entry) {
+            validate_assert(state, _mesa_set_search_pre_hashed(&md->dom_frontier,
                                                                entry->hash, entry->key));
          }
       }
@@ -1742,8 +1749,9 @@ validate_dominance(nir_function_impl *impl, validate_state *state)
       nir_block *block = (nir_block *)entry->key;
       block_dom_metadata *md = &blocks[entry - state->blocks->table];
 
-      ralloc_free(block->dom_children);
-      ralloc_free(block->dom_frontier);
+      if (block->dom_children != block->_dom_children_storage)
+         ralloc_free(block->dom_children);
+      _mesa_set_fini(&block->dom_frontier, NULL);
 
       block->index = md->index;
       block->num_dom_children = md->num_dom_children;
@@ -2180,7 +2188,7 @@ nir_validate_shader(nir_shader *shader, const char *when)
       nir_var_mem_constant |
       nir_var_image;
 
-   if (gl_shader_stage_is_callable(shader->info.stage))
+   if (mesa_shader_stage_is_callable(shader->info.stage))
       valid_modes |= nir_var_shader_call_data;
 
    if (shader->info.stage == MESA_SHADER_ANY_HIT ||

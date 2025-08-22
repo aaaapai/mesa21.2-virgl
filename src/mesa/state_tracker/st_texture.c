@@ -188,7 +188,7 @@ st_gl_texture_dims_to_pipe_dims(GLenum texture,
       *layersOut = util_align_npot(depthIn, 6);
       break;
    default:
-      unreachable("Unexpected texture in st_gl_texture_dims_to_pipe_dims()");
+      UNREACHABLE("Unexpected texture in st_gl_texture_dims_to_pipe_dims()");
    case GL_TEXTURE_3D:
    case GL_PROXY_TEXTURE_3D:
       *widthOut = widthIn;
@@ -456,7 +456,7 @@ st_create_color_map_texture(struct gl_context *ctx)
  */
 static void
 st_destroy_bound_texture_handles_per_stage(struct st_context *st,
-                                           enum pipe_shader_type shader)
+                                           mesa_shader_stage shader)
 {
    struct st_bound_handles *bound_handles = &st->bound_texture_handles[shader];
    struct pipe_context *pipe = st->pipe;
@@ -485,7 +485,7 @@ st_destroy_bound_texture_handles(struct st_context *st)
 {
    unsigned i;
 
-   for (i = 0; i < PIPE_SHADER_TYPES; i++) {
+   for (i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       st_destroy_bound_texture_handles_per_stage(st, i);
    }
 }
@@ -496,7 +496,7 @@ st_destroy_bound_texture_handles(struct st_context *st)
  */
 static void
 st_destroy_bound_image_handles_per_stage(struct st_context *st,
-                                         enum pipe_shader_type shader)
+                                         mesa_shader_stage shader)
 {
    struct st_bound_handles *bound_handles = &st->bound_image_handles[shader];
    struct pipe_context *pipe = st->pipe;
@@ -525,7 +525,7 @@ st_destroy_bound_image_handles(struct st_context *st)
 {
    unsigned i;
 
-   for (i = 0; i < PIPE_SHADER_TYPES; i++) {
+   for (i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       st_destroy_bound_image_handles_per_stage(st, i);
    }
 }
@@ -581,7 +581,7 @@ void
 st_make_bound_samplers_resident(struct st_context *st,
                                 struct gl_program *prog)
 {
-   enum pipe_shader_type shader = pipe_shader_type_from_mesa(prog->info.stage);
+   mesa_shader_stage shader = prog->info.stage;
    struct st_bound_handles *bound_handles = &st->bound_texture_handles[shader];
    struct pipe_context *pipe = st->pipe;
    GLuint64 handle;
@@ -628,7 +628,7 @@ void
 st_make_bound_images_resident(struct st_context *st,
                               struct gl_program *prog)
 {
-   enum pipe_shader_type shader = pipe_shader_type_from_mesa(prog->info.stage);
+   mesa_shader_stage shader = prog->info.stage;
    struct st_bound_handles *bound_handles = &st->bound_image_handles[shader];
    struct pipe_context *pipe = st->pipe;
    GLuint64 handle;

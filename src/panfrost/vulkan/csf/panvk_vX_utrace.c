@@ -14,33 +14,43 @@
 
 static void
 cmd_write_timestamp(const struct panvk_device *dev, struct cs_builder *b,
-                    uint64_t addr)
+                    uint64_t addr, struct cs_async_op ts_async_op)
 {
-   const struct cs_index addr_reg = cs_scratch_reg64(b, 0);
+   /* Unless we dedicate a register, this will potentially overwrite something
+    * during begin/end. */
+   const struct cs_index addr_reg =
+      cs_scratch_reg64(b, CS_REG_SCRATCH_COUNT - 2);
+
+   /* Overwrite the signal_slot. Note that this has no effect in case of
+    * synchronous or indirect syncs. */
+   assert(!ts_async_op.wait_mask ||
+#if PAN_ARCH >= 11
+          ts_async_op.indirect ||
+#endif
+          ts_async_op.signal_slot == 0);
    /* abuse DEFERRED_SYNC */
-   const struct cs_async_op async =
-      cs_defer(dev->csf.sb.all_iters_mask | SB_MASK(DEFERRED_FLUSH),
-               SB_ID(DEFERRED_SYNC));
+   ts_async_op.signal_slot = SB_ID(DEFERRED_SYNC);
 
    cs_move64_to(b, addr_reg, addr);
-   cs_store_state(b, addr_reg, 0, MALI_CS_STATE_TIMESTAMP, async);
+   cs_store_state(b, addr_reg, 0, MALI_CS_STATE_TIMESTAMP, ts_async_op);
 }
 
 static void
 cmd_copy_data(struct cs_builder *b, uint64_t dst_addr, uint64_t src_addr,
-              uint32_t size)
+              uint32_t size, bool wait_for_timestamp)
 {
    assert((dst_addr | src_addr | size) % sizeof(uint32_t) == 0);
 
-   /* wait for timestamp writes */
-   cs_wait_slot(b, SB_ID(DEFERRED_SYNC));
+   if (wait_for_timestamp)
+      cs_wait_slot(b, SB_ID(DEFERRED_SYNC));
 
    /* Depending on where this is called from, we could potentially use SR
     * registers or copy with a compute job.
     */
    const struct cs_index dst_addr_reg = cs_scratch_reg64(b, 0);
    const struct cs_index src_addr_reg = cs_scratch_reg64(b, 2);
-   const uint32_t temp_count = CS_REG_SCRATCH_COUNT - 4;
+   const uint32_t temp_count =
+      MIN2(CS_REG_SCRATCH_COUNT - 4, CS_MAX_REG_TUPLE_SIZE);
 
    while (size) {
       cs_move64_to(b, dst_addr_reg, dst_addr);
@@ -65,8 +75,44 @@ cmd_copy_data(struct cs_builder *b, uint64_t dst_addr, uint64_t src_addr,
       src_addr += offset;
       size -= offset;
    }
+}
 
-   cs_wait_slot(b, SB_ID(LS));
+static void
+cmd_store_regs(struct cs_builder *b, uint64_t dst_addr, uint64_t src_addr,
+               uint32_t size, bool wait_for_timestamp)
+{
+   assert((dst_addr | size) % sizeof(uint32_t) == 0);
+   uint32_t num_regs = size / sizeof(uint32_t);
+   assert(num_regs <= CS_MAX_REG_TUPLE_SIZE);
+   assert(src_addr + num_regs <= PANVK_CS_REG_SCRATCH_END);
+
+   if (wait_for_timestamp)
+      cs_wait_slot(b, SB_ID(DEFERRED_SYNC));
+
+   bool valid_dst_regs = false;
+   struct cs_index dst_addr_reg;
+   /* Unless we dedicate a register, this will potentially overwrite
+    * something during indirect capture. For now, we only ensure we don't
+    * corrupt the registers we're capturing. */
+   for (uint32_t dst_scratch_base = PANVK_CS_REG_SCRATCH_END - 1;
+        dst_scratch_base >= PANVK_CS_REG_SCRATCH_START; dst_scratch_base -= 2) {
+      if (src_addr + num_regs <= dst_scratch_base ||
+          dst_scratch_base + 2 <= src_addr) {
+         dst_addr_reg =
+            cs_scratch_reg64(b, dst_scratch_base - PANVK_CS_REG_SCRATCH_START);
+         valid_dst_regs = true;
+         break;
+      }
+   }
+
+   if (!valid_dst_regs) {
+      assert(!"No unused scratch registers found");
+      return;
+   }
+
+   const struct cs_index src_addr_reg = cs_reg_tuple(b, src_addr, num_regs);
+   cs_move64_to(b, dst_addr_reg, dst_addr);
+   cs_store(b, src_addr_reg, dst_addr_reg, BITFIELD_MASK(num_regs), 0);
 }
 
 static struct cs_builder *
@@ -82,22 +128,52 @@ static void
 panvk_utrace_record_ts(struct u_trace *ut, void *cs, void *timestamps,
                        uint64_t offset_B, uint32_t flags)
 {
-   struct panvk_cmd_buffer *cmdbuf = cs;
+   /* Here the input type for void *cs is panvk_utrace_cs_info instead of
+    * panvk_cmd_buffer so we can pass additional parameters. */
+   struct panvk_utrace_cs_info *cs_info = cs;
+   struct panvk_cmd_buffer *cmdbuf = cs_info->cmdbuf;
    struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
    struct cs_builder *b = get_builder(cmdbuf, ut);
    const struct panvk_priv_bo *bo = timestamps;
    const uint64_t addr = bo->addr.dev + offset_B;
 
-   cmd_write_timestamp(dev, b, addr);
+   cmd_write_timestamp(dev, b, addr, *cs_info->ts_async_op);
+}
+
+static void
+panvk_utrace_capture_data(struct u_trace *ut, void *cs, void *dst_buffer,
+                          uint64_t dst_offset_B, void *src_buffer,
+                          uint64_t src_offset_B, uint32_t size_B)
+{
+   /* Here the input type for void *cs is panvk_utrace_cs_info instead of
+    * panvk_cmd_buffer so we can pass additional parameters. */
+   struct panvk_utrace_cs_info *cs_info = cs;
+   struct cs_builder *b = get_builder(cs_info->cmdbuf, ut);
+   const struct panvk_priv_bo *dst_bo = dst_buffer;
+   const uint64_t dst_addr = dst_bo->addr.dev + dst_offset_B;
+   const uint64_t src_addr = src_offset_B;
+
+   /* src_offset_B is absolute, src_buffer is used to indicate register capture */
+   assert(!src_buffer ||
+          (uintptr_t)src_buffer == PANVK_UTRACE_CAPTURE_REGISTERS);
+
+   if ((uintptr_t)src_buffer == PANVK_UTRACE_CAPTURE_REGISTERS)
+      cmd_store_regs(b, dst_addr, src_addr, size_B,
+                     cs_info->capture_data_wait_for_ts);
+   else
+      cmd_copy_data(b, dst_addr, src_addr, size_B,
+                    cs_info->capture_data_wait_for_ts);
 }
 
 void
 panvk_per_arch(utrace_context_init)(struct panvk_device *dev)
 {
-   u_trace_context_init(&dev->utrace.utctx, dev, sizeof(uint64_t), 0,
+   u_trace_context_init(&dev->utrace.utctx, dev, sizeof(uint64_t),
+                        sizeof(VkDispatchIndirectCommand),
                         panvk_utrace_create_buffer, panvk_utrace_delete_buffer,
-                        panvk_utrace_record_ts, panvk_utrace_read_ts, NULL,
-                        NULL, panvk_utrace_delete_flush_data);
+                        panvk_utrace_record_ts, panvk_utrace_read_ts,
+                        panvk_utrace_capture_data, panvk_utrace_get_data,
+                        panvk_utrace_delete_flush_data);
 }
 
 void
@@ -118,7 +194,7 @@ panvk_per_arch(utrace_copy_buffer)(struct u_trace_context *utctx,
    const uint64_t src_addr = src_bo->addr.dev + from_offset;
    const uint64_t dst_addr = dst_bo->addr.dev + to_offset;
 
-   cmd_copy_data(b, dst_addr, src_addr, size_B);
+   cmd_copy_data(b, dst_addr, src_addr, size_B, false);
 }
 
 void
@@ -130,7 +206,7 @@ panvk_per_arch(utrace_clone_init_pool)(struct panvk_pool *pool,
       .label = "utrace clone pool",
       .owns_bos = true,
    };
-   panvk_pool_init(pool, dev, NULL, &pool_props);
+   panvk_pool_init(pool, dev, NULL, NULL, &pool_props);
 }
 
 static struct cs_buffer

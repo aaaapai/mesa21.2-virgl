@@ -63,17 +63,15 @@
 #include "brw_nir.h"
 #include "nir_worklist.h"
 
-static nir_instr_worklist *
-nir_instr_worklist_create_or_clear(nir_instr_worklist * wl)
+static void
+nir_instr_worklist_init_or_clear(nir_instr_worklist * wl)
 {
-   if (wl == NULL) {
-      return nir_instr_worklist_create();
+   if (!wl->initialized) {
+      nir_instr_worklist_init(wl);
    } else {
       /* Clear any old cruft in the worklist. */
       nir_foreach_instr_in_worklist(_, wl)
          ;
-
-      return wl;
    }
 }
 
@@ -99,7 +97,7 @@ collect_reaching_defs(nir_alu_instr *fsat, nir_instr_worklist *sources)
     * do its job. Adding another fsat will not help.
     */
    if (def->parent_instr->type == nir_instr_type_alu &&
-       def->parent_instr->block != fsat->instr.block) {
+       nir_def_block(def) != fsat->instr.block) {
       nir_instr_worklist_push_tail(sources, def->parent_instr);
    }
 }
@@ -190,7 +188,7 @@ fixup_defs(struct set *fixup)
 
       nir_def *new_fsat = nir_fsat(&b, src_def);
 
-      nir_def_rewrite_uses_after(src_def, new_fsat, new_fsat->parent_instr);
+      nir_def_rewrite_uses_after(src_def, new_fsat);
    }
 }
 
@@ -199,7 +197,7 @@ brw_nir_opt_fsat(nir_shader *shader)
 {
    bool progress = false;
    void *mem_ctx = ralloc_context(NULL);
-   nir_instr_worklist *sources = NULL;
+   nir_instr_worklist sources = {0};
    struct set *fixup = NULL;
    struct set *verified_phis = NULL;
 
@@ -215,10 +213,10 @@ brw_nir_opt_fsat(nir_shader *shader)
             if (alu->op != nir_op_fsat)
                continue;
 
-            sources = nir_instr_worklist_create_or_clear(sources);
+            nir_instr_worklist_init_or_clear(&sources);
             fixup = _mesa_pointer_set_create_or_clear(mem_ctx, fixup, NULL);
 
-            collect_reaching_defs(alu, sources);
+            collect_reaching_defs(alu, &sources);
 
             /* verified_phis is a cache of phi nodes where all users of the
              * phi node are (eventually) fsat. Once a phi node is verified, it
@@ -228,7 +226,7 @@ brw_nir_opt_fsat(nir_shader *shader)
             if (verified_phis == NULL)
                verified_phis = _mesa_pointer_set_create(mem_ctx);
 
-            if (verify_users(sources, verified_phis, fixup)) {
+            if (verify_users(&sources, verified_phis, fixup)) {
                fixup_defs(fixup);
 
                /* All defs that can reach the old fsat instruction must
@@ -246,8 +244,8 @@ brw_nir_opt_fsat(nir_shader *shader)
                                          nir_metadata_control_flow);
    }
 
-   if (sources != NULL)
-      nir_instr_worklist_destroy(sources);
+   if (sources.initialized)
+      nir_instr_worklist_fini(&sources);
 
    ralloc_free(mem_ctx);
 

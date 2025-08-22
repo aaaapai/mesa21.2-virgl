@@ -48,7 +48,7 @@ char hw_stage_symbol_string[RGP_HW_STAGE_MAX][16] = {
 };
 
 static const char *
-get_api_stage_string(gl_shader_stage stage)
+get_api_stage_string(mesa_shader_stage stage)
 {
    switch (stage) {
    case MESA_SHADER_VERTEX:
@@ -82,7 +82,7 @@ get_hw_stage_symbol(struct rgp_code_object_record *record, unsigned index)
 }
 
 static const char *
-rt_subtype_from_stage(gl_shader_stage stage)
+rt_subtype_from_stage(mesa_shader_stage stage)
 {
    switch (stage) {
    case MESA_SHADER_RAYGEN:
@@ -503,8 +503,7 @@ ac_rgp_file_write_elf_object(FILE *output, size_t file_elf_start,
    note_hdr.hdr.n_namesz = sizeof(NOTE_MSGPACK_NAME);
    note_hdr.hdr.n_descsz = msgpack_size;
    note_hdr.hdr.n_type = NT_AMDGPU_METADATA;
-   memcpy(note_hdr.name, NOTE_MSGPACK_NAME "\0",
-          sizeof(NOTE_MSGPACK_NAME) + 1);
+   memcpy(note_hdr.name, NOTE_MSGPACK_NAME, sizeof(NOTE_MSGPACK_NAME));
    fseek(output, note_sec_start, SEEK_SET);
    fwrite(&note_hdr, 1, sizeof(struct ac_rgp_elf_note_msgpack_hdr), output);
    fseek(output, 0, SEEK_END);

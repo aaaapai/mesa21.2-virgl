@@ -184,7 +184,7 @@ loader_dri3_blit_context_get(struct loader_dri3_drawable *draw)
 
    if (!blit_context.ctx) {
       blit_context.ctx = driCreateNewContext(draw->dri_screen_render_gpu,
-                                                           NULL, NULL, NULL);
+                                             NULL, NULL, NULL, true);
       blit_context.cur_screen = draw->dri_screen_render_gpu;
    }
 
@@ -487,7 +487,7 @@ dri3_handle_present_event(struct loader_dri3_drawable *draw,
                           xcb_present_generic_event_t *ge)
 {
    switch (ge->evtype) {
-   case XCB_PRESENT_CONFIGURE_NOTIFY: {
+   case XCB_PRESENT_EVENT_CONFIGURE_NOTIFY: {
       xcb_present_configure_notify_event_t *ce = (void *) ge;
       if (ce->pixmap_flags & PresentWindowDestroyed) {
          free(ge);
@@ -500,7 +500,7 @@ dri3_handle_present_event(struct loader_dri3_drawable *draw,
       dri_invalidate_drawable(draw->dri_drawable);
       break;
    }
-   case XCB_PRESENT_COMPLETE_NOTIFY: {
+   case XCB_PRESENT_EVENT_COMPLETE_NOTIFY: {
       xcb_present_complete_notify_event_t *ce = (void *) ge;
 
       /* Compute the processed SBC number from the received 32-bit serial number
@@ -1284,6 +1284,7 @@ dri3_cpp_for_fourcc(uint32_t format) {
    case DRM_FORMAT_ARGB1555:
    case DRM_FORMAT_RGB565:
    case DRM_FORMAT_GR88:
+   case DRM_FORMAT_ARGB4444:
       return 2;
    case DRM_FORMAT_XRGB8888:
    case DRM_FORMAT_ARGB8888:
@@ -1386,7 +1387,7 @@ dri3_alloc_render_buffer(struct loader_dri3_drawable *draw, unsigned int fourcc,
 {
    struct loader_dri3_buffer *buffer;
    struct dri_image *pixmap_buffer = NULL, *linear_buffer_display_gpu = NULL;
-   int format = loader_fourcc_to_image_format(fourcc);
+   enum pipe_format format = loader_fourcc_to_pipe_format(fourcc);
    xcb_pixmap_t pixmap;
    xcb_sync_fence_t sync_fence;
    struct xshmfence *shm_fence;
@@ -1611,7 +1612,7 @@ dri3_alloc_render_buffer(struct loader_dri3_drawable *draw, unsigned int fourcc,
       cookie_pix = xcb_dri3_pixmap_from_buffer_checked(draw->conn,
                                                        pixmap,
                                                        draw->drawable,
-                                                       buffer->size,
+                                                       0,
                                                        width, height, buffer->strides[0],
                                                        depth, buffer->cpp * 8,
                                                        buffer_fds[0]);
@@ -2143,7 +2144,7 @@ dri3_free_buffers(struct dri_drawable *driDrawable,
       n_id = (draw->cur_blit_source == LOADER_DRI3_FRONT_ID) ? 0 : 1;
       break;
    default:
-      unreachable("unhandled buffer_type");
+      UNREACHABLE("unhandled buffer_type");
    }
 
    for (buf_id = first_id; buf_id < first_id + n_id; buf_id++)
@@ -2166,7 +2167,7 @@ loader_dri3_get_buffers(struct dri_drawable *driDrawable,
 {
    struct loader_dri3_drawable *draw = loaderPrivate;
    struct loader_dri3_buffer   *front, *back;
-   int fourcc = loader_image_format_to_fourcc(format);
+   int fourcc = loader_pipe_format_to_fourcc(format);
    int buf_id;
 
    buffers->image_mask = 0;

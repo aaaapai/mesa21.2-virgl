@@ -101,6 +101,9 @@ enum etna_uniform_contents {
    ETNA_UNIFORM_TEXTURE_WIDTH,
    ETNA_UNIFORM_TEXTURE_HEIGHT,
    ETNA_UNIFORM_TEXTURE_DEPTH,
+   ETNA_UNIFORM_SAMPLER_LOD_MIN,
+   ETNA_UNIFORM_SAMPLER_LOD_MAX,
+   ETNA_UNIFORM_SAMPLER_LOD_BIAS,
    ETNA_UNIFORM_UBO_ADDR,
 };
 
@@ -177,7 +180,7 @@ struct etna_context {
    uint32_t active_sampler_views;
    uint32_t dirty_sampler_views;
    struct pipe_sampler_view *sampler_view[PIPE_MAX_SAMPLERS];
-   struct etna_constbuf_state constant_buffer[PIPE_SHADER_TYPES];
+   struct etna_constbuf_state constant_buffer[MESA_SHADER_STAGES];
    struct etna_vertexbuf_state vertex_buffer;
    struct etna_index_buffer index_buffer;
    struct etna_shader_state shader;

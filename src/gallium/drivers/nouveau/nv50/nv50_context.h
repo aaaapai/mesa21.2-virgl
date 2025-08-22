@@ -195,7 +195,8 @@ struct nv50_context {
     */
    uint32_t so_used[4];
 
-   PIPE_FB_SURFACES; //STOP USING THIS
+   struct pipe_surface *fb_cbufs[PIPE_MAX_COLOR_BUFS];
+   struct pipe_surface *fb_zsbuf;
    struct pipe_framebuffer_state framebuffer;
    struct pipe_blend_color blend_colour;
    struct pipe_stencil_ref stencil_ref;
@@ -246,10 +247,10 @@ static inline unsigned
 nv50_context_shader_stage(unsigned pipe)
 {
    switch (pipe) {
-   case PIPE_SHADER_VERTEX: return NV50_SHADER_STAGE_VERTEX;
-   case PIPE_SHADER_FRAGMENT: return NV50_SHADER_STAGE_FRAGMENT;
-   case PIPE_SHADER_GEOMETRY: return NV50_SHADER_STAGE_GEOMETRY;
-   case PIPE_SHADER_COMPUTE: return NV50_SHADER_STAGE_COMPUTE;
+   case MESA_SHADER_VERTEX: return NV50_SHADER_STAGE_VERTEX;
+   case MESA_SHADER_FRAGMENT: return NV50_SHADER_STAGE_FRAGMENT;
+   case MESA_SHADER_GEOMETRY: return NV50_SHADER_STAGE_GEOMETRY;
+   case MESA_SHADER_COMPUTE: return NV50_SHADER_STAGE_COMPUTE;
    default:
       assert(!"invalid/unhandled shader type");
       return 0;

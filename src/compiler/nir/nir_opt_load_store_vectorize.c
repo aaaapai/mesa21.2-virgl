@@ -56,7 +56,7 @@
 struct intrinsic_info {
    nir_variable_mode mode; /* 0 if the mode is obtained from the deref. */
    nir_intrinsic_op op;
-   bool is_atomic;
+   bool is_unvectorizable;
    /* Indices into nir_intrinsic::src[] or -1 if not applicable. */
    int resource_src; /* resource (e.g. from vulkan_resource_index) */
    int base_src;     /* offset which it loads/stores from */
@@ -71,9 +71,9 @@ static const struct intrinsic_info *
 get_info(nir_intrinsic_op op)
 {
    switch (op) {
-#define INFO(mode, op, atomic, res, base, deref, val, scale)                                                             \
+#define INFO(mode, op, unvectorizable, res, base, deref, val, scale)                                                     \
    case nir_intrinsic_##op: {                                                                                            \
-      static const struct intrinsic_info op##_info = { mode, nir_intrinsic_##op, atomic, res, base, deref, val, scale }; \
+      static const struct intrinsic_info op##_info = { mode, nir_intrinsic_##op, unvectorizable, res, base, deref, val, scale }; \
       return &op##_info;                                                                                                 \
    }
 #define LOAD(mode, op, res, base, deref, scale)       INFO(mode, load_##op, false, res, base, deref, -1, scale)
@@ -90,6 +90,8 @@ get_info(nir_intrinsic_op op)
       STORE(0, deref, -1, -1, 0, 1, 1)
       LOAD(nir_var_mem_shared, shared, -1, 0, -1, 1)
       STORE(nir_var_mem_shared, shared, -1, 1, -1, 0, 1)
+      INFO(nir_var_mem_shared, load_shared2_amd, true, -1, 0, -1, -1, 1);
+      INFO(nir_var_mem_shared, store_shared2_amd, true, -1, 1, -1, 0, 1)
       LOAD(nir_var_mem_global, global, -1, 0, -1, 1)
       STORE(nir_var_mem_global, global, -1, 1, -1, 0, 1)
       LOAD(nir_var_mem_global, global_constant, -1, 0, -1, 1)
@@ -175,6 +177,17 @@ struct vectorize_ctx {
    struct hash_table *stores[nir_num_variable_modes];
 };
 
+static unsigned
+get_offset_scale(struct entry *entry)
+{
+   if (nir_intrinsic_has_offset_shift(entry->intrin)) {
+      assert(entry->info->offset_scale == 1);
+      return 1 << nir_intrinsic_offset_shift(entry->intrin);
+   }
+
+   return entry->info->offset_scale;
+}
+
 static uint32_t
 hash_entry_key(const void *key_)
 {
@@ -255,7 +268,9 @@ sort_entries(const void *a_, const void *b_)
 static unsigned
 get_bit_size(struct entry *entry)
 {
-   unsigned size = entry->is_store ? entry->intrin->src[entry->info->value_src].ssa->bit_size : entry->intrin->def.bit_size;
+   unsigned size = entry->info->value_src >= 0
+                      ? entry->intrin->src[entry->info->value_src].ssa->bit_size
+                      : entry->intrin->def.bit_size;
    return size == 1 ? 32u : size;
 }
 
@@ -340,7 +355,7 @@ parse_offset(nir_scalar *base, uint64_t *base_mul, uint64_t *offset)
    } while (progress);
 
    if (base->def->parent_instr->type == nir_instr_type_intrinsic) {
-      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(base->def->parent_instr);
+      nir_intrinsic_instr *intrin = nir_def_as_intrinsic(base->def);
       if (intrin->intrinsic == nir_intrinsic_load_vulkan_descriptor)
          base->def = NULL;
    }
@@ -385,7 +400,7 @@ add_to_entry_key(nir_scalar *offset_defs, uint64_t *offset_defs_mul,
          return 0;
       }
    }
-   unreachable("Unreachable.");
+   UNREACHABLE("Unreachable.");
    return 0;
 }
 
@@ -454,7 +469,7 @@ create_entry_key_from_deref(void *mem_ctx,
          break;
       }
       default:
-         unreachable("Unhandled deref type");
+         UNREACHABLE("Unhandled deref type");
       }
    }
 
@@ -507,6 +522,9 @@ create_entry_key_from_offset(void *mem_ctx, nir_def *base, uint64_t base_mul, ui
    struct entry_key *key = ralloc(mem_ctx, struct entry_key);
    key->resource = NULL;
    key->var = NULL;
+   key->offset_defs = NULL;
+   key->offset_defs_mul = NULL;
+
    if (base) {
       nir_scalar offset_defs[32];
       uint64_t offset_defs_mul[32];
@@ -516,14 +534,14 @@ create_entry_key_from_offset(void *mem_ctx, nir_def *base, uint64_t base_mul, ui
       nir_scalar scalar = { .def = base, .comp = 0 };
       key->offset_def_count = parse_entry_key_from_offset(key, 0, 32, scalar, base_mul, offset);
 
-      key->offset_defs = ralloc_array(mem_ctx, nir_scalar, key->offset_def_count);
-      key->offset_defs_mul = ralloc_array(mem_ctx, uint64_t, key->offset_def_count);
-      memcpy(key->offset_defs, offset_defs, key->offset_def_count * sizeof(nir_scalar));
-      memcpy(key->offset_defs_mul, offset_defs_mul, key->offset_def_count * sizeof(uint64_t));
+      if (key->offset_def_count) {
+         key->offset_defs = ralloc_array(mem_ctx, nir_scalar, key->offset_def_count);
+         key->offset_defs_mul = ralloc_array(mem_ctx, uint64_t, key->offset_def_count);
+         memcpy(key->offset_defs, offset_defs, key->offset_def_count * sizeof(nir_scalar));
+         memcpy(key->offset_defs_mul, offset_defs_mul, key->offset_def_count * sizeof(uint64_t));
+      }
    } else {
       key->offset_def_count = 0;
-      key->offset_defs = NULL;
-      key->offset_defs_mul = NULL;
    }
    return key;
 }
@@ -594,13 +612,25 @@ create_entry(void *mem_ctx,
              const struct intrinsic_info *info,
              nir_intrinsic_instr *intrin)
 {
+   bool is_shared2 = intrin->intrinsic == nir_intrinsic_load_shared2_amd ||
+                     intrin->intrinsic == nir_intrinsic_store_shared2_amd;
+
+   bool is_shared_append = intrin->intrinsic == nir_intrinsic_shared_append_amd ||
+                           intrin->intrinsic == nir_intrinsic_shared_consume_amd;
+
    struct entry *entry = rzalloc(mem_ctx, struct entry);
    entry->intrin = intrin;
    entry->instr = &intrin->instr;
    entry->info = info;
-   entry->is_store = entry->info->value_src >= 0;
+   entry->is_store = entry->info->value_src >= 0 || is_shared_append;
+
    entry->num_components =
       entry->is_store ? intrin->num_components : nir_def_last_component_read(&intrin->def) + 1;
+   /* Some atomics and load_shared2/store_shared2 always use 1 component. */
+   if (entry->num_components == 0 || is_shared2) {
+      assert(entry->info->is_unvectorizable || !entry->is_store);
+      entry->num_components = 1;
+   }
 
    if (entry->info->deref_src >= 0) {
       entry->deref = nir_src_as_deref(intrin->src[entry->info->deref_src]);
@@ -611,9 +641,10 @@ create_entry(void *mem_ctx,
    } else {
       nir_def *base = entry->info->base_src >= 0 ? intrin->src[entry->info->base_src].ssa : NULL;
       uint64_t offset = 0;
+      unsigned offset_scale = get_offset_scale(entry);
       if (nir_intrinsic_has_base(intrin))
-         offset += nir_intrinsic_base(intrin) * info->offset_scale;
-      entry->key = create_entry_key_from_offset(entry, base, info->offset_scale, &offset);
+         offset += nir_intrinsic_base(intrin) * offset_scale;
+      entry->key = create_entry_key_from_offset(entry, base, offset_scale, &offset);
       entry->offset = offset;
 
       if (base)
@@ -812,13 +843,12 @@ vectorize_loads(nir_builder *b, struct vectorize_ctx *ctx,
 
    /* update uses */
    if (first == low) {
-      nir_def_rewrite_uses_after(&low->intrin->def, low_def,
+      nir_def_rewrite_uses_after_instr(&low->intrin->def, low_def,
                                  high_def->parent_instr);
       nir_def_rewrite_uses(&high->intrin->def, high_def);
    } else {
       nir_def_rewrite_uses(&low->intrin->def, low_def);
-      nir_def_rewrite_uses_after(&high->intrin->def, high_def,
-                                 high_def->parent_instr);
+      nir_def_rewrite_uses_after(&high->intrin->def, high_def);
    }
 
    /* update the intrinsic */
@@ -834,10 +864,17 @@ vectorize_loads(nir_builder *b, struct vectorize_ctx *ctx,
        * nir_opt_algebraic() turns them into "i * 16 + 16" */
       b->cursor = nir_before_instr(first->instr);
 
-      nir_def *new_base = first->intrin->src[info->base_src].ssa;
-      new_base = nir_iadd_imm(b, new_base, -(int)(high_start / 8u / first->info->offset_scale));
-
-      nir_src_rewrite(&first->intrin->src[info->base_src], new_base);
+      if (nir_intrinsic_has_offset_shift(first->intrin)) {
+         nir_add_io_offset(b, first->intrin, -(int)(high_start / 8u));
+      } else {
+         /* TODO once all intrinsics that need a scaled offset use
+          * offset_shift, this old path can be removed.
+          */
+         nir_def *new_base = first->intrin->src[info->base_src].ssa;
+         new_base = nir_iadd_imm(
+            b, new_base, -(int)(high_start / 8u / get_offset_scale(first)));
+         nir_src_rewrite(&first->intrin->src[info->base_src], new_base);
+      }
    }
 
    /* update the deref */
@@ -846,7 +883,7 @@ vectorize_loads(nir_builder *b, struct vectorize_ctx *ctx,
 
       nir_deref_instr *deref = nir_src_as_deref(first->intrin->src[info->deref_src]);
       if (first != low && high_start != 0)
-         deref = subtract_deref(b, deref, high_start / 8u / first->info->offset_scale);
+         deref = subtract_deref(b, deref, high_start / 8u / get_offset_scale(first));
       first->deref = cast_deref(b, new_num_components, new_bit_size, deref);
 
       nir_src_rewrite(&first->intrin->src[info->deref_src],
@@ -968,6 +1005,14 @@ vectorize_stores(nir_builder *b, struct vectorize_ctx *ctx,
    if (second != low && nir_intrinsic_has_base(second->intrin))
       nir_intrinsic_set_base(second->intrin, nir_intrinsic_base(low->intrin));
 
+   /* update offset_shift: since we use low's offset, we should use its
+    * offset_shift as well.
+    */
+   if (second != low && nir_intrinsic_has_offset_shift(second->intrin)) {
+      nir_intrinsic_set_offset_shift(second->intrin,
+                                     nir_intrinsic_offset_shift(low->intrin));
+   }
+
    second->key = low->key;
    second->offset = low->offset;
 
@@ -1035,11 +1080,35 @@ bindings_different_restrict(nir_shader *shader, struct entry *a, struct entry *b
 }
 
 static int64_t
-compare_entries(struct entry *a, struct entry *b)
+may_alias_internal(struct entry *a, struct entry *b, uint32_t a_offset, uint32_t b_offset)
 {
+   /* use adjacency information */
+   /* TODO: we can look closer at the entry keys */
    if (!entry_key_equals(a->key, b->key))
-      return INT64_MAX;
-   return b->offset_signed - a->offset_signed;
+      return true;
+
+   int64_t diff = (b->offset_signed + b_offset) - (a->offset_signed + a_offset);
+
+   struct entry *first = diff < 0 ? b : a;
+   unsigned size = get_bit_size(first) / 8u * first->num_components;
+   return llabs(diff) < size;
+}
+
+static unsigned
+parse_shared2_offsets(struct entry *entry, uint32_t offsets[2])
+{
+   if (entry->intrin->intrinsic != nir_intrinsic_load_shared2_amd &&
+       entry->intrin->intrinsic != nir_intrinsic_store_shared2_amd) {
+      offsets[0] = 0;
+      return 1;
+   }
+
+   uint32_t stride = get_bit_size(entry) / 8u;
+   if (nir_intrinsic_st64(entry->intrin))
+      stride *= 64;
+   offsets[0] = nir_intrinsic_offset0(entry->intrin) * stride;
+   offsets[1] = nir_intrinsic_offset1(entry->intrin) * stride;
+   return 2;
 }
 
 static bool
@@ -1078,20 +1147,19 @@ may_alias(nir_shader *shader, struct entry *a, struct entry *b)
          return true;
    }
 
-   /* use adjacency information */
-   /* TODO: we can look closer at the entry keys */
-   int64_t diff = compare_entries(a, b);
-   if (diff != INT64_MAX) {
-      /* with atomics, nir_intrinsic_instr::num_components can be 0 */
-      if (diff < 0)
-         return llabs(diff) < MAX2(b->num_components, 1u) * (get_bit_size(b) / 8u);
-      else
-         return diff < MAX2(a->num_components, 1u) * (get_bit_size(a) / 8u);
+   uint32_t a_offsets[2], b_offsets[2] = { 0, 0 };
+   unsigned a_count = parse_shared2_offsets(a, a_offsets);
+   unsigned b_count = parse_shared2_offsets(b, b_offsets);
+   for (unsigned i = 0; i < a_count; i++) {
+      for (unsigned j = 0; j < b_count; j++) {
+         if (may_alias_internal(a, b, a_offsets[i], b_offsets[j]))
+            return true;
+      }
    }
 
    /* TODO: we can use deref information */
 
-   return true;
+   return false;
 }
 
 static bool
@@ -1166,14 +1234,12 @@ check_for_robustness(struct vectorize_ctx *ctx, struct entry *low, uint64_t high
    if (!(mode & ctx->options->robust_modes))
       return false;
 
-   unsigned scale = low->info->offset_scale;
-
    /* First, try to use alignment information in case the application provided some. If the addition
     * of the maximum offset of the low load and "high_offset" wraps around, we can't combine the low
     * and high loads.
     */
    uint64_t max_low = round_down(UINT64_MAX, low->align_mul) + low->align_offset;
-   if (!addition_wraps(max_low / scale, high_offset / scale, 64))
+   if (!addition_wraps(max_low, high_offset, 64))
       return false;
 
    /* We can't obtain addition_bits */
@@ -1192,7 +1258,7 @@ check_for_robustness(struct vectorize_ctx *ctx, struct entry *low, uint64_t high
    max_low = low->offset;
    if (stride)
       max_low = round_down(BITFIELD64_MASK(addition_bits), stride) + (low->offset % stride);
-   return addition_wraps(max_low / scale, high_offset / scale, addition_bits);
+   return addition_wraps(max_low, high_offset, addition_bits);
 }
 
 static bool
@@ -1223,7 +1289,7 @@ can_vectorize(struct vectorize_ctx *ctx, struct entry *first, struct entry *seco
    /* we can only vectorize non-volatile loads/stores of the same type and with
     * the same access */
    if (first->info != second->info || first->access != second->access ||
-       (first->access & ACCESS_VOLATILE) || first->info->is_atomic)
+       (first->access & ACCESS_VOLATILE) || first->info->is_unvectorizable)
       return false;
 
    if (first->intrin->intrinsic == nir_intrinsic_load_buffer_amd ||
@@ -1316,9 +1382,9 @@ try_vectorize_shared2(struct vectorize_ctx *ctx,
    unsigned high_bit_size = get_bit_size(high);
    unsigned low_size = low->num_components * low_bit_size / 8;
    unsigned high_size = high->num_components * high_bit_size / 8;
-   if ((low_size != 4 && low_size != 8) || (high_size != 4 && high_size != 8))
-      return false;
    if (low_size != high_size)
+      return false;
+   if (!(low_size == 4 || (low->is_store && low_size == 8)))
       return false;
    if (low->align_mul % low_size || low->align_offset % low_size)
       return false;
@@ -1408,32 +1474,42 @@ vectorize_sorted_entries(struct vectorize_ctx *ctx, nir_function_impl *impl,
           * callback if needed.  Driver callbacks will likely want to
           * restrict this to a smaller value, say 4 bytes (or none).
           */
-         unsigned max_hole =
-            first->is_store ||
-                  (ctx->options->has_shared2_amd &&
-                   get_variable_mode(first) == nir_var_mem_shared)
-               ? 0
-               : 28;
+         unsigned max_hole = first->is_store ? 0 : 28;
          unsigned low_size = get_bit_size(low) / 8u * low->num_components;
          bool separate = diff > max_hole + low_size;
+         if (separate)
+            continue;
 
-         if (separate) {
-            if (!ctx->options->has_shared2_amd ||
-                get_variable_mode(first) != nir_var_mem_shared)
-               break;
+         if (try_vectorize(impl, ctx, low, high, first, second)) {
+            low = low->is_store ? second : first;
+            *util_dynarray_element(arr, struct entry *, second_idx) = NULL;
+            progress = true;
+         }
+      }
+      *util_dynarray_element(arr, struct entry *, first_idx) = low;
+   }
 
-            if (try_vectorize_shared2(ctx, low, high, first, second)) {
-               low = NULL;
-               *util_dynarray_element(arr, struct entry *, second_idx) = NULL;
-               progress = true;
-               break;
-            }
-         } else {
-            if (try_vectorize(impl, ctx, low, high, first, second)) {
-               low = low->is_store ? second : first;
-               *util_dynarray_element(arr, struct entry *, second_idx) = NULL;
-               progress = true;
-            }
+   if (!ctx->options->has_shared2_amd)
+      return progress;
+
+   /* Do a second pass for backends which support load/store shared2. */
+   for (unsigned first_idx = 0; first_idx < num_entries; first_idx++) {
+      struct entry *low = *util_dynarray_element(arr, struct entry *, first_idx);
+      if (!low || get_variable_mode(low) != nir_var_mem_shared)
+         continue;
+
+      for (unsigned second_idx = first_idx + 1; second_idx < num_entries; second_idx++) {
+         struct entry *high = *util_dynarray_element(arr, struct entry *, second_idx);
+         if (!high || get_variable_mode(high) != nir_var_mem_shared)
+            continue;
+
+         struct entry *first = low->index < high->index ? low : high;
+         struct entry *second = low->index < high->index ? high : low;
+         if (try_vectorize_shared2(ctx, low, high, first, second)) {
+            low = NULL;
+            *util_dynarray_element(arr, struct entry *, second_idx) = NULL;
+            progress = true;
+            break;
          }
       }
 
@@ -1501,8 +1577,8 @@ handle_barrier(struct vectorize_ctx *ctx, bool *progress, nir_function_impl *imp
                                                        nir_var_mem_shared |
                                                        nir_var_mem_global |
                                                        nir_var_mem_task_payload);
-         acquire = nir_intrinsic_memory_semantics(intrin) & NIR_MEMORY_ACQUIRE;
-         release = nir_intrinsic_memory_semantics(intrin) & NIR_MEMORY_RELEASE;
+         acquire = nir_intrinsic_memory_semantics(intrin) & (NIR_MEMORY_ACQUIRE | NIR_MEMORY_MAKE_VISIBLE);
+         release = nir_intrinsic_memory_semantics(intrin) & (NIR_MEMORY_RELEASE | NIR_MEMORY_MAKE_AVAILABLE);
          switch (nir_intrinsic_memory_scope(intrin)) {
          case SCOPE_INVOCATION:
             /* a barier should never be required for correctness with these scopes */

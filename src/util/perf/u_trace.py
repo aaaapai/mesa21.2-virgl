@@ -89,7 +89,7 @@ class Tracepoint(object):
         indirect_sizes = []
         for indirect in self.indirect_args:
             indirect.indirect_offset = ' + '.join(indirect_sizes) if len(indirect_sizes) > 0 else 0
-            indirect_sizes.append(f"sizeof({indirect.type}")
+            indirect_sizes.append(f"sizeof({indirect.type})")
 
         self.tp_perfetto = tp_perfetto
         self.tp_markers = tp_markers
@@ -588,6 +588,8 @@ void __trace_${trace_name}(
  % for arg in trace.tp_struct:
   % if arg.copy_func is None:
    __entry->${arg.name} = ${arg.var};
+  % elif arg.length_arg is None:
+     ${arg.copy_func}(__entry->${arg.name}, ${arg.var});
   % else:
    ${arg.copy_func}(__entry->${arg.name}, ${arg.var}, ${arg.length_arg});
   % endif
@@ -671,7 +673,14 @@ perfetto_utils_hdr_template = """\
 #ifndef ${guard_name}
 #define ${guard_name}
 
+#ifndef ANDROID_LIBPERFETTO
 #include <perfetto.h>
+#else
+#include <perfetto/tracing.h>
+#include <perfetto/trace/clock_snapshot.pbzero.h>
+#include <perfetto/trace/gpu/gpu_render_stage_event.pbzero.h>
+#include <perfetto/trace/gpu/vulkan_api_event.pbzero.h>
+#endif
 
 % for header in HEADERS:
 #include "${header.hdr}"

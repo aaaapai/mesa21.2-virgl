@@ -68,6 +68,7 @@ struct pipe_screen;
 struct util_queue_fence;
 struct pipe_video_buffer;
 struct nir_shader;
+struct nir_shader_compiler_options;
 
 typedef struct pipe_vertex_state *
    (*pipe_create_vertex_state_func)(struct pipe_screen *screen,
@@ -92,8 +93,9 @@ struct pipe_screen {
    void *winsys_priv;
 
    const struct pipe_caps caps;
-   const struct pipe_shader_caps shader_caps[PIPE_SHADER_MESH_TYPES];
+   const struct pipe_shader_caps shader_caps[MESA_SHADER_MESH_STAGES];
    const struct pipe_compute_caps compute_caps;
+   const struct nir_shader_compiler_options *nir_options[MESA_SHADER_MESH_STAGES];
 
    /**
     * Get the fd associated with the screen
@@ -467,15 +469,6 @@ struct pipe_screen {
                              struct pipe_memory_info *info);
 
    /**
-    * Get IR specific compiler options struct.  For PIPE_SHADER_IR_NIR this
-    * returns a 'struct nir_shader_compiler_options'.  Drivers reporting
-    * NIR as the preferred IR must implement this.
-    */
-   const void *(*get_compiler_options)(struct pipe_screen *screen,
-                                      enum pipe_shader_ir ir,
-                                      enum pipe_shader_type shader);
-
-   /**
     * Returns a pointer to a driver-specific on-disk shader cache. If the
     * driver failed to create the cache or does not support an on-disk shader
     * cache NULL is returned. The callback itself may also be NULL if the
@@ -590,7 +583,7 @@ struct pipe_screen {
     */
    bool (*is_parallel_shader_compilation_finished)(struct pipe_screen *screen,
                                                    void *shader,
-                                                   enum pipe_shader_type shader_type);
+                                                   mesa_shader_stage shader_type);
 
    void (*driver_thread_add_job)(struct pipe_screen *screen,
                                  void *job,
@@ -621,11 +614,8 @@ struct pipe_screen {
     *
     * gallium frontends should call this before passing shaders to drivers,
     * and ideally also before shader caching.
-    *
-    * The driver may return a non-NULL string to trigger GLSL link failure
-    * and logging of that message in the GLSL linker log.
     */
-   char *(*finalize_nir)(struct pipe_screen *screen, struct nir_shader *nir);
+   void (*finalize_nir)(struct pipe_screen *screen, struct nir_shader *nir);
 
    /*Separated memory/resource allocations interfaces for Vulkan */
 
@@ -756,14 +746,6 @@ struct pipe_screen {
    pipe_vertex_state_destroy_func vertex_state_destroy;
 
    /**
-    * Update a timeline semaphore value stored within a driver fence object.
-    * Future waits and signals will use the new value.
-    */
-   void (*set_fence_timeline_value)(struct pipe_screen *screen,
-                                    struct pipe_fence_handle *fence,
-                                    uint64_t value);
-
-   /**
     * Get additional data for interop_query_device_info
     *
     * \p in_data_size is how much data was allocated by the caller
@@ -815,24 +797,6 @@ struct pipe_screen {
    void (*query_compression_modifiers)(struct pipe_screen *screen,
                                        enum pipe_format format, uint32_t rate,
                                        int max, uint64_t *modifiers, int *count);
-
-   /**
-    * Check if the given \p target buffer is supported as output (or input for
-    * encode) for this \p profile and \p entrypoint.
-    *
-    * If \p format is different from target->buffer_format this function
-    * checks if the \p target buffer can be converted to \p format as part
-    * of the given operation (eg. encoder accepts RGB input and converts
-    * it to YUV).
-    *
-    * \return true if the buffer is supported for given operation, false
-    *         otherwise.
-    */
-   bool (*is_video_target_buffer_supported)(struct pipe_screen *screen,
-                                            enum pipe_format format,
-                                            struct pipe_video_buffer *target,
-                                            enum pipe_video_profile profile,
-                                            enum pipe_video_entrypoint entrypoint);
 
    /**
     * Allocates a cut-out in the GPU's VM space.

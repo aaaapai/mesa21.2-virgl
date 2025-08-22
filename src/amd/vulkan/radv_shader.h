@@ -35,19 +35,15 @@ struct radv_shader_args;
 struct radv_serialized_shader_arena_block;
 struct vk_pipeline_robustness_state;
 
-enum {
-   RADV_GRAPHICS_STAGE_BITS =
-      (VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_TASK_BIT_EXT),
-   RADV_RT_STAGE_BITS =
-      (VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
+#define RADV_GRAPHICS_STAGE_BITS (VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_TASK_BIT_EXT)
+#define RADV_RT_STAGE_BITS (VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | \
        VK_SHADER_STAGE_MISS_BIT_KHR | VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CALLABLE_BIT_KHR)
-};
 
 #define RADV_STAGE_MASK ((1 << MESA_VULKAN_SHADER_STAGES) - 1)
 
 #define radv_foreach_stage(stage, stage_bits)                                                                          \
-   for (gl_shader_stage stage, __tmp = (gl_shader_stage)((stage_bits)&RADV_STAGE_MASK); stage = ffs(__tmp) - 1, __tmp; \
-        __tmp &= ~(1 << (stage)))
+   for (mesa_shader_stage stage, __tmp = (mesa_shader_stage)((stage_bits) & RADV_STAGE_MASK);                              \
+        stage = ffs(__tmp) - 1, __tmp; __tmp &= ~(1 << (stage)))
 
 enum radv_nggc_settings {
    radv_nggc_none = 0,
@@ -200,22 +196,22 @@ struct radv_nir_compiler_options {
    } debug;
 };
 
-#define SET_SGPR_FIELD(field, value) (((unsigned)(value)&field##__MASK) << field##__SHIFT)
+#define SET_SGPR_FIELD(field, value) (((unsigned)(value) & field##__MASK) << field##__SHIFT)
 
-#define TCS_OFFCHIP_LAYOUT_NUM_PATCHES__SHIFT          0
-#define TCS_OFFCHIP_LAYOUT_NUM_PATCHES__MASK           0x7f
+#define TCS_OFFCHIP_LAYOUT_NUM_PATCHES__SHIFT           0
+#define TCS_OFFCHIP_LAYOUT_NUM_PATCHES__MASK            0x7f
 #define TCS_OFFCHIP_LAYOUT_PATCH_VERTICES_IN__SHIFT     7
 #define TCS_OFFCHIP_LAYOUT_PATCH_VERTICES_IN__MASK      0x1f
 #define TCS_OFFCHIP_LAYOUT_TCS_MEM_ATTRIB_STRIDE__SHIFT 12
 #define TCS_OFFCHIP_LAYOUT_TCS_MEM_ATTRIB_STRIDE__MASK  0x1f
-#define TCS_OFFCHIP_LAYOUT_NUM_LS_OUTPUTS__SHIFT       17
-#define TCS_OFFCHIP_LAYOUT_NUM_LS_OUTPUTS__MASK        0x3f
-#define TCS_OFFCHIP_LAYOUT_NUM_HS_OUTPUTS__SHIFT       23
-#define TCS_OFFCHIP_LAYOUT_NUM_HS_OUTPUTS__MASK        0x3f
-#define TCS_OFFCHIP_LAYOUT_PRIMITIVE_MODE__SHIFT       29
-#define TCS_OFFCHIP_LAYOUT_PRIMITIVE_MODE__MASK        0x03
-#define TCS_OFFCHIP_LAYOUT_TES_READS_TF__SHIFT         31
-#define TCS_OFFCHIP_LAYOUT_TES_READS_TF__MASK          0x01
+#define TCS_OFFCHIP_LAYOUT_NUM_LS_OUTPUTS__SHIFT        17
+#define TCS_OFFCHIP_LAYOUT_NUM_LS_OUTPUTS__MASK         0x3f
+#define TCS_OFFCHIP_LAYOUT_NUM_HS_OUTPUTS__SHIFT        23
+#define TCS_OFFCHIP_LAYOUT_NUM_HS_OUTPUTS__MASK         0x3f
+#define TCS_OFFCHIP_LAYOUT_PRIMITIVE_MODE__SHIFT        29
+#define TCS_OFFCHIP_LAYOUT_PRIMITIVE_MODE__MASK         0x03
+#define TCS_OFFCHIP_LAYOUT_TES_READS_TF__SHIFT          31
+#define TCS_OFFCHIP_LAYOUT_TES_READS_TF__MASK           0x01
 
 #define TES_STATE_NUM_PATCHES__SHIFT      0
 #define TES_STATE_NUM_PATCHES__MASK       0xff
@@ -226,8 +222,6 @@ struct radv_nir_compiler_options {
 
 #define NGG_LDS_LAYOUT_GS_OUT_VERTEX_BASE__SHIFT 0
 #define NGG_LDS_LAYOUT_GS_OUT_VERTEX_BASE__MASK  0xffff
-#define NGG_LDS_LAYOUT_SCRATCH_BASE__SHIFT       16
-#define NGG_LDS_LAYOUT_SCRATCH_BASE__MASK        0xffff
 
 #define NGG_STATE_NUM_VERTS_PER_PRIM__SHIFT 0
 #define NGG_STATE_NUM_VERTS_PER_PRIM__MASK  0x7
@@ -259,8 +253,8 @@ struct radv_shader_layout {
 };
 
 struct radv_shader_stage {
-   gl_shader_stage stage;
-   gl_shader_stage next_stage;
+   mesa_shader_stage stage;
+   mesa_shader_stage next_stage;
 
    struct {
       const struct vk_object_base *object;
@@ -274,6 +268,7 @@ struct radv_shader_stage {
    unsigned char shader_sha1[20];
 
    nir_shader *nir;
+   nir_shader *gs_copy_shader;
    nir_shader *internal_nir; /* meta shaders */
 
    struct radv_shader_info info;
@@ -340,7 +335,7 @@ struct radv_vs_prolog_key {
    bool as_ls;
    bool is_ngg;
    bool wave32;
-   gl_shader_stage next_stage;
+   mesa_shader_stage next_stage;
 };
 
 enum radv_shader_binary_type { RADV_BINARY_TYPE_LEGACY, RADV_BINARY_TYPE_RTLD };
@@ -505,7 +500,7 @@ struct radv_shader_part_cache {
 struct radv_shader_dma_submission {
    struct list_head list;
 
-   struct radeon_cmdbuf *cs;
+   struct radv_cmd_stream *cs;
    struct radeon_winsys_bo *bo;
    uint64_t bo_size;
    char *ptr;
@@ -514,7 +509,6 @@ struct radv_shader_dma_submission {
    uint64_t seq;
 };
 
-struct radv_pipeline_layout;
 struct radv_shader_stage;
 
 void radv_optimize_nir(struct nir_shader *shader, bool optimize_conservatively);
@@ -527,7 +521,7 @@ struct radv_ray_tracing_stage_info;
 void radv_nir_lower_rt_abi(nir_shader *shader, const VkRayTracingPipelineCreateInfoKHR *pCreateInfo,
                            const struct radv_shader_args *args, const struct radv_shader_info *info,
                            uint32_t *stack_size, bool resume_shader, struct radv_device *device,
-                           struct radv_ray_tracing_pipeline *pipeline, bool monolithic,
+                           struct radv_ray_tracing_pipeline *pipeline, bool monolithic, bool has_position_fetch,
                            const struct radv_ray_tracing_stage_info *traversal_info);
 
 void radv_gather_unused_args(struct radv_ray_tracing_stage_info *info, nir_shader *nir);
@@ -596,7 +590,7 @@ struct radv_shader_part *radv_create_ps_epilog(struct radv_device *device, const
 
 void radv_shader_part_destroy(struct radv_device *device, struct radv_shader_part *shader_part);
 
-bool radv_shader_part_cache_init(struct radv_shader_part_cache *cache, struct radv_shader_part_cache_ops *ops);
+void radv_shader_part_cache_init(struct radv_shader_part_cache *cache, struct radv_shader_part_cache_ops *ops);
 void radv_shader_part_cache_finish(struct radv_device *device, struct radv_shader_part_cache *cache);
 struct radv_shader_part *radv_shader_part_cache_get(struct radv_device *device, struct radv_shader_part_cache *cache,
                                                     struct set *local_entries, const void *key);
@@ -609,7 +603,7 @@ unsigned radv_get_max_waves(const struct radv_device *device, const struct ac_sh
 
 unsigned radv_get_max_scratch_waves(const struct radv_device *device, struct radv_shader *shader);
 
-const char *radv_get_shader_name(const struct radv_shader_info *info, gl_shader_stage stage);
+const char *radv_get_shader_name(const struct radv_shader_info *info, mesa_shader_stage stage);
 
 unsigned radv_compute_spi_ps_input(const struct radv_physical_device *pdev,
                                    const struct radv_graphics_state_key *gfx_state,
@@ -620,7 +614,7 @@ bool radv_can_dump_shader(struct radv_device *device, nir_shader *nir);
 bool radv_can_dump_shader_stats(struct radv_device *device, nir_shader *nir);
 
 VkResult radv_dump_shader_stats(struct radv_device *device, struct radv_pipeline *pipeline, struct radv_shader *shader,
-                                gl_shader_stage stage, FILE *output);
+                                mesa_shader_stage stage, FILE *output);
 
 /* Returns true on success and false on failure */
 bool radv_shader_reupload(struct radv_device *device, struct radv_shader *shader);
@@ -701,7 +695,7 @@ enum radv_rt_priority {
 };
 
 static inline enum radv_rt_priority
-radv_get_rt_priority(gl_shader_stage stage)
+radv_get_rt_priority(mesa_shader_stage stage)
 {
    switch (stage) {
    case MESA_SHADER_RAYGEN:
@@ -715,7 +709,7 @@ radv_get_rt_priority(gl_shader_stage stage)
    case MESA_SHADER_CALLABLE:
       return radv_rt_priority_callable;
    default:
-      unreachable("Unimplemented RT shader stage.");
+      UNREACHABLE("Unimplemented RT shader stage.");
    }
 }
 
@@ -737,10 +731,24 @@ uint32_t radv_get_user_sgpr_loc(const struct radv_shader *shader, int idx);
 
 uint32_t radv_get_user_sgpr(const struct radv_shader *shader, int idx);
 
+static inline bool
+radv_shader_need_indirect_descriptor_sets(const struct radv_shader *shader)
+{
+   const struct radv_userdata_info *loc = radv_get_user_sgpr_info(shader, AC_UD_INDIRECT_DESCRIPTOR_SETS);
+   return loc->sgpr_idx != -1;
+}
+
+static inline bool
+radv_shader_need_push_constants_upload(const struct radv_shader *shader)
+{
+   const struct radv_userdata_info *loc = radv_get_user_sgpr_info(shader, AC_UD_PUSH_CONSTANTS);
+   return loc->sgpr_idx != -1;
+}
+
 void radv_precompute_registers_hw_ngg(struct radv_device *device, const struct ac_shader_config *config,
                                       struct radv_shader_info *info);
 
-void radv_set_stage_key_robustness(const struct vk_pipeline_robustness_state *rs, gl_shader_stage stage,
+void radv_set_stage_key_robustness(const struct vk_pipeline_robustness_state *rs, mesa_shader_stage stage,
                                    struct radv_shader_stage_key *key);
 
 #endif /* RADV_SHADER_H */

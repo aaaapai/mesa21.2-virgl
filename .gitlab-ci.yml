@@ -45,6 +45,7 @@ workflow:
         JOB_PRIORITY: 75
         # fast-fail in merge pipelines: stop early if we get this many unexpected fails/crashes
         DEQP_RUNNER_MAX_FAILS: 40
+        S3_PROJECT_PATH: ${CI_MERGE_REQUEST_SOURCE_PROJECT_PATH}
     # Post-merge pipeline
     - if: &is-post-merge $GITLAB_USER_LOGIN == "marge-bot" && $CI_PIPELINE_SOURCE == "push"
       variables:
@@ -53,13 +54,10 @@ workflow:
         FDO_RUNNER_JOB_PRIORITY_TAG_AARCH64: priority:high-aarch64
     # Pre-merge pipeline (because merge pipelines are already caught above)
     - if: &is-merge-request $CI_PIPELINE_SOURCE == "merge_request_event"
+      variables:
+        S3_PROJECT_PATH: ${CI_MERGE_REQUEST_SOURCE_PROJECT_PATH}
     # Push to a branch on a fork
     - if: &is-push-to-fork $CI_PROJECT_NAMESPACE != "mesa" && $CI_PIPELINE_SOURCE == "push"
-    # a pipeline running within the upstream project
-    - if: &is-upstream-pipeline $CI_PROJECT_PATH == $FDO_UPSTREAM_REPO
-    # an MR pipeline running within the upstream project, usually true for
-    # those with the Developer role or above
-    - if: &is-upstream-mr-pipeline $CI_PROJECT_PATH == $FDO_UPSTREAM_REPO && $CI_PIPELINE_SOURCE == "merge_request_event"
     # Nightly pipeline
     - if: &is-scheduled-pipeline $CI_PIPELINE_SOURCE == "schedule"
       variables:
@@ -109,8 +107,11 @@ variables:
   S3_TRACIE_PRIVATE_BUCKET: mesa-tracie-private
   # Base path used for various artifacts
   S3_BASE_PATH: "${S3_HOST}/${S3_KERNEL_BUCKET}"
+  # Since GitLab 18.2.2, the JWT subject for MRs are the target project path
+  # This can be overridden by the variables in the workflow rules
+  S3_PROJECT_PATH: ${CI_PROJECT_PATH}
   # per-pipeline artifact storage on MinIO
-  PIPELINE_ARTIFACTS_BASE: ${S3_HOST}/${S3_ARTIFACTS_BUCKET}/${CI_PROJECT_PATH}/${CI_PIPELINE_ID}
+  PIPELINE_ARTIFACTS_BASE: ${S3_HOST}/${S3_ARTIFACTS_BUCKET}/${S3_PROJECT_PATH}/${CI_PIPELINE_ID}
   # per-job artifact storage on MinIO
   JOB_ARTIFACTS_BASE: ${PIPELINE_ARTIFACTS_BASE}/${CI_JOB_ID}
   # reference images stored for traces
@@ -120,8 +121,6 @@ variables:
   # Re-enable farm with `git mv .ci-farms{-disabled,}/$farm_name`
   # NEVER MIX FARM MAINTENANCE WITH ANY OTHER CHANGE IN THE SAME MERGE REQUEST!
   ARTIFACTS_BASE_URL: https://${CI_PROJECT_ROOT_NAMESPACE}.${CI_PAGES_DOMAIN}/-/${CI_PROJECT_NAME}/-/jobs/${CI_JOB_ID}/artifacts
-  # Python scripts for structured logger
-  PYTHONPATH: "$PYTHONPATH:$CI_PROJECT_DIR/install"
   # No point in continuing once the device is lost
   MESA_VK_ABORT_ON_DEVICE_LOSS: 1
   # Avoid the wall of "Unsupported SPIR-V capability" warnings in CI job log, hiding away useful output
@@ -153,10 +152,6 @@ default:
       curl -L -s --retry 4 -f --retry-all-errors --retry-delay 60 -O --output-dir "${SCRIPTS_DIR}" "${CI_PROJECT_URL}/-/raw/${CI_COMMIT_SHA}/.gitlab-ci/setup-test-env.sh" &&
       . ${SCRIPTS_DIR}/setup-test-env.sh
     - eval "$S3_JWT_FILE_SCRIPT"
-
-  after_script:
-    # Work around https://gitlab.com/gitlab-org/gitlab/-/issues/20338
-    - find -name '*.log' -exec mv {} {}.txt \;
 
   # Retry when job fails. Failed jobs can be found in the Mesa CI Daily Reports:
   # https://gitlab.freedesktop.org/mesa/mesa/-/issues/?sort=created_date&state=opened&label_name%5B%5D=CI%20daily
@@ -265,7 +260,7 @@ include:
       when: manual
     # ... if the MR pipeline runs as mesa/mesa and does not need a container
     # rebuild, we can skip it
-    - if: *is-upstream-mr-pipeline
+    - if: &is-upstream-mr-pipeline $CI_PROJECT_PATH == $FDO_UPSTREAM_REPO && $CI_PIPELINE_SOURCE == "merge_request_event"
       when: never
     # ... however for MRs running inside the user namespace, we may need to
     # run these jobs to copy the container images from upstream
@@ -281,7 +276,7 @@ include:
     - if: *is-scheduled-pipeline
       when: never
     # Any other pipeline in the upstream should reuse already-built containers
-    - if: *is-upstream-pipeline
+    - if: &is-upstream-pipeline $CI_PROJECT_PATH == $FDO_UPSTREAM_REPO
       when: never
     # Allow building everything in fork pipelines, but build nothing unless
     # manually triggered
@@ -409,8 +404,9 @@ sanity:
         ALPINE_X86_64_BUILD_TAG
         ALPINE_X86_64_LAVA_SSH_TAG
         ALPINE_X86_64_LAVA_TRIGGER_TAG
-        DEBIAN_BASE_TAG
+        DEBIAN_BUILD_BASE_TAG
         DEBIAN_BUILD_TAG
+        DEBIAN_TEST_BASE_TAG
         DEBIAN_TEST_ANDROID_TAG
         DEBIAN_TEST_GL_TAG
         DEBIAN_TEST_VK_TAG

@@ -31,6 +31,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #ifdef _GAMING_XBOX
 #define strdup _strdup
@@ -120,19 +121,25 @@
  * function" warnings.
  */
 #if defined(HAVE___BUILTIN_UNREACHABLE) || __has_builtin(__builtin_unreachable)
-#define unreachable(str)    \
+#define UNREACHABLE(str)    \
 do {                        \
-   assert(!"" str);         \
+   (void)"" str; /* str must be a string literal */ \
+   assert(!str);            \
    __builtin_unreachable(); \
 } while (0)
 #elif defined (_MSC_VER)
-#define unreachable(str)    \
+#define UNREACHABLE(str)    \
 do {                        \
-   assert(!"" str);         \
+   (void)"" str; /* str must be a string literal */ \
+   assert(!str);            \
    __assume(0);             \
 } while (0)
 #else
-#define unreachable(str) assert(!"" str)
+#define UNREACHABLE(str)    \
+do {                        \
+   (void)"" str; /* str must be a string literal */ \
+   assert(!str);            \
+} while (0)
 #endif
 
 /**
@@ -246,6 +253,12 @@ do {                       \
 #define ATTRIBUTE_OPTIMIZE(flags)
 #endif
 
+#ifdef HAVE_FUNC_ATTRIBUTE_NO_SANITIZE_VPTR
+#define ATTRIBUTE_NO_SANITIZE_VPTR __attribute__((no_sanitize(("vptr"))))
+#else
+#define ATTRIBUTE_NO_SANITIZE_VPTR
+#endif
+
 #ifdef __cplusplus
 /**
  * Macro function that evaluates to true if T is a trivially
@@ -276,10 +289,11 @@ do {                       \
 
 /**
  * This marks symbols that should be visible to dynamic library consumers.
+ * On win32, symbols use def file to export, do not use __declspec(dllexport)
  */
 #ifndef PUBLIC
 #  if defined(_WIN32)
-#    define PUBLIC __declspec(dllexport)
+#    define PUBLIC
 #  elif defined(__GNUC__)
 #    define PUBLIC __attribute__((visibility("default")))
 #  else
@@ -517,6 +531,28 @@ typedef int lock_cap_t;
 #define PRAGMA_POISON(X) DO_PRAGMA( clang poison X )
 #else
 #define PRAGMA_POISON
+#endif
+
+/*
+ * SWAP - swap value of @a and @b
+ */
+#if !defined(_MSC_VER) || _MSC_VER >= 1939 /* MSVC 17.9 or later for __typeof__ */
+#define SWAP(a, b)                                                             \
+   do {                                                                        \
+      __typeof__(a) __tmp = (a);                                               \
+      (a) = (b);                                                               \
+      (b) = __tmp;                                                             \
+   } while (0)
+#else
+#define SWAP(a, b)                                                             \
+   do {                                                                        \
+      /* NOLINTBEGIN(bugprone-sizeof-expression) */                            \
+      char __tmp[sizeof(a) == sizeof(b) ? (ptrdiff_t)sizeof(a) : -1];          \
+      memcpy(__tmp, &(b), sizeof(a));                                          \
+      memcpy(&(b), &(a), sizeof(a));                                           \
+      memcpy(&(a), __tmp, sizeof(a));                                          \
+      /* NOLINTEND(bugprone-sizeof-expression) */                              \
+   } while (0)
 #endif
 
 #endif /* UTIL_MACROS_H */

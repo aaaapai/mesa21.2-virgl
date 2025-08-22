@@ -329,6 +329,10 @@ translate_blt_format(enum pipe_format fmt)
    case PIPE_FORMAT_R10G10B10A2_UNORM:
    case PIPE_FORMAT_R10G10B10X2_UNORM:
       return BLT_FORMAT_A2R10G10B10;
+   case PIPE_FORMAT_R8_UNORM:
+      return BLT_FORMAT_R8;
+   case PIPE_FORMAT_R8G8_UNORM:
+      return BLT_FORMAT_R8G8;
    default:
       return ETNA_NO_MATCH;
    }
@@ -376,11 +380,10 @@ ts_format_to_drmfourcc(uint32_t comp_format)
 static inline uint32_t
 translate_vertex_format_normalize(enum pipe_format fmt)
 {
-   const struct util_format_description *desc = util_format_description(fmt);
-
-   /* assumes that normalization of channel 0 holds for all channels;
-    * this holds for all vertex formats that we support */
-   return desc->channel[0].normalized
+   /* Use SIGN_EXTEND for all normalized formats and pure signed integers. */
+   return (util_format_is_unorm(fmt) ||
+           util_format_is_snorm(fmt) ||
+           util_format_is_pure_sint(fmt))
              ? VIVS_FE_VERTEX_ELEMENT_CONFIG_NORMALIZE_SIGN_EXTEND
              : VIVS_FE_VERTEX_ELEMENT_CONFIG_NORMALIZE_OFF;
 }
@@ -536,7 +539,7 @@ translate_texture_compare(enum pipe_compare_func compare_func)
    case PIPE_FUNC_ALWAYS:
       return TEXTURE_COMPARE_FUNC_ALWAYS;
    default:
-      unreachable("Invalid compare func");
+      UNREACHABLE("Invalid compare func");
    }
 }
 

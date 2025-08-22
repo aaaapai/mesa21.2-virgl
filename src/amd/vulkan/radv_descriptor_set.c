@@ -6,9 +6,9 @@
  */
 
 #include "radv_descriptor_set.h"
-#include "radv_descriptors.h"
 #include "radv_cmd_buffer.h"
 #include "radv_descriptor_pool.h"
+#include "radv_descriptors.h"
 #include "radv_entrypoints.h"
 #include "radv_sampler.h"
 #include "sid.h"
@@ -160,7 +160,8 @@ radv_CreateDescriptorSetLayout(VkDevice _device, const VkDescriptorSetLayoutCrea
             set_layout->binding[b].size = radv_get_sampled_image_desc_size(pdev);
             break;
          case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-            set_layout->binding[b].size = max_sampled_image_descriptors * RADV_COMBINED_IMAGE_SAMPLER_DESC_SIZE;
+            set_layout->binding[b].size =
+               max_sampled_image_descriptors * radv_get_combined_image_sampler_desc_size(pdev);
             break;
          case VK_DESCRIPTOR_TYPE_SAMPLER:
             set_layout->binding[b].size = RADV_SAMPLER_DESC_SIZE;
@@ -196,8 +197,8 @@ radv_CreateDescriptorSetLayout(VkDevice _device, const VkDescriptorSetLayoutCrea
          set_layout->binding[b].dynamic_offset_offset = dynamic_offset_count;
          set_layout->binding[b].has_ycbcr_sampler = has_ycbcr_sampler;
 
-         if (variable_flags && binding->binding < variable_flags->bindingCount &&
-             (variable_flags->pBindingFlags[binding->binding] & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)) {
+         if (variable_flags && j < variable_flags->bindingCount &&
+             (variable_flags->pBindingFlags[j] & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)) {
             assert(!binding->pImmutableSamplers); /* Terribly ill defined  how many samplers are valid */
             assert(binding->binding == num_bindings - 1);
 
@@ -318,7 +319,7 @@ radv_GetDescriptorSetLayoutSupport(VkDevice _device, const VkDescriptorSetLayout
             descriptor_size = radv_get_sampled_image_desc_size(pdev);
             break;
          case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-            descriptor_size = RADV_COMBINED_IMAGE_SAMPLER_DESC_SIZE;
+            descriptor_size = radv_get_combined_image_sampler_desc_size(pdev);
             break;
          case VK_DESCRIPTOR_TYPE_SAMPLER:
             descriptor_size = RADV_SAMPLER_DESC_SIZE;
@@ -351,15 +352,15 @@ radv_GetDescriptorSetLayoutSupport(VkDevice _device, const VkDescriptorSetLayout
 
          uint64_t max_count = INT32_MAX;
          if (binding->descriptorType == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
-            max_count = INT32_MAX - size;
+            max_count = MAX_INLINE_UNIFORM_BLOCK_SIZE - size;
          else if (descriptor_size)
             max_count = (INT32_MAX - size) / descriptor_size;
 
          if (max_count < descriptor_count) {
             supported = false;
          }
-         if (variable_flags && binding->binding < variable_flags->bindingCount && variable_count &&
-             (variable_flags->pBindingFlags[binding->binding] & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)) {
+         if (variable_flags && i < variable_flags->bindingCount && variable_count &&
+             (variable_flags->pBindingFlags[i] & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)) {
             variable_count->maxVariableDescriptorCount = MIN2(UINT32_MAX, max_count);
          }
          size += descriptor_count * descriptor_size;
@@ -373,9 +374,11 @@ radv_GetDescriptorSetLayoutSupport(VkDevice _device, const VkDescriptorSetLayout
 
 static VkResult
 radv_descriptor_set_create(struct radv_device *device, struct radv_descriptor_pool *pool,
-                           struct radv_descriptor_set_layout *layout, const uint32_t *variable_count,
+                           struct radv_descriptor_set_layout *layout, const uint32_t variable_count,
                            struct radv_descriptor_set **out_set)
 {
+   const struct radv_physical_device *pdev = radv_device_physical(device);
+
    if (pool->entry_count == pool->max_entry_count)
       return VK_ERROR_OUT_OF_POOL_MEMORY;
 
@@ -383,7 +386,7 @@ radv_descriptor_set_create(struct radv_device *device, struct radv_descriptor_po
    uint32_t buffer_count = layout->buffer_count;
    if (variable_count) {
       unsigned stride = radv_descriptor_type_buffer_count(layout->binding[layout->binding_count - 1].type);
-      buffer_count = layout->binding[layout->binding_count - 1].buffer_offset + *variable_count * stride;
+      buffer_count = layout->binding[layout->binding_count - 1].buffer_offset + variable_count * stride;
    }
    unsigned range_offset = sizeof(struct radv_descriptor_set_header) + sizeof(struct radeon_winsys_bo *) * buffer_count;
    const unsigned dynamic_offset_count = layout->dynamic_offset_count;
@@ -418,7 +421,7 @@ radv_descriptor_set_create(struct radv_device *device, struct radv_descriptor_po
       if (layout->binding[layout->binding_count - 1].type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
          stride = 1;
 
-      layout_size = layout->binding[layout->binding_count - 1].offset + *variable_count * stride;
+      layout_size = layout->binding[layout->binding_count - 1].offset + variable_count * stride;
    }
    layout_size = align(layout_size, 32);
    set->header.size = layout_size;
@@ -471,7 +474,7 @@ radv_descriptor_set_create(struct radv_device *device, struct radv_descriptor_po
 
          unsigned offset = layout->binding[i].offset / 4;
          if (layout->binding[i].type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-            offset += RADV_COMBINED_IMAGE_SAMPLER_DESC_SAMPLER_OFFSET / 4;
+            offset += radv_get_combined_image_sampler_offset(pdev) / 4;
 
          const uint32_t *samplers =
             (const uint32_t *)((const char *)layout + layout->binding[i].immutable_samplers_offset);
@@ -522,19 +525,15 @@ radv_AllocateDescriptorSets(VkDevice _device, const VkDescriptorSetAllocateInfo 
 
    const VkDescriptorSetVariableDescriptorCountAllocateInfo *variable_counts =
       vk_find_struct_const(pAllocateInfo->pNext, DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO);
-   const uint32_t zero = 0;
 
    /* allocate a set of buffers for each shader to contain descriptors */
    for (i = 0; i < pAllocateInfo->descriptorSetCount; i++) {
       VK_FROM_HANDLE(radv_descriptor_set_layout, layout, pAllocateInfo->pSetLayouts[i]);
 
-      const uint32_t *variable_count = NULL;
-      if (layout->has_variable_descriptors && variable_counts) {
-         if (i < variable_counts->descriptorSetCount)
-            variable_count = variable_counts->pDescriptorCounts + i;
-         else
-            variable_count = &zero;
-      }
+      uint32_t variable_count =
+         layout->has_variable_descriptors && variable_counts && i < variable_counts->descriptorSetCount
+            ? variable_counts->pDescriptorCounts[i]
+            : 0;
 
       assert(!(layout->flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT));
 
@@ -643,7 +642,7 @@ radv_update_descriptor_sets_impl(struct radv_device *device, struct radv_cmd_buf
             }
 
             if (copy_immutable_samplers) {
-               const uint32_t sampler_offset = RADV_COMBINED_IMAGE_SAMPLER_DESC_SAMPLER_OFFSET;
+               const uint32_t sampler_offset = radv_get_combined_image_sampler_offset(pdev);
                const unsigned idx = writeset->dstArrayElement + j;
 
                memcpy((char *)ptr + sampler_offset, samplers + 4 * idx, RADV_SAMPLER_DESC_SIZE);

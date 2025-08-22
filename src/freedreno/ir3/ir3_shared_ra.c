@@ -362,7 +362,9 @@ find_best_gap(struct ra_ctx *ctx, struct ir3_register *dst, unsigned size,
    if (size > file_size)
       return (physreg_t) ~0;
 
-   unsigned start = ALIGN(ctx->start, align) % (file_size - size + align);
+   unsigned start = ALIGN(ctx->start, align);
+   if (start + size > file_size)
+      start = 0;
    unsigned candidate = start;
    do {
       bool is_available = true;
@@ -393,7 +395,9 @@ find_best_spill_reg(struct ra_ctx *ctx, struct ir3_register *reg,
    unsigned file_size = reg_file_size(reg);
    unsigned min_cost = UINT_MAX;
 
-   unsigned start = ALIGN(ctx->start, align) % (file_size - size + align);
+   unsigned start = ALIGN(ctx->start, align);
+   if (start + size > file_size)
+      start = 0;
    physreg_t candidate = start;
    physreg_t best_reg = (physreg_t)~0;
    do {
@@ -615,7 +619,7 @@ try_demote_instruction(struct ra_ctx *ctx, struct ir3_instruction *instr)
     * skipped reloading and just demoted sources directly, so we should never
     * get here.
     */
-   assert(instr->dsts[0]->flags & IR3_REG_SHARED);
+   assert(instr->dsts[0]->flags & (IR3_REG_SHARED | IR3_REG_UNIFORM));
 
    /* Now we actually demote the instruction */
    ra_foreach_src (src, instr) {
@@ -631,6 +635,13 @@ try_demote_instruction(struct ra_ctx *ctx, struct ir3_instruction *instr)
             interval = ir3_reg_interval_to_ra_interval(interval->interval.parent);
          interval->src = false;
       }
+   }
+
+   if (instr->dsts[0]->flags & IR3_REG_UNIFORM) {
+      instr->dsts[0]->flags &= ~IR3_REG_UNIFORM;
+
+      /* Uniform registers are always predicates which we don't handle here. */
+      return true;
    }
 
    struct ra_interval *dst_interval = ra_interval_get(ctx, instr->dsts[0]);
@@ -692,6 +703,12 @@ get_reg(struct ra_ctx *ctx, struct ir3_register *reg, bool src)
       for (unsigned i = 0; i < reg->instr->srcs_count; i++) {
          struct ir3_register *src = reg->instr->srcs[i];
          if (!ra_reg_is_src(src))
+            continue;
+         /* When src and dst are overlapping registers with different halfness,
+          * a (ss) sync is necessary. Avoid this to not unnecessarily increase
+          * ss-stall.
+          */
+         if ((reg->flags & IR3_REG_HALF) != (src->flags & IR3_REG_HALF))
             continue;
          if ((src->flags & IR3_REG_SHARED) && reg_size(src) >= size) {
             struct ra_interval *src_interval = ra_interval_get(ctx, src->def);
@@ -802,7 +819,7 @@ can_demote_src(struct ir3_instruction *instr)
                  full_type(instr->cat1.dst_type) == TYPE_S32)));
    default:
       return (!is_alu(instr) && !is_sfu(instr)) ||
-         !(instr->dsts[0]->flags & IR3_REG_SHARED);
+         !(instr->dsts[0]->flags & (IR3_REG_SHARED | IR3_REG_UNIFORM));
    }
 }
 

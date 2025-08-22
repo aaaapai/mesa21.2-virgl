@@ -1195,7 +1195,6 @@ sample_ureg_emit(struct ureg_program *ureg,
                  tgsi_opcode,
                  &dst, 1,
                  TGSI_TEXTURE_UNKNOWN,
-                 TGSI_RETURN_TYPE_UNKNOWN,
                  &texoffsets, num_offsets,
                  src, num_src);
 }
@@ -1275,13 +1274,13 @@ Shader_tgsi_translate(const unsigned *code,
    /* Header. */
    switch (parser.header.type) {
    case D3D10_SB_PIXEL_SHADER:
-      ureg = ureg_create(PIPE_SHADER_FRAGMENT);
+      ureg = ureg_create(MESA_SHADER_FRAGMENT);
       break;
    case D3D10_SB_VERTEX_SHADER:
-      ureg = ureg_create(PIPE_SHADER_VERTEX);
+      ureg = ureg_create(MESA_SHADER_VERTEX);
       break;
    case D3D10_SB_GEOMETRY_SHADER:
-      ureg = ureg_create(PIPE_SHADER_GEOMETRY);
+      ureg = ureg_create(MESA_SHADER_GEOMETRY);
       break;
    }
 

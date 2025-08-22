@@ -44,6 +44,50 @@ dEQP-GLES31.functional.shaders.multisample_interpolation.interpolate_at_sample.n
 KHR-GL46.framebuffer_blit.scissor_blit,Fail
 KHR-GL46.direct_state_access.vertex_arrays_vertex_buffers_errors,Fail
 
+KHR-GL46.shader_image_size.advanced-ms-cs-float,Fail
+KHR-GL46.shader_image_size.advanced-ms-cs-int,Fail
+KHR-GL46.shader_image_size.advanced-ms-cs-uint,Fail
+KHR-GL46.shader_image_size.advanced-ms-fs-float,Fail
+KHR-GL46.shader_image_size.advanced-ms-fs-int,Fail
+KHR-GL46.shader_image_size.advanced-ms-fs-uint,Fail
+KHR-GL46.shader_image_size.advanced-ms-gs-float,Fail
+KHR-GL46.shader_image_size.advanced-ms-gs-int,Fail
+KHR-GL46.shader_image_size.advanced-ms-gs-uint,Fail
+KHR-GL46.shader_image_size.advanced-ms-tcs-float,Fail
+KHR-GL46.shader_image_size.advanced-ms-tcs-int,Fail
+KHR-GL46.shader_image_size.advanced-ms-tcs-uint,Fail
+KHR-GL46.shader_image_size.advanced-ms-tes-float,Fail
+KHR-GL46.shader_image_size.advanced-ms-tes-int,Fail
+KHR-GL46.shader_image_size.advanced-ms-tes-uint,Fail
+KHR-GL46.shader_image_size.advanced-ms-vs-float,Fail
+KHR-GL46.shader_image_size.advanced-ms-vs-int,Fail
+KHR-GL46.shader_image_size.advanced-ms-vs-uint,Fail
+KHR-GL46.shader_image_size.basic-ms-cs-float,Fail
+KHR-GL46.shader_image_size.basic-ms-cs-int,Fail
+KHR-GL46.shader_image_size.basic-ms-cs-uint,Fail
+KHR-GL46.shader_image_size.basic-ms-fs-float,Fail
+KHR-GL46.shader_image_size.basic-ms-fs-int,Fail
+KHR-GL46.shader_image_size.basic-ms-fs-uint,Fail
+KHR-GL46.shader_image_size.basic-ms-gs-float,Fail
+KHR-GL46.shader_image_size.basic-ms-gs-int,Fail
+KHR-GL46.shader_image_size.basic-ms-gs-uint,Fail
+KHR-GL46.shader_image_size.basic-ms-tcs-float,Fail
+KHR-GL46.shader_image_size.basic-ms-tcs-int,Fail
+KHR-GL46.shader_image_size.basic-ms-tcs-uint,Fail
+KHR-GL46.shader_image_size.basic-ms-tes-float,Fail
+KHR-GL46.shader_image_size.basic-ms-tes-int,Fail
+KHR-GL46.shader_image_size.basic-ms-tes-uint,Fail
+KHR-GL46.shader_image_size.basic-ms-vs-float,Fail
+KHR-GL46.shader_image_size.basic-ms-vs-int,Fail
+KHR-GL46.shader_image_size.basic-ms-vs-uint,Fail
+
+glx@glx-multi-window-single-context,Fail
+glx@glx-swap-pixmap-bad,Fail
+glx@glx_arb_sync_control@swapbuffersmsc-divisor-zero,Fail
+glx@glx_arb_sync_control@swapbuffersmsc-return swap_interval 0,Fail
+glx@glx_arb_sync_control@swapbuffersmsc-return swap_interval 1,Fail
+glx@glx_arb_sync_control@swapbuffersmsc-return,Fail
+
 spec@!opengl 1.0@gl-1.0-no-op-paths,Fail
 spec@!opengl 1.0@rasterpos,Fail
 spec@!opengl 1.0@rasterpos@glsl_vs_gs_linked,Fail
@@ -373,7 +417,7 @@ spec@arb_shader_texture_lod@execution@arb_shader_texture_lod-texgrad,Fail
 spec@arb_shader_texture_lod@execution@arb_shader_texture_lod-texgradcube,Fail
 spec@arb_shading_language_packing@execution@built-in-functions@fs-packhalf2x16,Fail
 spec@arb_shading_language_packing@execution@built-in-functions@vs-packhalf2x16,Fail
-spec@arb_texture_buffer_object@formats (fs- arb),Crash
+spec@arb_texture_buffer_object@formats (fs- arb),Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_ALPHA16,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_ALPHA16F_ARB,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_ALPHA16I_EXT,Fail
@@ -383,6 +427,16 @@ spec@arb_texture_buffer_object@formats (fs- arb)@GL_ALPHA32I_EXT,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_ALPHA32UI_EXT,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_ALPHA8I_EXT,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_ALPHA8UI_EXT,Fail
+spec@arb_texture_buffer_object@formats (fs- arb)@GL_INTENSITY16,Fail
+spec@arb_texture_buffer_object@formats (fs- arb)@GL_INTENSITY16F_ARB,Fail
+spec@arb_texture_buffer_object@formats (fs- arb)@GL_INTENSITY16I_EXT,Fail
+spec@arb_texture_buffer_object@formats (fs- arb)@GL_INTENSITY16UI_EXT,Fail
+spec@arb_texture_buffer_object@formats (fs- arb)@GL_INTENSITY32F_ARB,Fail
+spec@arb_texture_buffer_object@formats (fs- arb)@GL_INTENSITY32I_EXT,Fail
+spec@arb_texture_buffer_object@formats (fs- arb)@GL_INTENSITY32UI_EXT,Fail
+spec@arb_texture_buffer_object@formats (fs- arb)@GL_INTENSITY8,Fail
+spec@arb_texture_buffer_object@formats (fs- arb)@GL_INTENSITY8I_EXT,Fail
+spec@arb_texture_buffer_object@formats (fs- arb)@GL_INTENSITY8UI_EXT,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_LUMINANCE16,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_LUMINANCE16F_ARB,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_LUMINANCE16I_EXT,Fail
@@ -403,7 +457,7 @@ spec@arb_texture_buffer_object@formats (fs- arb)@GL_LUMINANCE_ALPHA32I_EXT,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_LUMINANCE_ALPHA32UI_EXT,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_LUMINANCE_ALPHA8I_EXT,Fail
 spec@arb_texture_buffer_object@formats (fs- arb)@GL_LUMINANCE_ALPHA8UI_EXT,Fail
-spec@arb_texture_buffer_object@formats (vs- arb),Crash
+spec@arb_texture_buffer_object@formats (vs- arb),Fail
 spec@arb_texture_buffer_object@formats (vs- arb)@GL_ALPHA16,Fail
 spec@arb_texture_buffer_object@formats (vs- arb)@GL_ALPHA16F_ARB,Fail
 spec@arb_texture_buffer_object@formats (vs- arb)@GL_ALPHA16I_EXT,Fail
@@ -413,6 +467,16 @@ spec@arb_texture_buffer_object@formats (vs- arb)@GL_ALPHA32I_EXT,Fail
 spec@arb_texture_buffer_object@formats (vs- arb)@GL_ALPHA32UI_EXT,Fail
 spec@arb_texture_buffer_object@formats (vs- arb)@GL_ALPHA8I_EXT,Fail
 spec@arb_texture_buffer_object@formats (vs- arb)@GL_ALPHA8UI_EXT,Fail
+spec@arb_texture_buffer_object@formats (vs- arb)@GL_INTENSITY16,Fail
+spec@arb_texture_buffer_object@formats (vs- arb)@GL_INTENSITY16F_ARB,Fail
+spec@arb_texture_buffer_object@formats (vs- arb)@GL_INTENSITY16I_EXT,Fail
+spec@arb_texture_buffer_object@formats (vs- arb)@GL_INTENSITY16UI_EXT,Fail
+spec@arb_texture_buffer_object@formats (vs- arb)@GL_INTENSITY32F_ARB,Fail
+spec@arb_texture_buffer_object@formats (vs- arb)@GL_INTENSITY32I_EXT,Fail
+spec@arb_texture_buffer_object@formats (vs- arb)@GL_INTENSITY32UI_EXT,Fail
+spec@arb_texture_buffer_object@formats (vs- arb)@GL_INTENSITY8,Fail
+spec@arb_texture_buffer_object@formats (vs- arb)@GL_INTENSITY8I_EXT,Fail
+spec@arb_texture_buffer_object@formats (vs- arb)@GL_INTENSITY8UI_EXT,Fail
 spec@arb_texture_buffer_object@formats (vs- arb)@GL_LUMINANCE16,Fail
 spec@arb_texture_buffer_object@formats (vs- arb)@GL_LUMINANCE16F_ARB,Fail
 spec@arb_texture_buffer_object@formats (vs- arb)@GL_LUMINANCE16I_EXT,Fail
@@ -437,8 +501,12 @@ spec@arb_texture_cube_map_array@texsubimage cube_map_array,Fail
 spec@arb_viewport_array@display-list,Fail
 spec@egl 1.4@egl-ext_egl_image_storage,Fail
 spec@egl 1.4@eglterminate then unbind context,Fail
+spec@egl_chromium_sync_control@conformance,Fail
+spec@egl_chromium_sync_control@conformance@eglGetSyncValuesCHROMIUM_msc_and_sbc_test,Fail
+spec@egl_chromium_sync_control@conformance@eglGetSyncValuesCHROMIUM_ust_test,Fail
 spec@egl_khr_gl_image@egl_khr_gl_renderbuffer_image-clear-shared-image gl_depth_component24,Fail
 spec@egl_khr_surfaceless_context@viewport,Fail
+spec@egl_mesa_configless_context@basic,Fail
 spec@ext_external_objects@vk-image-overwrite,Crash
 spec@ext_external_objects@vk-image-overwrite@RGBA 4 UNORM linear,Fail
 spec@ext_framebuffer_multisample@enable-flag,Fail

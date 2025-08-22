@@ -86,12 +86,14 @@ asahi_fill_cdm_command(struct hk_device *dev, struct hk_cs *cs,
       .cdm_ctrl_stream_base = cs->addr,
       .cdm_ctrl_stream_end = cs->addr + len,
 
-      .sampler_heap = dev->samplers.table.bo->va->addr,
-      .sampler_count = dev->samplers.table.alloc,
-
       .ts.end.handle = cs->timestamp.end.handle,
       .ts.end.offset = cs->timestamp.end.offset_B,
    };
+
+   if (cs->uses_sampler_heap) {
+      cmd->sampler_heap = dev->samplers.table.bo->va->addr;
+      cmd->sampler_count = dev->samplers.table.alloc;
+   }
 
    if (cs->scratch.cs.main || cs->scratch.cs.preamble) {
       cmd->helper.data = dev->scratch.cs.buf->va->addr;
@@ -199,8 +201,10 @@ asahi_fill_vdm_command(struct hk_device *dev, struct hk_cs *cs,
    c->isp_scissor_base = cs->uploaded_scissor;
    c->isp_dbias_base = cs->uploaded_zbias;
 
-   c->sampler_heap = dev->samplers.table.bo->va->addr;
-   c->sampler_count = dev->samplers.table.alloc;
+   if (cs->uses_sampler_heap) {
+      c->sampler_heap = dev->samplers.table.bo->va->addr;
+      c->sampler_count = dev->samplers.table.alloc;
+   }
 
    c->isp_oclqry_base = dev->occlusion_queries.bo->va->addr;
 
@@ -231,7 +235,7 @@ asahi_fill_sync(struct drm_asahi_sync *sync, struct vk_sync *vk_sync,
                 uint64_t value)
 {
    if (unlikely(!vk_sync_type_is_drm_syncobj(vk_sync->type))) {
-      unreachable("Unsupported sync type");
+      UNREACHABLE("Unsupported sync type");
       return;
    }
 
@@ -263,9 +267,10 @@ max_commands_per_submit(struct hk_device *dev)
 }
 
 static VkResult
-queue_submit_single(struct hk_device *dev, struct drm_asahi_submit *submit)
+queue_submit_single(struct hk_device *dev, struct drm_asahi_submit *submit,
+                    unsigned ring_idx)
 {
-   struct agx_submit_virt virt = {0};
+   struct agx_submit_virt virt = {.ring_idx = ring_idx};
 
    if (dev->dev.is_virtio) {
       u_rwlock_rdlock(&dev->external_bos.lock);
@@ -296,7 +301,7 @@ queue_submit_single(struct hk_device *dev, struct drm_asahi_submit *submit)
  */
 static VkResult
 queue_submit_looped(struct hk_device *dev, struct drm_asahi_submit *submit,
-                    unsigned command_count)
+                    unsigned command_count, unsigned ring_idx)
 {
    uint8_t *cmdbuf = (uint8_t *)(uintptr_t)submit->cmdbuf;
    uint32_t offs = 0;
@@ -369,7 +374,7 @@ queue_submit_looped(struct hk_device *dev, struct drm_asahi_submit *submit,
          .out_sync_count = has_out_syncs ? submit->out_sync_count : 0,
       };
 
-      VkResult result = queue_submit_single(dev, &submit_ioctl);
+      VkResult result = queue_submit_single(dev, &submit_ioctl, ring_idx);
       if (result != VK_SUCCESS)
          return result;
 
@@ -868,9 +873,6 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
       agxdecode_drm_cmdbuf(dev->dev.agxdecode, &dev->dev.params, &payload,
                            true);
 
-      agxdecode_image_heap(dev->dev.agxdecode, dev->images.bo->va->addr,
-                           dev->images.alloc);
-
       agxdecode_next_frame();
    }
 
@@ -885,10 +887,13 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
    };
 
    VkResult result;
-   if (command_count <= max_commands_per_submit(dev))
-      result = queue_submit_single(dev, &submit_ioctl);
-   else
-      result = queue_submit_looped(dev, &submit_ioctl, command_count);
+   if (command_count <= max_commands_per_submit(dev)) {
+      result =
+         queue_submit_single(dev, &submit_ioctl, queue->drm.virt_ring_idx);
+   } else {
+      result = queue_submit_looped(dev, &submit_ioctl, command_count,
+                                   queue->drm.virt_ring_idx);
+   }
 
    util_dynarray_fini(&payload);
    return result;
@@ -942,7 +947,7 @@ translate_priority(VkQueueGlobalPriorityKHR prio)
       return DRM_ASAHI_PRIORITY_LOW;
 
    default:
-      unreachable("Invalid VkQueueGlobalPriorityKHR");
+      UNREACHABLE("Invalid VkQueueGlobalPriorityKHR");
    }
 }
 
@@ -978,6 +983,7 @@ hk_queue_init(struct hk_device *dev, struct hk_queue *queue,
    queue->vk.driver_submit = hk_queue_submit;
 
    queue->drm.id = agx_create_command_queue(&dev->dev, drm_priority);
+   queue->drm.virt_ring_idx = drm_priority + 1;
 
    if (drmSyncobjCreate(dev->dev.fd, 0, &queue->drm.syncobj)) {
       mesa_loge("drmSyncobjCreate() failed %d\n", errno);

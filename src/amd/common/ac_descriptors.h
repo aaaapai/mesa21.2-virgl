@@ -85,13 +85,10 @@ struct ac_texture_state {
    float min_lod;
 
    struct {
+      const struct ac_surf_nbc_view *nbc_view;
       uint32_t uav3d : 1;
       uint32_t upgraded_depth : 1;
    } gfx10;
-
-   struct {
-      const struct ac_surf_nbc_view *nbc_view;
-   } gfx9;
 
    uint32_t dcc_enabled : 1;
    uint32_t tc_compat_htile_enabled : 1;
@@ -113,13 +110,10 @@ struct ac_mutable_tex_state {
    uint64_t va;
 
    struct {
+      const struct ac_surf_nbc_view *nbc_view;
       uint32_t write_compress_enable : 1;
       uint32_t iterate_256 : 1;
    } gfx10;
-
-   struct {
-      const struct ac_surf_nbc_view *nbc_view;
-   } gfx9;
 
    struct {
       const struct legacy_surf_level *base_level_info;
@@ -309,6 +303,21 @@ struct ac_mutable_cb_state {
 void
 ac_set_mutable_cb_surface_fields(const struct radeon_info *info, const struct ac_mutable_cb_state *state,
                                  struct ac_cb_surface *cb);
+
+struct ac_gfx12_hiz_state {
+   struct radeon_surf *surf;
+   uint64_t va;
+   uint32_t type : 4;
+   uint32_t num_samples : 5;
+   uint32_t first_level : 4;
+   uint32_t last_level : 5;
+   uint32_t num_levels : 6;
+   uint32_t first_layer : 13;
+   uint32_t last_layer : 13;
+};
+
+void
+ac_build_gfx12_hiz_descriptor(const struct ac_gfx12_hiz_state *state, uint32_t desc[8]);
 
 #ifdef __cplusplus
 }

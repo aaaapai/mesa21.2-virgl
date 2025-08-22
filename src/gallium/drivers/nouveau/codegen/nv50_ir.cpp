@@ -226,7 +226,6 @@ LValue::LValue(Function *fn, DataFile file)
    compMask = 0;
    compound = 0;
    ssa = 0;
-   fixedReg = 0;
    noSpill = 0;
 
    fn->add(this, this->id);
@@ -243,7 +242,6 @@ LValue::LValue(Function *fn, LValue *lval)
    compMask = 0;
    compound = 0;
    ssa = 0;
-   fixedReg = 0;
    noSpill = 0;
 
    fn->add(this, this->id);
@@ -1244,15 +1242,15 @@ nv50_ir_init_prog_info(struct nv50_ir_prog_info *info,
 {
    info_out->target = info->target;
    info_out->type = info->type;
-   if (info->type == PIPE_SHADER_TESS_CTRL || info->type == PIPE_SHADER_TESS_EVAL) {
+   if (info->type == MESA_SHADER_TESS_CTRL || info->type == MESA_SHADER_TESS_EVAL) {
       info_out->prop.tp.domain = MESA_PRIM_COUNT;
       info_out->prop.tp.outputPrim = MESA_PRIM_COUNT;
    }
-   if (info->type == PIPE_SHADER_GEOMETRY) {
+   if (info->type == MESA_SHADER_GEOMETRY) {
       info_out->prop.gp.instanceCount = 1;
       info_out->prop.gp.maxVertices = 1;
    }
-   if (info->type == PIPE_SHADER_COMPUTE) {
+   if (info->type == MESA_SHADER_COMPUTE) {
       info->prop.cp.numThreads[0] =
       info->prop.cp.numThreads[1] =
       info->prop.cp.numThreads[2] = 1;
@@ -1277,7 +1275,7 @@ nv50_ir_generate_code(struct nv50_ir_prog_info *info,
    nv50_ir_init_prog_info(info, info_out);
 
 #define PROG_TYPE_CASE(a, b)                                      \
-   case PIPE_SHADER_##a: type = nv50_ir::Program::TYPE_##b; break
+   case MESA_SHADER_##a: type = nv50_ir::Program::TYPE_##b; break
 
    switch (info->type) {
    PROG_TYPE_CASE(VERTEX, VERTEX);

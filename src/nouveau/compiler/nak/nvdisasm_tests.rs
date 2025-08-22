@@ -7,7 +7,6 @@ use compiler::cfg::CFGBuilder;
 use rustc_hash::FxBuildHasher;
 
 use std::io::Write;
-use std::mem;
 use std::process;
 use std::process::Command;
 use std::slice;
@@ -22,7 +21,7 @@ fn run_nvdisasm(s: &Shader) -> String {
     let slice_u8: &[u8] = unsafe {
         slice::from_raw_parts(
             code.as_ptr() as *const u8,
-            code.len() * mem::size_of::<u32>(),
+            code.len() * size_of::<u32>(),
         )
     };
 
@@ -434,11 +433,6 @@ pub fn test_texture() {
     for sm in SM_LIST {
         let mut c = DisasmCheck::new();
         for lod_mode in lod_modes {
-            let lod_mode_str = if lod_mode == TexLodMode::Auto {
-                String::new()
-            } else {
-                format!(".{lod_mode}")
-            };
             if lod_mode == TexLodMode::BiasClamp && sm >= 100 {
                 continue;
             }
@@ -463,7 +457,7 @@ pub fn test_texture() {
             c.push(
                 instr,
                 format!(
-                    "tex.b{lod_mode_str}.ef.nodep p0, r2, r0, r1, r3, 2d, 0x7;"
+                    "tex.b{lod_mode}.ef.nodep p0, r2, r0, r1, r3, 2d, 0x7;"
                 ),
             );
 
@@ -486,7 +480,9 @@ pub fn test_texture() {
                 };
                 c.push(
                     instr,
-                    format!("tld.b{lod_mode_str}.ef.nodep p0, r2, r0, r1, r3, 2d, 0x7;"),
+                    format!(
+                        "tld.b{lod_mode}.ef.nodep p0, r2, r0, r1, r3, 2d, 0x7;"
+                    ),
                 );
             }
         }

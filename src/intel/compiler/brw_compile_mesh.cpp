@@ -22,7 +22,6 @@
  */
 
 #include <list>
-#include <vector>
 #include "brw_compiler.h"
 #include "brw_shader.h"
 #include "brw_builder.h"
@@ -231,7 +230,7 @@ lower_set_vtx_and_prim_to_temp_write(nir_builder *b,
     */
    if (nir_src_is_const(intrin->src[1]) &&
        nir_src_as_uint(intrin->src[1]) > b->shader->info.mesh.max_primitives_out)
-      unreachable("number of primitives bigger than max specified");
+      UNREACHABLE("number of primitives bigger than max specified");
 
    b->cursor = nir_instr_remove(&intrin->instr);
 
@@ -270,8 +269,7 @@ brw_nir_lower_mesh_primitive_count(nir_shader *nir)
          nir_create_variable_with_location(nir, nir_var_shader_out,
                                            VARYING_SLOT_PRIMITIVE_COUNT,
                                            glsl_uint_type());
-      final_primitive_count->name = ralloc_strdup(final_primitive_count,
-                                                  "gl_PrimitiveCountNV");
+      nir_variable_set_name(nir, final_primitive_count, "gl_PrimitiveCountNV");
       final_primitive_count->data.interpolation = INTERP_MODE_NONE;
 
       nir_store_var(b, final_primitive_count,
@@ -543,7 +541,7 @@ brw_compute_mue_map(const struct brw_compiler *compiler,
       map->per_primitive_indices_stride = 4;
       break;
    default:
-      unreachable("invalid index format");
+      UNREACHABLE("invalid index format");
    }
 
    map->size += map->per_primitive_indices_stride * map->max_primitives;
@@ -772,7 +770,7 @@ brw_nir_lower_mue_outputs(nir_shader *nir, const struct brw_mue_map *map)
             remap_io_to_dwords, nir_metadata_control_flow, NULL);
 }
 
-static void
+static bool
 brw_nir_initialize_mue(nir_shader *nir,
                        const struct brw_mue_map *map,
                        unsigned dispatch_width)
@@ -852,6 +850,7 @@ brw_nir_initialize_mue(nir_shader *nir,
    } else {
       nir_progress(true, entrypoint, nir_metadata_control_flow);
    }
+   return true;
 }
 
 static void
@@ -1170,10 +1169,17 @@ brw_compile_mesh(const struct brw_compiler *compiler,
    prog_data->base.local_size[1] = nir->info.workgroup_size[1];
    prog_data->base.local_size[2] = nir->info.workgroup_size[2];
 
-   prog_data->clip_distance_mask = (1 << nir->info.clip_distance_array_size) - 1;
+   const bool has_clip_cull_dist =
+      nir->info.outputs_written & (VARYING_BIT_CLIP_DIST0 |
+                                   VARYING_BIT_CLIP_DIST1 |
+                                   VARYING_BIT_CULL_DIST0 |
+                                   VARYING_BIT_CULL_DIST1);
+   prog_data->clip_distance_mask = has_clip_cull_dist ?
+      (1 << nir->info.clip_distance_array_size) - 1 : 0;
    prog_data->cull_distance_mask =
-         ((1 << nir->info.cull_distance_array_size) - 1) <<
-          nir->info.clip_distance_array_size;
+      (has_clip_cull_dist ?
+       ((1 << nir->info.cull_distance_array_size) - 1) : 0) <<
+      nir->info.clip_distance_array_size;
    prog_data->primitive_type = nir->info.mesh.primitive_type;
 
    /* Apply this workaround before trying to pack indices because this can
@@ -1241,7 +1247,7 @@ brw_compile_mesh(const struct brw_compiler *compiler,
        * fields, so let's initialize everything.
        */
       if (prog_data->map.has_per_primitive_header)
-         NIR_PASS_V(shader, brw_nir_initialize_mue, &prog_data->map, dispatch_width);
+         NIR_PASS(_, shader, brw_nir_initialize_mue, &prog_data->map, dispatch_width);
 
       brw_nir_apply_key(shader, compiler, &key->base, dispatch_width);
 

@@ -56,12 +56,14 @@ debian-x86_64-asan:
     - .meson-build-for-tests
     - .build-run-long
   variables:
-    VULKAN_DRIVERS: "swrast"
-    GALLIUM_DRIVERS: "llvmpipe,softpipe"
+    VULKAN_DRIVERS: "swrast,amd,intel"
+    GALLIUM_DRIVERS: "llvmpipe,softpipe,zink"
     C_ARGS: >
       -Wno-error=stringop-truncation
       -Wno-error=deprecated-declarations
     EXTRA_OPTION: >
+      -D intel-elk=false
+      -D intel-rt=false
       -D b_sanitize=address
       -D gallium-va=false
       -D gallium-rusticl=false
@@ -188,12 +190,12 @@ debian-build-x86_64:
       -D egl=enabled
       -D glvnd=disabled
       -D platforms=x11,wayland
-      -D legacy-x11=dri2
     GALLIUM_ST: >
       -D gallium-extra-hud=true
       -D gallium-vdpau=enabled
       -D gallium-va=enabled
       -D gallium-rusticl=false
+      -D legacy-wayland=bind-wayland-display
     GALLIUM_DRIVERS: "i915,iris,nouveau,r300,r600,freedreno,llvmpipe,softpipe,svga,v3d,vc4,virgl,etnaviv,panfrost,lima,zink,d3d12,asahi,crocus"
     VULKAN_DRIVERS: "intel_hasvk,imagination-experimental,microsoft-experimental,nouveau,swrast"
     BUILDTYPE: "debugoptimized"

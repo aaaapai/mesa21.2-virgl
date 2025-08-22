@@ -84,7 +84,7 @@ llvmpipe_destroy(struct pipe_context *pipe)
 
    util_unreference_framebuffer_state(&llvmpipe->framebuffer);
 
-   for (enum pipe_shader_type s = PIPE_SHADER_VERTEX; s < PIPE_SHADER_MESH_TYPES; s++) {
+   for (mesa_shader_stage s = MESA_SHADER_VERTEX; s < MESA_SHADER_MESH_STAGES; s++) {
       for (i = 0; i < ARRAY_SIZE(llvmpipe->sampler_views[0]); i++) {
          pipe_sampler_view_reference(&llvmpipe->sampler_views[s][i], NULL);
       }
@@ -124,9 +124,11 @@ do_flush(struct pipe_context *pipe,
 
 static void
 llvmpipe_fence_server_sync(struct pipe_context *pipe,
-                           struct pipe_fence_handle *fence)
+                           struct pipe_fence_handle *fence,
+                           uint64_t value)
 {
    struct lp_fence *f = (struct lp_fence *)fence;
+   assert(!value);
 
    if (!f->issued)
       return;

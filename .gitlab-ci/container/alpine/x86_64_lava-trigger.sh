@@ -34,8 +34,7 @@ apk --no-cache add "${DEPS[@]}" "${EPHEMERAL[@]}"
 pip3 install --break-system-packages -r bin/ci/requirements-lava.txt
 
 cp -Rp .gitlab-ci/lava /
-cp -Rp .gitlab-ci/bin/*_logger.py /lava
-cp -Rp .gitlab-ci/common/init-stage1.sh /lava
+cp -Rp .gitlab-ci/bin/structured_logger.py /lava
 
 . .gitlab-ci/container/container_pre_build.sh
 

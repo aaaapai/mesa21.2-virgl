@@ -233,6 +233,7 @@ init_program(Program* program, Stage stage, const struct aco_shader_info* info,
    program->next_fp_mode.denorm32 = 0;
    program->next_fp_mode.round16_64 = fp_round_ne;
    program->next_fp_mode.round32 = fp_round_ne;
+   program->needs_fp_mode_insertion = false;
 }
 
 bool
@@ -837,7 +838,7 @@ get_reduction_identity(ReduceOp op, unsigned idx)
    case fmax16: return 0xfc00u;                /* negative infinity */
    case fmax32: return 0xff800000u;            /* negative infinity */
    case fmax64: return idx ? 0xfff00000u : 0u; /* negative infinity */
-   default: unreachable("Invalid reduction operation"); break;
+   default: UNREACHABLE("Invalid reduction operation"); break;
    }
    return 0;
 }
@@ -1443,17 +1444,21 @@ get_tied_defs(Instruction* instr)
        instr->opcode == aco_opcode::s_fmac_f16) {
       ops.push_back(2);
    } else if (instr->opcode == aco_opcode::s_addk_i32 || instr->opcode == aco_opcode::s_mulk_i32 ||
-              instr->opcode == aco_opcode::s_cmovk_i32) {
+              instr->opcode == aco_opcode::s_cmovk_i32 ||
+              instr->opcode == aco_opcode::ds_bvh_stack_push4_pop1_rtn_b32 ||
+              instr->opcode == aco_opcode::ds_bvh_stack_push8_pop1_rtn_b32 ||
+              instr->opcode == aco_opcode::ds_bvh_stack_push8_pop2_rtn_b64) {
       ops.push_back(0);
-   } else if (instr->isMUBUF() && instr->definitions.size() == 1 && instr->operands.size() == 4) {
+   } else if (instr->isMUBUF() && instr->definitions.size() == 1 &&
+              (instr_info.is_atomic[(int)instr->opcode] || instr->mubuf().tfe)) {
       ops.push_back(3);
    } else if (instr->isMIMG() && instr->definitions.size() == 1 &&
               !instr->operands[2].isUndefined()) {
       ops.push_back(2);
    } else if (instr->opcode == aco_opcode::image_bvh8_intersect_ray) {
       /* VADDR starts at 3. */
-      ops.push_back(3 + 2);
-      ops.push_back(3 + 3);
+      ops.push_back(3 + 4);
+      ops.push_back(3 + 7);
    }
    return ops;
 }

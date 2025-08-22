@@ -50,13 +50,13 @@ typedef struct shader_info {
    blake3_hash source_blake3;
 
    /** The shader stage, such as MESA_SHADER_VERTEX. */
-   gl_shader_stage stage:8;
+   mesa_shader_stage stage:8;
 
    /* If the shader is linked, this is the previous shader, else MESA_SHADER_NONE. */
-   gl_shader_stage prev_stage:8;
+   mesa_shader_stage prev_stage:8;
 
    /* If the shader is linked, this is the next shader, else MESA_SHADER_NONE. */
-   gl_shader_stage next_stage:8;
+   mesa_shader_stage next_stage:8;
 
    /* Whether the previous stage has XFB if the shader is linked (prev_stage != NONE). */
    bool prev_stage_has_xfb;
@@ -86,6 +86,12 @@ typedef struct shader_info {
    uint64_t outputs_read;
    /* Which system values are actually read */
    BITSET_DECLARE(system_values_read, SYSTEM_VALUE_MAX);
+
+   /* If known_interpolation_qualifiers is set, bitsets mapping locations to
+    * interpolation qualifiers perspective/linear/flat.
+    */
+   uint64_t perspective_varyings;
+   uint64_t linear_varyings;
 
    /* Which I/O is per-primitive, for read/written information combine with
     * the fields above.
@@ -201,6 +207,11 @@ typedef struct shader_info {
 
    /* Whether or not separate shader objects were used */
    bool separate_shader:1;
+
+   /* Whether perspective_varyings/linear_varyings can be trusted. This depends
+    * on what this shader was linked with, as well as the API.
+    */
+   bool known_interpolation_qualifiers:1;
 
    /** Was this shader linked with any transform feedback varyings? */
    bool has_transform_feedback_varyings:1;

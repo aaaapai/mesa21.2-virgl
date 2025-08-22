@@ -88,17 +88,17 @@ enum agx_sysval_table {
 
 #define AGX_SYSVAL_STAGE(stage) (AGX_SYSVAL_TABLE_VS + (stage))
 
-static_assert(AGX_SYSVAL_STAGE(PIPE_SHADER_VERTEX) == AGX_SYSVAL_TABLE_VS,
+static_assert(AGX_SYSVAL_STAGE(MESA_SHADER_VERTEX) == AGX_SYSVAL_TABLE_VS,
               "fixed enum orderings");
-static_assert(AGX_SYSVAL_STAGE(PIPE_SHADER_TESS_CTRL) == AGX_SYSVAL_TABLE_TCS,
+static_assert(AGX_SYSVAL_STAGE(MESA_SHADER_TESS_CTRL) == AGX_SYSVAL_TABLE_TCS,
               "fixed enum orderings");
-static_assert(AGX_SYSVAL_STAGE(PIPE_SHADER_TESS_EVAL) == AGX_SYSVAL_TABLE_TES,
+static_assert(AGX_SYSVAL_STAGE(MESA_SHADER_TESS_EVAL) == AGX_SYSVAL_TABLE_TES,
               "fixed enum orderings");
-static_assert(AGX_SYSVAL_STAGE(PIPE_SHADER_GEOMETRY) == AGX_SYSVAL_TABLE_GS,
+static_assert(AGX_SYSVAL_STAGE(MESA_SHADER_GEOMETRY) == AGX_SYSVAL_TABLE_GS,
               "fixed enum orderings");
-static_assert(AGX_SYSVAL_STAGE(PIPE_SHADER_FRAGMENT) == AGX_SYSVAL_TABLE_FS,
+static_assert(AGX_SYSVAL_STAGE(MESA_SHADER_FRAGMENT) == AGX_SYSVAL_TABLE_FS,
               "fixed enum orderings");
-static_assert(AGX_SYSVAL_STAGE(PIPE_SHADER_COMPUTE) == AGX_SYSVAL_TABLE_CS,
+static_assert(AGX_SYSVAL_STAGE(MESA_SHADER_COMPUTE) == AGX_SYSVAL_TABLE_CS,
               "fixed enum orderings");
 
 /* Root system value table */
@@ -254,7 +254,7 @@ struct agx_compiled_shader {
     * physical shader stage of the compiled shader, for example when executing a
     * tessellation eval shader as a vertex shader.
     */
-   enum pipe_shader_type stage;
+   mesa_shader_stage stage;
 };
 
 struct agx_fast_link_key {
@@ -274,7 +274,7 @@ struct agx_fast_link_key {
 
 struct agx_uncompiled_shader {
    struct pipe_shader_state base;
-   enum pipe_shader_type type;
+   mesa_shader_stage type;
    struct blob early_serialized_nir;
    struct blob serialized_nir;
    uint8_t nir_sha1[20];
@@ -413,7 +413,7 @@ struct agx_batch {
    struct agx_varyings_vs linked_varyings;
 
    struct agx_draw_uniforms uniforms;
-   struct agx_stage_uniforms stage_uniforms[PIPE_SHADER_TYPES];
+   struct agx_stage_uniforms stage_uniforms[MESA_SHADER_STAGES];
 
    /* Indirect buffer allocated for geometry shader */
    uint64_t geom_indirect;
@@ -423,10 +423,10 @@ struct agx_batch {
    uint64_t heap;
 
    /* Uploaded descriptors */
-   uint32_t texture_count[PIPE_SHADER_TYPES];
+   uint32_t texture_count[MESA_SHADER_STAGES];
 
-   uint64_t samplers[PIPE_SHADER_TYPES];
-   uint32_t sampler_count[PIPE_SHADER_TYPES];
+   uint64_t samplers[MESA_SHADER_STAGES];
+   uint32_t sampler_count[MESA_SHADER_STAGES];
 
    struct agx_sampler_heap sampler_heap;
 
@@ -634,7 +634,7 @@ struct agx_context {
    } batches;
 
    /* Queue handle */
-   uint32_t queue_id;
+   uint32_t queue_id, virt_ring_idx;
 
    struct agx_batch *batch;
    struct agx_bo *timestamps;
@@ -647,7 +647,7 @@ struct agx_context {
    float default_outer_level[4];
    float default_inner_level[2];
 
-   struct agx_stage stage[PIPE_SHADER_TYPES];
+   struct agx_stage stage[MESA_SHADER_STAGES];
    struct agx_vertex_elements *attributes;
    struct agx_rasterizer *rast;
    struct agx_zsa *zs;
@@ -782,7 +782,7 @@ struct agx_compiled_shader *agx_build_meta_shader(struct agx_context *ctx,
 
 void agx_launch(struct agx_batch *batch, struct agx_grid grid,
                 struct agx_workgroup wg, struct agx_compiled_shader *cs,
-                struct agx_linked_shader *linked, enum pipe_shader_type stage,
+                struct agx_linked_shader *linked, mesa_shader_stage stage,
                 unsigned variable_shared_mem);
 
 void agx_launch_precomp(struct agx_batch *batch, struct agx_grid grid,
@@ -823,7 +823,7 @@ agx_dirty_reset_graphics(struct agx_context *ctx)
    ctx->dirty = 0;
 
    for (unsigned i = 0; i < ARRAY_SIZE(ctx->stage); ++i) {
-      if (i != PIPE_SHADER_COMPUTE)
+      if (i != MESA_SHADER_COMPUTE)
          ctx->stage[i].dirty = 0;
    }
 }
@@ -1002,18 +1002,15 @@ agx_transfer(struct pipe_transfer *p)
 void agx_upload_vbos(struct agx_batch *batch);
 void agx_upload_uniforms(struct agx_batch *batch);
 
-void agx_set_sampler_uniforms(struct agx_batch *batch,
-                              enum pipe_shader_type stage);
+void agx_set_sampler_uniforms(struct agx_batch *batch, mesa_shader_stage stage);
 
-void agx_set_cbuf_uniforms(struct agx_batch *batch,
-                           enum pipe_shader_type stage);
+void agx_set_cbuf_uniforms(struct agx_batch *batch, mesa_shader_stage stage);
 
-void agx_set_ssbo_uniforms(struct agx_batch *batch,
-                           enum pipe_shader_type stage);
+void agx_set_ssbo_uniforms(struct agx_batch *batch, mesa_shader_stage stage);
 
 bool agx_nir_lower_point_size(nir_shader *nir, bool insert_write);
 
-bool agx_nir_lower_sysvals(nir_shader *shader, enum pipe_shader_type desc_stage,
+bool agx_nir_lower_sysvals(nir_shader *shader, mesa_shader_stage desc_stage,
                            bool lower_draw_params);
 
 bool agx_nir_layout_uniforms(nir_shader *shader,

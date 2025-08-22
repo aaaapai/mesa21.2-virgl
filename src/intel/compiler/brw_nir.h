@@ -79,7 +79,7 @@ brw_nir_ubo_surface_index_is_pushable(nir_src src)
 {
    nir_intrinsic_instr *intrin =
       src.ssa->parent_instr->type == nir_instr_type_intrinsic ?
-      nir_instr_as_intrinsic(src.ssa->parent_instr) : NULL;
+      nir_def_as_intrinsic(src.ssa) : NULL;
 
    if (intrin && intrin->intrinsic == nir_intrinsic_resource_intel) {
       return (nir_intrinsic_resource_access_intel(intrin) &
@@ -100,7 +100,7 @@ brw_nir_ubo_surface_index_get_push_block(nir_src src)
 
    assert(src.ssa->parent_instr->type == nir_instr_type_intrinsic);
 
-   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(src.ssa->parent_instr);
+   nir_intrinsic_instr *intrin = nir_def_as_intrinsic(src.ssa);
    assert(intrin->intrinsic == nir_intrinsic_resource_intel);
 
    return nir_intrinsic_resource_block_intel(intrin);
@@ -122,7 +122,7 @@ brw_nir_ubo_surface_index_get_bti(nir_src src)
 
    assert(src.ssa->parent_instr->type == nir_instr_type_intrinsic);
 
-   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(src.ssa->parent_instr);
+   nir_intrinsic_instr *intrin = nir_def_as_intrinsic(src.ssa);
    if (!intrin || intrin->intrinsic != nir_intrinsic_resource_intel)
       return UINT32_MAX;
 
@@ -178,8 +178,6 @@ bool brw_nir_lower_cs_intrinsics(nir_shader *nir,
 bool brw_nir_lower_alpha_to_coverage(nir_shader *shader);
 bool brw_needs_vertex_attributes_bypass(const nir_shader *shader);
 void brw_nir_lower_fs_barycentrics(nir_shader *shader);
-bool brw_nir_lower_fs_msaa(nir_shader *shader,
-                           const struct brw_wm_prog_key *key);
 
 void brw_nir_lower_vs_inputs(nir_shader *nir);
 void brw_nir_lower_vue_inputs(nir_shader *nir,
@@ -290,7 +288,7 @@ void brw_nir_adjust_payload(nir_shader *shader);
 
 static inline nir_variable_mode
 brw_nir_no_indirect_mask(const struct brw_compiler *compiler,
-                         gl_shader_stage stage)
+                         mesa_shader_stage stage)
 {
    nir_variable_mode indirect_mask = (nir_variable_mode) 0;
 

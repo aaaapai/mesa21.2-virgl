@@ -82,8 +82,8 @@ elk_compute_vue_map(const struct intel_device_info *devinfo,
        * Note that we don't have to worry about COL/BFC, as those built-in
        * variables only exist in legacy GL, which only supports VS and FS.
        */
-      slots_valid |= BITFIELD64_BIT(VARYING_SLOT_CLIP_DIST0);
-      slots_valid |= BITFIELD64_BIT(VARYING_SLOT_CLIP_DIST1);
+      slots_valid |= VARYING_BIT_CLIP_DIST0;
+      slots_valid |= VARYING_BIT_CLIP_DIST1;
    }
 
    vue_map->slots_valid = slots_valid;
@@ -149,9 +149,9 @@ elk_compute_vue_map(const struct intel_device_info *devinfo,
          }
       }
 
-      if (slots_valid & BITFIELD64_BIT(VARYING_SLOT_CLIP_DIST0))
+      if (slots_valid & VARYING_BIT_CLIP_DIST0)
          assign_vue_slot(vue_map, VARYING_SLOT_CLIP_DIST0, slot++);
-      if (slots_valid & BITFIELD64_BIT(VARYING_SLOT_CLIP_DIST1))
+      if (slots_valid & VARYING_BIT_CLIP_DIST1)
          assign_vue_slot(vue_map, VARYING_SLOT_CLIP_DIST1, slot++);
 
       /* Vertex URB Formats table says: "Vertex Header shall be padded at the
@@ -163,13 +163,13 @@ elk_compute_vue_map(const struct intel_device_info *devinfo,
        * ATTRIBUTE_SWIZZLE_INPUTATTR_FACING to swizzle them when doing
        * two-sided color.
        */
-      if (slots_valid & BITFIELD64_BIT(VARYING_SLOT_COL0))
+      if (slots_valid & VARYING_BIT_COL0)
          assign_vue_slot(vue_map, VARYING_SLOT_COL0, slot++);
-      if (slots_valid & BITFIELD64_BIT(VARYING_SLOT_BFC0))
+      if (slots_valid & VARYING_BIT_BFC0)
          assign_vue_slot(vue_map, VARYING_SLOT_BFC0, slot++);
-      if (slots_valid & BITFIELD64_BIT(VARYING_SLOT_COL1))
+      if (slots_valid & VARYING_BIT_COL1)
          assign_vue_slot(vue_map, VARYING_SLOT_COL1, slot++);
-      if (slots_valid & BITFIELD64_BIT(VARYING_SLOT_BFC1))
+      if (slots_valid & VARYING_BIT_BFC1)
          assign_vue_slot(vue_map, VARYING_SLOT_BFC1, slot++);
    }
 
@@ -284,7 +284,7 @@ elk_compute_tess_vue_map(struct intel_vue_map *vue_map,
 }
 
 static const char *
-varying_name(elk_varying_slot slot, gl_shader_stage stage)
+varying_name(elk_varying_slot slot, mesa_shader_stage stage)
 {
    assume(slot < ELK_VARYING_SLOT_COUNT);
 
@@ -302,7 +302,7 @@ varying_name(elk_varying_slot slot, gl_shader_stage stage)
 
 void
 elk_print_vue_map(FILE *fp, const struct intel_vue_map *vue_map,
-                  gl_shader_stage stage)
+                  mesa_shader_stage stage)
 {
    const char *layout_name =
       vue_map->layout == INTEL_VUE_LAYOUT_FIXED ? "non-SSO" : "SSO";

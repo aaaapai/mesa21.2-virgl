@@ -476,7 +476,7 @@ struct tc_renderpass_info {
       uint8_t data8[8];
    };
    /* only valid if has_resolve is true and the resolve member of pipe_framebuffer_state is NULL */
-   struct pipe_resource *resolve;
+   struct pipe_resource *resolve[2]; //[color, depth]
 };
 
 static inline bool
@@ -636,9 +636,9 @@ struct threaded_context {
    bool flushing;
 
    bool seen_streamout_buffers;
-   bool seen_shader_buffers[PIPE_SHADER_TYPES];
-   bool seen_image_buffers[PIPE_SHADER_TYPES];
-   bool seen_sampler_buffers[PIPE_SHADER_TYPES];
+   bool seen_shader_buffers[MESA_SHADER_MESH_STAGES];
+   bool seen_image_buffers[MESA_SHADER_MESH_STAGES];
+   bool seen_sampler_buffers[MESA_SHADER_MESH_STAGES];
 
    int8_t last_completed;
    int8_t batch_generation;
@@ -669,12 +669,12 @@ struct threaded_context {
     */
    uint32_t vertex_buffers[PIPE_MAX_ATTRIBS];
    uint32_t streamout_buffers[PIPE_MAX_SO_BUFFERS];
-   uint32_t const_buffers[PIPE_SHADER_TYPES][PIPE_MAX_CONSTANT_BUFFERS];
-   uint32_t shader_buffers[PIPE_SHADER_TYPES][PIPE_MAX_SHADER_BUFFERS];
-   uint32_t image_buffers[PIPE_SHADER_TYPES][PIPE_MAX_SHADER_IMAGES];
-   uint32_t shader_buffers_writeable_mask[PIPE_SHADER_TYPES];
-   uint64_t image_buffers_writeable_mask[PIPE_SHADER_TYPES];
-   uint32_t sampler_buffers[PIPE_SHADER_TYPES][PIPE_MAX_SHADER_SAMPLER_VIEWS];
+   uint32_t const_buffers[MESA_SHADER_MESH_STAGES][PIPE_MAX_CONSTANT_BUFFERS];
+   uint32_t shader_buffers[MESA_SHADER_MESH_STAGES][PIPE_MAX_SHADER_BUFFERS];
+   uint32_t image_buffers[MESA_SHADER_MESH_STAGES][PIPE_MAX_SHADER_IMAGES];
+   uint32_t shader_buffers_writeable_mask[MESA_SHADER_MESH_STAGES];
+   uint64_t image_buffers_writeable_mask[MESA_SHADER_MESH_STAGES];
+   uint32_t sampler_buffers[MESA_SHADER_MESH_STAGES][PIPE_MAX_SHADER_SAMPLER_VIEWS];
 
    struct tc_batch batch_slots[TC_MAX_BATCHES];
    struct tc_buffer_list buffer_lists[TC_MAX_BUFFER_LISTS];
@@ -685,6 +685,8 @@ struct threaded_context {
    struct tc_renderpass_info *renderpass_info_recording;
    /* accessed by driver thread */
    struct tc_renderpass_info *renderpass_info;
+   /* internal-only: if dsa/fs are bound between render passes */
+   void *pending_renderpass_dsa, *pending_renderpass_fs;
 };
 
 
@@ -867,6 +869,8 @@ tc_set_vertex_elements_for_call(struct pipe_vertex_buffer *buffers,
    ptr[-1] = state;
 }
 
+bool
+threaded_context_is_buffer_on_busy_list(struct pipe_context *_pipe, struct pipe_resource *resource);
 #ifdef __cplusplus
 }
 #endif

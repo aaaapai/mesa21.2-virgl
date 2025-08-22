@@ -46,7 +46,7 @@ init_block(nir_block *block, nir_function_impl *impl)
    block->dom_pre_index = UINT32_MAX;
    block->dom_post_index = 0;
 
-   _mesa_set_clear(block->dom_frontier, NULL);
+   _mesa_set_clear(&block->dom_frontier, NULL);
 
    return true;
 }
@@ -73,7 +73,7 @@ static bool
 calc_dominance(nir_block *block)
 {
    nir_block *new_idom = NULL;
-   set_foreach(block->predecessors, entry) {
+   set_foreach(&block->predecessors, entry) {
       nir_block *pred = (nir_block *)entry->key;
 
       if (pred->imm_dom) {
@@ -95,8 +95,8 @@ calc_dominance(nir_block *block)
 static bool
 calc_dom_frontier(nir_block *block)
 {
-   if (block->predecessors->entries > 1) {
-      set_foreach(block->predecessors, entry) {
+   if (block->predecessors.entries > 1) {
+      set_foreach(&block->predecessors, entry) {
          nir_block *runner = (nir_block *)entry->key;
 
          /* Skip unreachable predecessors */
@@ -104,7 +104,7 @@ calc_dom_frontier(nir_block *block)
             continue;
 
          while (runner != block->imm_dom) {
-            _mesa_set_add(runner->dom_frontier, block);
+            _mesa_set_add(&runner->dom_frontier, block);
             runner = runner->imm_dom;
          }
       }
@@ -135,8 +135,17 @@ calc_dom_children(nir_function_impl *impl)
    }
 
    nir_foreach_block_unstructured(block, impl) {
-      block->dom_children = ralloc_array(mem_ctx, nir_block *,
-                                         block->num_dom_children);
+      if (!block->num_dom_children) {
+         block->dom_children = NULL;
+         continue;
+      }
+
+      if (block->num_dom_children <= 3) {
+         block->dom_children = block->_dom_children_storage;
+      } else {
+         block->dom_children = ralloc_array(mem_ctx, nir_block *,
+                                            block->num_dom_children);
+      }
       block->num_dom_children = 0;
    }
 
@@ -300,7 +309,7 @@ nir_dump_dom_frontier_impl(nir_function_impl *impl, FILE *fp)
 {
    nir_foreach_block_unstructured(block, impl) {
       fprintf(fp, "DF(%u) = {", block->index);
-      set_foreach(block->dom_frontier, entry) {
+      set_foreach(&block->dom_frontier, entry) {
          nir_block *df = (nir_block *)entry->key;
          fprintf(fp, "%u, ", df->index);
       }

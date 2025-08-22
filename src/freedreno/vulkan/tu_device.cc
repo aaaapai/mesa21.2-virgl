@@ -217,16 +217,9 @@ get_device_extensions(const struct tu_physical_device *device,
       .KHR_pipeline_executable_properties = true,
       .KHR_pipeline_library = true,
 #ifdef TU_USE_WSI_PLATFORM
-      /* Hide these behind dri configs for now since we cannot implement it reliably on
-       * all surfaces yet. There is no surface capability query for present wait/id,
-       * but the feature is useful enough to hide behind an opt-in mechanism for now.
-       * If the instance only enables surface extensions that unconditionally support present wait,
-       * we can also expose the extension that way. */
-      .KHR_present_id = (driQueryOptionb(&device->instance->dri_options, "vk_khr_present_wait") ||
-                         wsi_common_vk_instance_supports_present_wait(&device->instance->vk)),
+      .KHR_present_id = true,
       .KHR_present_id2 = true,
-      .KHR_present_wait = (driQueryOptionb(&device->instance->dri_options, "vk_khr_present_wait") ||
-                           wsi_common_vk_instance_supports_present_wait(&device->instance->vk)),
+      .KHR_present_wait = true,
       .KHR_present_wait2 = true,
 #endif
       .KHR_push_descriptor = true,
@@ -316,7 +309,6 @@ get_device_extensions(const struct tu_physical_device *device,
       .EXT_physical_device_drm = !is_kgsl(device->instance),
       .EXT_pipeline_creation_cache_control = true,
       .EXT_pipeline_creation_feedback = true,
-      .EXT_post_depth_coverage = true,
       .EXT_primitive_topology_list_restart = true,
       .EXT_primitives_generated_query = true,
       .EXT_private_data = true,
@@ -352,6 +344,7 @@ get_device_extensions(const struct tu_physical_device *device,
       .IMG_filter_cubic = device->info->a6xx.has_tex_filter_cubic,
       .NV_compute_shader_derivatives = device->info->chip >= 7,
       .QCOM_fragment_density_map_offset = true,
+      .VALVE_fragment_density_map_layered = true,
       .VALVE_mutable_descriptor_type = true,
    } };
 
@@ -551,11 +544,13 @@ tu_get_features(struct tu_physical_device *pdevice,
    /* VK_KHR_pipeline_executable_properties */
    features->pipelineExecutableInfo = true;
 
+#ifdef TU_USE_WSI_PLATFORM
    /* VK_KHR_present_id */
-   features->presentId = pdevice->vk.supported_extensions.KHR_present_id;
+   features->presentId = true;
 
    /* VK_KHR_present_wait */
-   features->presentWait = pdevice->vk.supported_extensions.KHR_present_wait;
+   features->presentWait = true;
+#endif
 
    /* VK_KHR_shader_clock */
    features->shaderSubgroupClock = true;
@@ -753,6 +748,12 @@ tu_get_features(struct tu_physical_device *pdevice,
 #ifdef TU_USE_WSI_PLATFORM
    /* VK_EXT_swapchain_maintenance1 */
    features->swapchainMaintenance1 = true;
+
+   /* VK_KHR_present_id2 */
+   features->presentId2 = true;
+
+   /* VK_KHR_present_wait2 */
+   features->presentWait2 = true;
 #endif
 
    /* VK_EXT_texel_buffer_alignment */
@@ -778,6 +779,9 @@ tu_get_features(struct tu_physical_device *pdevice,
    /* VK_KHR_unified_layouts */
    features->unifiedImageLayouts = true;
    features->unifiedImageLayoutsVideo = false;
+
+   /* VK_VALVE_fragment_density_map_layered */
+   features->fragmentDensityMapLayered = true;
 }
 
 static void
@@ -1173,8 +1177,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->maxFragmentShadingRateRasterizationSamples = VK_SAMPLE_COUNT_4_BIT;
    props->fragmentShadingRateWithShaderDepthStencilWrites = true;
    props->fragmentShadingRateWithSampleMask = true;
-   /* Has wrong gl_SampleMaskIn[0] values with VK_EXT_post_depth_coverage used. */
-   props->fragmentShadingRateWithShaderSampleMask = false;
+   props->fragmentShadingRateWithShaderSampleMask = true;
    props->fragmentShadingRateWithConservativeRasterization = true;
    props->fragmentShadingRateWithFragmentShaderInterlock = false;
    props->fragmentShadingRateWithCustomSampleLocations = true;
@@ -1436,6 +1439,9 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->fragmentDensityOffsetGranularity = (VkExtent2D) { 
       TU_FDM_OFFSET_GRANULARITY, TU_FDM_OFFSET_GRANULARITY
    };
+
+   /* VK_VALVE_fragment_density_map_layered */
+   props->maxFragmentDensityMapLayers = MAX_VIEWS;
 }
 
 static const struct vk_pipeline_cache_object_ops *const cache_import_ops[] = {
@@ -1659,7 +1665,6 @@ tu_destroy_physical_device(struct vk_physical_device *device)
 static const driOptionDescription tu_dri_options[] = {
    DRI_CONF_SECTION_PERFORMANCE
       DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(0)
-      DRI_CONF_VK_KHR_PRESENT_WAIT(false)
       DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(false)
       DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(false)
       DRI_CONF_VK_XWAYLAND_WAIT_READY(false)
@@ -1803,7 +1808,7 @@ void
 tu_physical_device_get_global_priority_properties(const struct tu_physical_device *pdevice,
                                                   VkQueueFamilyGlobalPriorityPropertiesKHR *props)
 {
-   props->priorityCount = MIN2(pdevice->submitqueue_priority_count, 3);
+   props->priorityCount = MIN2(pdevice->submitqueue_priority_count, 4);
    switch (props->priorityCount) {
    case 1:
       props->priorities[0] = VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR;
@@ -1817,8 +1822,14 @@ tu_physical_device_get_global_priority_properties(const struct tu_physical_devic
       props->priorities[1] = VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR;
       props->priorities[2] = VK_QUEUE_GLOBAL_PRIORITY_HIGH_KHR;
       break;
+   case 4:
+      props->priorities[0] = VK_QUEUE_GLOBAL_PRIORITY_LOW_KHR;
+      props->priorities[1] = VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR;
+      props->priorities[2] = VK_QUEUE_GLOBAL_PRIORITY_HIGH_KHR;
+      props->priorities[3] = VK_QUEUE_GLOBAL_PRIORITY_REALTIME_KHR;
+      break;
    default:
-      unreachable("unexpected priority count");
+      UNREACHABLE("unexpected priority count");
       break;
    }
 }
@@ -2641,8 +2652,6 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    if (result != VK_SUCCESS)
       goto fail_queues;
 
-   util_sparse_array_init(&device->accel_struct_ranges, sizeof(VkDeviceSize), 256);
-
    mtx_init(&device->radix_sort_mutex, mtx_plain);
 
    {
@@ -2931,7 +2940,6 @@ fail_free_zombie_vma:
    u_vector_finish(&device->zombie_vmas);
    ir3_compiler_destroy(device->compiler);
 fail_compiler:
-   util_sparse_array_finish(&device->accel_struct_ranges);
    vk_meta_device_finish(&device->vk, &device->meta);
 fail_queues:
    for (unsigned i = 0; i < TU_MAX_QUEUE_FAMILIES; i++) {
@@ -2983,8 +2991,6 @@ tu_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
    tu_destroy_dynamic_rendering(device);
 
    vk_meta_device_finish(&device->vk, &device->meta);
-
-   util_sparse_array_finish(&device->accel_struct_ranges);
 
    ir3_compiler_destroy(device->compiler);
 
@@ -3224,6 +3230,10 @@ tu_AllocateMemory(VkDevice _device,
                            VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)))
          alloc_flags |= TU_BO_ALLOC_SHAREABLE;
 
+      const struct wsi_memory_allocate_info *wsi_info =
+         vk_find_struct_const(pAllocateInfo->pNext, WSI_MEMORY_ALLOCATE_INFO_MESA);
+      if (wsi_info && wsi_info->implicit_sync)
+         alloc_flags |= TU_BO_ALLOC_IMPLICIT_SYNC;
 
       char name[64] = "vkAllocateMemory()";
       if (device->bo_sizes)
@@ -3249,20 +3259,6 @@ tu_AllocateMemory(VkDevice _device,
    if (result != VK_SUCCESS) {
       vk_device_memory_destroy(&device->vk, pAllocator, &mem->vk);
       return result;
-   }
-
-   /* Track in the device whether our BO list contains any implicit-sync BOs, so
-    * we can suppress implicit sync on non-WSI usage.
-    */
-   const struct wsi_memory_allocate_info *wsi_info =
-      vk_find_struct_const(pAllocateInfo->pNext, WSI_MEMORY_ALLOCATE_INFO_MESA);
-   if (wsi_info && wsi_info->implicit_sync) {
-      mtx_lock(&device->bo_mutex);
-      if (!mem->bo->implicit_sync) {
-         mem->bo->implicit_sync = true;
-         device->implicit_sync_bo_count++;
-      }
-      mtx_unlock(&device->bo_mutex);
    }
 
    const VkMemoryDedicatedAllocateInfo *dedicate_info =

@@ -208,7 +208,7 @@ st_set_prog_affected_state_flags(struct gl_program *prog)
       break;
 
    default:
-      unreachable("unhandled shader stage");
+      UNREACHABLE("unhandled shader stage");
    }
 }
 
@@ -218,10 +218,10 @@ st_set_prog_affected_state_flags(struct gl_program *prog)
  * the linked list.
  */
 static void
-delete_variant(struct st_context *st, struct st_variant *v, GLenum target)
+delete_variant(struct st_context *st, struct st_variant *v, unsigned stage)
 {
    if (v->driver_shader) {
-      if (target == GL_VERTEX_PROGRAM_ARB &&
+      if (stage == MESA_SHADER_VERTEX &&
           ((struct st_common_variant*)v)->key.is_draw_shader) {
          /* Draw shader. */
          draw_delete_vertex_shader(st->draw, v->driver_shader);
@@ -229,36 +229,33 @@ delete_variant(struct st_context *st, struct st_variant *v, GLenum target)
          /* The shader's context matches the calling context, or we
           * don't care.
           */
-         switch (target) {
-         case GL_VERTEX_PROGRAM_ARB:
+         switch (stage) {
+         case MESA_SHADER_VERTEX:
             st->pipe->delete_vs_state(st->pipe, v->driver_shader);
             break;
-         case GL_TESS_CONTROL_PROGRAM_NV:
+         case MESA_SHADER_TESS_CTRL:
             st->pipe->delete_tcs_state(st->pipe, v->driver_shader);
             break;
-         case GL_TESS_EVALUATION_PROGRAM_NV:
+         case MESA_SHADER_TESS_EVAL:
             st->pipe->delete_tes_state(st->pipe, v->driver_shader);
             break;
-         case GL_GEOMETRY_PROGRAM_NV:
+         case MESA_SHADER_GEOMETRY:
             st->pipe->delete_gs_state(st->pipe, v->driver_shader);
             break;
-         case GL_FRAGMENT_PROGRAM_ARB:
+         case MESA_SHADER_FRAGMENT:
             st->pipe->delete_fs_state(st->pipe, v->driver_shader);
             break;
-         case GL_COMPUTE_PROGRAM_NV:
+         case MESA_SHADER_COMPUTE:
             st->pipe->delete_compute_state(st->pipe, v->driver_shader);
             break;
          default:
-            unreachable("bad shader type in delete_basic_variant");
+            UNREACHABLE("bad shader type in delete_basic_variant");
          }
       } else {
          /* We can't delete a shader with a context different from the one
           * that created it.  Add it to the creating context's zombie list.
           */
-         enum pipe_shader_type type =
-            pipe_shader_type_from_mesa(_mesa_program_enum_to_shader_stage(target));
-
-         st_save_zombie_shader(v->st, type, v->driver_shader);
+         st_save_zombie_shader(v->st, stage, v->driver_shader);
       }
    }
 
@@ -297,7 +294,7 @@ st_unbind_program(struct st_context *st, struct gl_program *p)
       ctx->NewDriverState |= ST_NEW_CS_STATE;
       break;
    default:
-      unreachable("invalid shader type");
+      UNREACHABLE("invalid shader type");
    }
 }
 
@@ -317,7 +314,7 @@ st_release_variants(struct st_context *st, struct gl_program *p)
 
    for (v = p->variants; v; ) {
       struct st_variant *next = v->next;
-      delete_variant(st, v, p->Target);
+      delete_variant(st, v, p->info.stage);
       v = next;
    }
 
@@ -376,10 +373,8 @@ st_prog_to_nir_postprocess(struct st_context *st, nir_shader *nir,
       st_serialize_base_nir(prog, nir);
       st_finalize_nir(st, prog, NULL, nir, true, false);
 
-      if (screen->finalize_nir) {
-         char *msg = screen->finalize_nir(screen, nir);
-         free(msg);
-      }
+      if (screen->finalize_nir)
+         screen->finalize_nir(screen, nir);
    }
 
    nir_validate_shader(nir, "after st/glsl finalize_nir");
@@ -469,7 +464,7 @@ st_create_nir_shader(struct st_context *st, struct pipe_shader_state *state)
 
    assert(state->type == PIPE_SHADER_IR_NIR);
    nir_shader *nir = state->ir.nir;
-   gl_shader_stage stage = nir->info.stage;
+   mesa_shader_stage stage = nir->info.stage;
 
    /* Renumber SSA defs to make it easier to run diff on printed NIR. */
    nir_foreach_function_impl(impl, nir) {
@@ -540,7 +535,7 @@ st_create_nir_shader(struct st_context *st, struct pipe_shader_state *state)
       break;
    }
    default:
-      unreachable("unsupported shader stage");
+      UNREACHABLE("unsupported shader stage");
       return NULL;
    }
 
@@ -650,7 +645,7 @@ get_nir_shader(struct st_context *st, struct gl_program *prog, bool is_draw)
 
    struct blob_reader blob_reader;
    const struct nir_shader_compiler_options *options =
-      is_draw ? &draw_nir_options : st_get_nir_compiler_options(st, prog->info.stage);
+      is_draw ? &draw_nir_options : st->screen->nir_options[prog->info.stage];
 
    if (is_draw && st->ctx->Const.PackedDriverUniformStorage &&
        (!prog->shader_program || prog->shader_program->data->LinkStatus != LINKING_SKIPPED)) {
@@ -696,19 +691,6 @@ lower_ucp(struct st_context *st,
                     can_compact, clipplane_state);
       }
    }
-}
-
-static bool
-force_persample_shading(struct nir_builder *b, nir_intrinsic_instr *intr,
-                        void *data)
-{
-   if (intr->intrinsic == nir_intrinsic_load_barycentric_pixel ||
-       intr->intrinsic == nir_intrinsic_load_barycentric_centroid) {
-      intr->intrinsic = nir_intrinsic_load_barycentric_sample;
-      return true;
-   }
-
-   return false;
 }
 
 static int
@@ -787,11 +769,9 @@ st_create_common_variant(struct st_context *st,
 
    if (key->clamp_color) {
       NIR_PASS(_, state.ir.nir, nir_lower_clamp_color_outputs);
-      finalize = true;
    }
    if (key->passthrough_edgeflags) {
-      NIR_PASS(_, state.ir.nir, nir_lower_passthrough_edgeflags);
-      finalize = true;
+      NIR_PASS(finalize, state.ir.nir, nir_lower_passthrough_edgeflags);
    }
 
    if (key->export_point_size) {
@@ -815,7 +795,7 @@ st_create_common_variant(struct st_context *st,
       tex_opts.saturate_s = key->gl_clamp[0];
       tex_opts.saturate_t = key->gl_clamp[1];
       tex_opts.saturate_r = key->gl_clamp[2];
-      NIR_PASS(_, state.ir.nir, nir_lower_tex, &tex_opts);
+      NIR_PASS(finalize, state.ir.nir, nir_lower_tex, &tex_opts);
    }
 
    if (finalize || !st->allow_st_finalize_nir_twice || key->is_draw_shader) {
@@ -824,6 +804,7 @@ st_create_common_variant(struct st_context *st,
    }
 
    assert(state.ir.nir->info.stage == MESA_SHADER_COMPUTE ||
+          state.ir.nir->info.stage == MESA_SHADER_TASK ||
           state.ir.nir->info.io_lowered);
 
    /* This should be after all passes that touch IO. */
@@ -849,10 +830,8 @@ st_create_common_variant(struct st_context *st,
 
    if (finalize || !st->allow_st_finalize_nir_twice || key->is_draw_shader) {
       struct pipe_screen *screen = st->screen;
-      if (!key->is_draw_shader && screen->finalize_nir) {
-         char *msg = screen->finalize_nir(screen, state.ir.nir);
-         free(msg);
-      }
+      if (!key->is_draw_shader && screen->finalize_nir)
+         screen->finalize_nir(screen, state.ir.nir);
 
       /* Clip lowering and edgeflags may have introduced new varyings, so
        * update the inputs_read/outputs_written. However, with
@@ -996,7 +975,7 @@ st_translate_fragment_program(struct st_context *st,
       prog->nir = prog_to_nir(st->ctx, prog);
    } else if (prog->ati_fs) {
       const struct nir_shader_compiler_options *options =
-         st_get_nir_compiler_options(st, MESA_SHADER_FRAGMENT);
+         st->screen->nir_options[MESA_SHADER_FRAGMENT];
 
       assert(!prog->nir);
       prog->nir = st_translate_atifs_program(prog->ati_fs, prog, options);
@@ -1059,12 +1038,10 @@ st_create_fp_variant(struct st_context *st,
 
    if (key->clamp_color) {
       NIR_PASS(_, state.ir.nir, nir_lower_clamp_color_outputs);
-      finalize = true;
    }
 
    if (key->lower_flatshade) {
       NIR_PASS(_, state.ir.nir, nir_lower_flatshade);
-      finalize = true;
    }
 
    if (key->lower_alpha_func != COMPARE_FUNC_ALWAYS) {
@@ -1077,13 +1054,10 @@ st_create_fp_variant(struct st_context *st,
    if (key->lower_two_sided_color) {
       bool face_sysval = st->ctx->Const.GLSLFrontFacingIsSysVal;
       NIR_PASS(_, state.ir.nir, nir_lower_two_sided_color, face_sysval);
-      finalize = true;
    }
 
    if (key->persample_shading) {
       nir_shader *shader = state.ir.nir;
-      nir_shader_intrinsics_pass(shader, force_persample_shading,
-                                 nir_metadata_all, NULL);
 
       /* In addition to requiring per-sample interpolation, sample shading
        * changes the behaviour of gl_SampleMaskIn, so we need per-sample shading
@@ -1091,8 +1065,7 @@ st_create_fp_variant(struct st_context *st,
        * uses_sample_shading won't be set by glsl_to_nir. We need to do so here.
        */
       shader->info.fs.uses_sample_shading = true;
-
-      finalize = true;
+      nir_lower_sample_shading(shader);
    }
 
    if (st->emulate_gl_clamp &&
@@ -1101,8 +1074,7 @@ st_create_fp_variant(struct st_context *st,
       tex_opts.saturate_s = key->gl_clamp[0];
       tex_opts.saturate_t = key->gl_clamp[1];
       tex_opts.saturate_r = key->gl_clamp[2];
-      NIR_PASS(_, state.ir.nir, nir_lower_tex, &tex_opts);
-      finalize = true;
+      NIR_PASS(finalize, state.ir.nir, nir_lower_tex, &tex_opts);
    }
 
    assert(!(key->bitmap && key->drawpixels));
@@ -1115,8 +1087,7 @@ st_create_fp_variant(struct st_context *st,
       options.sampler = variant->bitmap_sampler;
       options.swizzle_xxxx = st->bitmap.tex_format == PIPE_FORMAT_R8_UNORM;
 
-      NIR_PASS(_, state.ir.nir, nir_lower_bitmap, &options);
-      finalize = true;
+      NIR_PASS(finalize, state.ir.nir, nir_lower_bitmap, &options);
    }
 
    /* glDrawPixels (color only) */
@@ -1235,10 +1206,8 @@ st_create_fp_variant(struct st_context *st,
                               nir_shader_get_entrypoint(state.ir.nir));
 
       struct pipe_screen *screen = st->screen;
-      if (screen->finalize_nir) {
-         char *msg = screen->finalize_nir(screen, state.ir.nir);
-         free(msg);
-      }
+      if (screen->finalize_nir)
+         screen->finalize_nir(screen, state.ir.nir);
    }
 
    variant->base.driver_shader = st_create_nir_shader(st, &state);
@@ -1330,7 +1299,7 @@ destroy_program_variants(struct st_context *st, struct gl_program *p)
          /* unlink from list */
          *prevPtr = next;
          /* destroy this variant */
-         delete_variant(st, v, p->Target);
+         delete_variant(st, v, p->info.stage);
       }
       else {
          prevPtr = &v->next;
@@ -1421,12 +1390,12 @@ st_precompile_shader_variant(struct st_context *st,
 {
    char *error = NULL;
 
-   switch (prog->Target) {
-   case GL_VERTEX_PROGRAM_ARB:
-   case GL_TESS_CONTROL_PROGRAM_NV:
-   case GL_TESS_EVALUATION_PROGRAM_NV:
-   case GL_GEOMETRY_PROGRAM_NV:
-   case GL_COMPUTE_PROGRAM_NV: {
+   switch (prog->info.stage) {
+   case MESA_SHADER_VERTEX:
+   case MESA_SHADER_TESS_CTRL:
+   case MESA_SHADER_TESS_EVAL:
+   case MESA_SHADER_GEOMETRY:
+   case MESA_SHADER_COMPUTE: {
       struct st_common_variant_key key;
 
       memset(&key, 0, sizeof(key));
@@ -1445,7 +1414,7 @@ st_precompile_shader_variant(struct st_context *st,
       return error;
    }
 
-   case GL_FRAGMENT_PROGRAM_ARB: {
+   case MESA_SHADER_FRAGMENT: {
       struct st_fp_variant_key key;
 
       memset(&key, 0, sizeof(key));
@@ -1468,7 +1437,7 @@ st_precompile_shader_variant(struct st_context *st,
    }
 
    default:
-      unreachable("invalid shader stage");
+      UNREACHABLE("invalid shader stage");
    }
 }
 

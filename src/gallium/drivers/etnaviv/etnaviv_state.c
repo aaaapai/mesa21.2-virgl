@@ -78,7 +78,7 @@ etna_set_sample_mask(struct pipe_context *pctx, unsigned sample_mask)
 
 static void
 etna_set_constant_buffer(struct pipe_context *pctx,
-      enum pipe_shader_type shader, uint index, bool take_ownership,
+      mesa_shader_stage shader, uint index, bool take_ownership,
       const struct pipe_constant_buffer *cb)
 {
    struct etna_context *ctx = etna_context(pctx);
@@ -810,24 +810,31 @@ etna_update_clipping(struct etna_context *ctx)
    const struct etna_rasterizer_state *rasterizer = etna_rasterizer_state(ctx->rasterizer);
    const struct pipe_framebuffer_state *fb = &ctx->framebuffer_s;
 
-   /* clip framebuffer against viewport */
-   uint32_t scissor_left = ctx->viewport.SE_SCISSOR_LEFT;
-   uint32_t scissor_top = ctx->viewport.SE_SCISSOR_TOP;
-   uint32_t scissor_right = MIN2(fb->width, ctx->viewport.SE_SCISSOR_RIGHT);
-   uint32_t scissor_bottom = MIN2(fb->height, ctx->viewport.SE_SCISSOR_BOTTOM);
+   if (ctx->rasterizer->rasterizer_discard) {
+      ctx->clipping.minx = 0;
+      ctx->clipping.miny = 0;
+      ctx->clipping.maxx = 0;
+      ctx->clipping.maxy = 0;
+   } else {
+      /* clip framebuffer against viewport */
+      uint32_t scissor_left = ctx->viewport.SE_SCISSOR_LEFT;
+      uint32_t scissor_top = ctx->viewport.SE_SCISSOR_TOP;
+      uint32_t scissor_right = MIN2(fb->width, ctx->viewport.SE_SCISSOR_RIGHT);
+      uint32_t scissor_bottom = MIN2(fb->height, ctx->viewport.SE_SCISSOR_BOTTOM);
 
-   /* clip against scissor */
-   if (rasterizer->scissor) {
-      scissor_left = MAX2(ctx->scissor.minx, scissor_left);
-      scissor_top = MAX2(ctx->scissor.miny, scissor_top);
-      scissor_right = MIN2(ctx->scissor.maxx, scissor_right);
-      scissor_bottom = MIN2(ctx->scissor.maxy, scissor_bottom);
+      /* clip against scissor */
+      if (rasterizer->scissor) {
+         scissor_left = MAX2(ctx->scissor.minx, scissor_left);
+         scissor_top = MAX2(ctx->scissor.miny, scissor_top);
+         scissor_right = MIN2(ctx->scissor.maxx, scissor_right);
+         scissor_bottom = MIN2(ctx->scissor.maxy, scissor_bottom);
+      }
+
+      ctx->clipping.minx = scissor_left;
+      ctx->clipping.miny = scissor_top;
+      ctx->clipping.maxx = scissor_right;
+      ctx->clipping.maxy = scissor_bottom;
    }
-
-   ctx->clipping.minx = scissor_left;
-   ctx->clipping.miny = scissor_top;
-   ctx->clipping.maxx = scissor_right;
-   ctx->clipping.maxy = scissor_bottom;
 
    ctx->dirty |= ETNA_DIRTY_SCISSOR_CLIP;
 

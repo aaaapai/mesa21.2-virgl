@@ -304,7 +304,7 @@ vir_channels_written(struct qinst *inst)
                         return 0xc;
                 }
         }
-        unreachable("Bad pack field");
+        UNREACHABLE("Bad pack field");
 }
 #endif
 
@@ -633,7 +633,7 @@ v3d_nir_lower_null_pointers_cb(nir_builder *b,
         if (src->ssa->parent_instr->type != nir_instr_type_alu)
                 return false;
 
-        nir_alu_instr *alu = nir_instr_as_alu(src->ssa->parent_instr);
+        nir_alu_instr *alu = nir_def_as_alu(src->ssa);
         if (alu->op != nir_op_bcsel)
                 return false;
 
@@ -826,7 +826,7 @@ v3d_vs_set_prog_data(struct v3d_compile *c,
                 prog_data->vpm_input_size++;
 
         prog_data->writes_psiz =
-            c->s->info.outputs_written & (1 << VARYING_SLOT_PSIZ);
+            c->s->info.outputs_written & VARYING_BIT_PSIZ;
 
         /* Input/output segment size are in sectors (8 rows of 32 bits per
          * channel).
@@ -905,7 +905,7 @@ v3d_gs_set_prog_data(struct v3d_compile *c,
         prog_data->num_invocations = c->s->info.gs.invocations;
 
         prog_data->writes_psiz =
-            c->s->info.outputs_written & (1 << VARYING_SLOT_PSIZ);
+            c->s->info.outputs_written & VARYING_BIT_PSIZ;
 }
 
 static void
@@ -992,7 +992,7 @@ v3d_set_prog_data(struct v3d_compile *c,
                 v3d_cs_set_prog_data(c, (struct v3d_compute_prog_data *)prog_data);
                 break;
         default:
-                unreachable("unsupported shader stage");
+                UNREACHABLE("unsupported shader stage");
         }
 }
 
@@ -1138,7 +1138,7 @@ v3d_nir_lower_fs_late(struct v3d_compile *c)
          *
          * The SPIR-V compiler will declare VARING_SLOT_CLIP_DIST0 as compact
          * array variable, so we have GL's clip lowering follow suit
-         * (PIPE_CAP_NIR_COMPACT_ARRAYS).
+         * (compact_arrays option at nir_shader_compiler_options)
          */
         if (c->fs_key->ucp_enables)
                 NIR_PASS(_, c->s, nir_lower_clip_fs, c->fs_key->ucp_enables, true, false);
@@ -1680,7 +1680,7 @@ v3d_attempt_compile(struct v3d_compile *c)
         case MESA_SHADER_COMPUTE:
                 break;
         default:
-                unreachable("unsupported shader stage");
+                UNREACHABLE("unsupported shader stage");
         }
 
         switch (c->s->info.stage) {
@@ -1811,7 +1811,7 @@ v3d_attempt_compile(struct v3d_compile *c)
                 .instr_delay_cb = v3d_instr_delay_cb,
                 .instr_delay_cb_data = c,
         };
-        NIR_PASS_V(c->s, nir_schedule, &schedule_options);
+        NIR_PASS(_, c->s, nir_schedule, &schedule_options);
 
         if (!c->disable_constant_ubo_load_sorting)
                 NIR_PASS(_, c->s, v3d_nir_sort_constant_ubo_loads, c);
@@ -1828,7 +1828,7 @@ v3d_attempt_compile(struct v3d_compile *c)
 }
 
 uint32_t
-v3d_prog_data_size(gl_shader_stage stage)
+v3d_prog_data_size(mesa_shader_stage stage)
 {
         static const int prog_data_size[] = {
                 [MESA_SHADER_VERTEX] = sizeof(struct v3d_vs_prog_data),
@@ -2333,7 +2333,7 @@ vir_get_stage_name(struct v3d_compile *c)
         else if (c->gs_key && c->gs_key->is_coord)
                 return "MESA_SHADER_GEOMETRY_BIN";
         else
-                return gl_shader_stage_name(c->s->info.stage);
+                return mesa_shader_stage_name(c->s->info.stage);
 }
 
 static inline uint32_t

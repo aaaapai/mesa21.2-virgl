@@ -119,6 +119,47 @@ enum bi_swizzle {
    BI_SWIZZLE_B33 = BI_SWIZZLE_B3333,
 };
 
+static inline bool
+bi_swizzle_to_byte_channels(enum bi_swizzle swizzle, unsigned *channels)
+{
+#define B(b0, b1, b2, b3)                                                      \
+   case BI_SWIZZLE_B##b0##b1##b2##b3: {                                        \
+      channels[0] = b0;                                                        \
+      channels[1] = b1;                                                        \
+      channels[2] = b2;                                                        \
+      channels[3] = b3;                                                        \
+      return true;                                                             \
+   }
+   switch (swizzle) {
+      B(0, 1, 0, 1);
+      B(0, 1, 2, 3);
+      B(2, 3, 0, 1);
+      B(2, 3, 2, 3);
+      B(0, 0, 0, 0);
+      B(1, 1, 1, 1);
+      B(2, 2, 2, 2);
+      B(3, 3, 3, 3);
+      B(0, 0, 1, 1);
+      B(2, 2, 3, 3);
+      B(1, 0, 3, 2);
+      B(3, 2, 1, 0);
+      B(0, 0, 2, 2);
+      B(1, 1, 0, 0);
+      B(2, 2, 0, 0);
+      B(3, 3, 0, 0);
+      B(2, 2, 1, 1);
+      B(3, 3, 1, 1);
+      B(1, 1, 2, 2);
+      B(3, 3, 2, 2);
+      B(0, 0, 3, 3);
+      B(1, 1, 3, 3);
+      B(1, 1, 2, 3);
+   default:
+      return false;
+   }
+#undef B
+}
+
 /* Given a packed i16vec2/i8vec4 constant, apply a swizzle. Useful for constant
  * folding and Valhall constant optimization. */
 
@@ -161,7 +202,7 @@ bi_apply_swizzle(uint32_t value, enum bi_swizzle swz)
 #undef H
 #undef B
 
-   unreachable("Invalid swizzle");
+   UNREACHABLE("Invalid swizzle");
 }
 
 enum bi_index_type {
@@ -193,8 +234,16 @@ typedef struct {
    uint32_t offset         : 3;
    enum bi_index_type type : 3;
 
+   /* Last use of an SSA value; similar to discard, but applies to the
+    * SSA analysis and does not have any HW restrictions (discard gets
+    * sent to the hardware eventually. */
+   bool kill_ssa : 1;
+
+   /* Register class */
+   bool memory : 1;
+
    /* Must be zeroed so we can hash the whole 64-bits at a time */
-   unsigned padding : (32 - 14);
+   unsigned padding : (32 - 16);
 } bi_index;
 
 static inline bi_index
@@ -205,6 +254,23 @@ bi_get_index(unsigned value)
       .swizzle = BI_SWIZZLE_H01,
       .type = BI_INDEX_NORMAL,
    };
+}
+
+enum ra_class {
+   /* General purpose register */
+   RA_GPR,
+
+   /* Memory, used to assign stack slots */
+   RA_MEM,
+
+   /* Keep last */
+   RA_CLASSES,
+};
+
+static inline enum ra_class
+ra_class_for_index(bi_index idx)
+{
+   return idx.memory ? RA_MEM : RA_GPR;
 }
 
 static inline bi_index
@@ -272,11 +338,21 @@ bi_half(bi_index idx, bool upper)
    return bi_swz_16(idx, upper, upper);
 }
 
+static inline bool
+bi_valid_lane_for_byte_swizzle(enum bi_swizzle swizzle, unsigned lane)
+{
+   unsigned channels[4];
+   if (bi_swizzle_to_byte_channels(swizzle, channels)) {
+      return lane == channels[0] || lane == channels[1] ||
+             lane == channels[2] || lane == channels[3];
+   }
+   return false;
+}
+
 static inline bi_index
 bi_byte(bi_index idx, unsigned lane)
 {
-   assert(idx.swizzle == BI_SWIZZLE_B0123);
-   assert(lane < 4);
+   assert(bi_valid_lane_for_byte_swizzle(idx.swizzle, lane));
    idx.swizzle = (enum bi_swizzle)(BI_SWIZZLE_B0 + lane);
    return idx;
 }
@@ -375,6 +451,12 @@ static inline bool
 bi_is_ssa(bi_index idx)
 {
    return idx.type == BI_INDEX_NORMAL;
+}
+
+static inline bool
+bi_is_zero(const bi_index idx)
+{
+   return idx.type == BI_INDEX_CONSTANT && idx.value == 0;
 }
 
 /* Compares equivalence as references. Does not compare offsets, swizzles, or
@@ -640,6 +722,12 @@ bi_is_scheduling_barrier(const bi_instr *I)
    return I->op == BI_OPCODE_NOP && I->scheduling_barrier;
 }
 
+static inline bool
+bi_is_branch(const bi_instr *I)
+{
+   return I != NULL && bi_opcode_props[I->op].branch;
+}
+
 /*
  * Safe helpers to remove destinations/sources at the end of the
  * destination/source array when changing opcodes. Unlike adding
@@ -882,7 +970,7 @@ bi_block_add_successor(bi_block *block, bi_block *successor)
       return;
    }
 
-   unreachable("Too many successors");
+   UNREACHABLE("Too many successors");
 }
 
 /* Subset of pan_shader_info needed per-variant, in order to support IDVS */
@@ -911,11 +999,13 @@ enum bi_idvs_mode {
    BI_IDVS_ALL = 3,
 };
 
+#define BI_MAX_REGS 64
+
 typedef struct {
    const struct pan_compile_inputs *inputs;
    nir_shader *nir;
    struct bi_shader_info info;
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
    struct list_head blocks; /* list of bi_block */
    uint32_t quirks;
    unsigned arch;
@@ -950,7 +1040,7 @@ typedef struct {
    /* During NIR->BIR, table of preloaded registers, or NULL if never
     * preloaded.
     */
-   bi_index preloaded[64];
+   bi_index preloaded[BI_MAX_REGS];
 
    /* For creating temporaries */
    unsigned ssa_alloc;
@@ -963,6 +1053,15 @@ typedef struct {
     * components, populated by a split.
     */
    struct hash_table_u64 *allocated_vec;
+
+   /* Beginning of our stack allocation used for spilling, below that is
+    * NIR-level scratch.
+    */
+   unsigned spill_base_B;
+
+   /* Beginning of stack allocation used for parallel copy lowering */
+   bool has_spill_pcopy_reserved;
+   unsigned spill_pcopy_base;
 
    /* Stats for shader-db */
    unsigned loop_count;
@@ -1148,11 +1247,17 @@ bi_src_index(nir_src *src)
    util_dynarray_foreach(&(blk)->predecessors, bi_block *, v)
 
 #define bi_foreach_src(ins, v) for (unsigned v = 0; v < ins->nr_srcs; ++v)
+#define bi_foreach_src_rev(ins, v) for (signed v = ins->nr_srcs-1; v >= 0; --v)
 
 #define bi_foreach_dest(ins, v) for (unsigned v = 0; v < ins->nr_dests; ++v)
+#define bi_foreach_dest_rev(ins, v) for (signed v = ins->nr_dests-1; v >= 0; --v)
 
 #define bi_foreach_ssa_src(ins, v)                                             \
    bi_foreach_src(ins, v)                                                      \
+      if (ins->src[v].type == BI_INDEX_NORMAL)
+
+#define bi_foreach_ssa_src_rev(ins, v)                                         \
+   bi_foreach_src_rev(ins, v)                                                  \
       if (ins->src[v].type == BI_INDEX_NORMAL)
 
 #define bi_foreach_ssa_dest(ins, v)                                            \
@@ -1162,6 +1267,25 @@ bi_src_index(nir_src *src)
 #define bi_foreach_instr_and_src_in_tuple(tuple, ins, s)                       \
    bi_foreach_instr_in_tuple(tuple, ins)                                       \
       bi_foreach_src(ins, s)
+
+#define bi_foreach_ssa_dest_rev(ins, v)                                        \
+   bi_foreach_dest_rev(ins, v)                                                 \
+      if (ins->dest[v].type == BI_INDEX_NORMAL)
+
+/* Phis only come at the start (after else instructions) so we stop as soon as
+ * we hit a non-phi
+ */
+#define bi_foreach_phi_in_block(block, v)                                      \
+   bi_foreach_instr_in_block(block, v)                                        \
+      if (v->op != BI_OPCODE_PHI)                                              \
+         break;                                                                \
+      else
+
+#define bi_foreach_phi_in_block_safe(block, v)                                 \
+   bi_foreach_instr_in_block_safe(block, v)                                    \
+      if (v->op != BI_OPCODE_PHI)                                             \
+         break;                                                                \
+      else
 
 /*
  * Find the index of a predecessor, used as the implicit order of phi sources.
@@ -1178,7 +1302,7 @@ bi_predecessor_index(bi_block *succ, bi_block *pred)
       index++;
    }
 
-   unreachable("Invalid predecessor");
+   UNREACHABLE("Invalid predecessor");
 }
 
 static inline bi_instr *
@@ -1233,6 +1357,7 @@ void bi_analyze_helper_terminate(bi_context *ctx);
 void bi_mark_clauses_td(bi_context *ctx);
 
 void bi_analyze_helper_requirements(bi_context *ctx);
+void bi_opt_control_flow(bi_context *ctx);
 void bi_opt_copy_prop(bi_context *ctx);
 void bi_opt_dce(bi_context *ctx, bool partial);
 void bi_opt_cse(bi_context *ctx);
@@ -1252,6 +1377,7 @@ void va_lower_split_64bit(bi_context *ctx);
 
 void bi_lower_opt_instructions(bi_context *ctx);
 
+void bi_iterator_schedule(bi_context *ctx);
 void bi_pressure_schedule(bi_context *ctx);
 void bi_schedule(bi_context *ctx);
 bool bi_can_fma(bi_instr *ins);
@@ -1285,8 +1411,13 @@ bool bi_opt_constant_fold(bi_context *ctx);
 void bi_compute_liveness_ssa(bi_context *ctx);
 void bi_liveness_ins_update_ssa(BITSET_WORD *live, const bi_instr *ins);
 
+unsigned bi_calc_register_demand(bi_context *ctx);
+
 void bi_postra_liveness(bi_context *ctx);
 uint64_t MUST_CHECK bi_postra_liveness_ins(uint64_t live, bi_instr *ins);
+
+/* SSA spilling; returns number of spilled registers */
+unsigned bi_spill_ssa(bi_context *ctx, unsigned num_registers, unsigned tls_size);
 
 /* Layout */
 
@@ -1477,6 +1608,15 @@ bi_after_clause(bi_clause *clause)
    return bi_after_instr(bi_last_instr_in_clause(clause));
 }
 
+/* Get a cursor at the start of a function, after any preloads */
+static inline bi_cursor
+bi_before_function(bi_context *ctx)
+{
+   bi_block *block = bi_start_block(&ctx->blocks);
+
+   return bi_before_block(block);
+}
+
 /* IR builder in terms of cursor infrastructure */
 
 typedef struct {
@@ -1489,6 +1629,10 @@ bi_init_builder(bi_context *ctx, bi_cursor cursor)
 {
    return (bi_builder){.shader = ctx, .cursor = cursor};
 }
+
+/* insert load/store for spills */
+bi_instr *bi_load_tl(bi_builder *b, unsigned bits, bi_index src, unsigned offset);
+void bi_store_tl(bi_builder *b, unsigned bits, bi_index src, unsigned offset);
 
 /* Insert an instruction at the cursor and move the cursor */
 
@@ -1514,7 +1658,7 @@ bi_builder_insert(bi_cursor *cursor, bi_instr *I)
       return;
    }
 
-   unreachable("Invalid cursor option");
+   UNREACHABLE("Invalid cursor option");
 }
 
 bi_instr *bi_csel_from_mux(bi_builder *b, const bi_instr *I, bool must_sign);
@@ -1529,6 +1673,9 @@ bi_dontcare(bi_builder *b)
       return bi_passthrough(BIFROST_SRC_FAU_HI);
 }
 
+bi_instr *bi_make_vec_to(bi_builder *b, bi_index dst, bi_index *src,
+                         unsigned *channel, unsigned count, unsigned bitsize);
+
 #define bi_worklist_init(ctx, w)        u_worklist_init(w, ctx->num_blocks, ctx)
 #define bi_worklist_push_head(w, block) u_worklist_push_head(w, block, index)
 #define bi_worklist_push_tail(w, block) u_worklist_push_tail(w, block, index)
@@ -1536,6 +1683,18 @@ bi_dontcare(bi_builder *b)
 #define bi_worklist_pop_head(w)         u_worklist_pop_head(w, bi_block, index)
 #define bi_worklist_peek_tail(w)        u_worklist_peek_tail(w, bi_block, index)
 #define bi_worklist_pop_tail(w)         u_worklist_pop_tail(w, bi_block, index)
+
+static inline void
+bi_record_use(bi_instr **uses, BITSET_WORD *multiple, bi_instr *I, unsigned s)
+{
+   unsigned v = I->src[s].value;
+
+   assert(I->src[s].type == BI_INDEX_NORMAL);
+   if (uses[v] && uses[v] != I)
+      BITSET_SET(multiple, v);
+   else
+      uses[v] = I;
+}
 
 /* NIR passes */
 

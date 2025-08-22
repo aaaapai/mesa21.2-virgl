@@ -312,6 +312,17 @@ static void noop_resource_copy_region(struct pipe_context *ctx,
 {
 }
 
+static void noop_image_copy_buffer(struct pipe_context *pipe,
+                                   struct pipe_resource *dst,
+                                   struct pipe_resource *src,
+                                   unsigned buffer_offset,
+                                   unsigned buffer_stride,
+                                   unsigned buffer_layer_stride,
+                                   unsigned level,
+                                   const struct pipe_box *box)
+{
+}
+
 
 static void noop_blit(struct pipe_context *ctx,
                       const struct pipe_blit_info *info)
@@ -427,6 +438,7 @@ static struct pipe_context *noop_create_context(struct pipe_screen *screen,
    ctx->clear_render_target = noop_clear_render_target;
    ctx->clear_depth_stencil = noop_clear_depth_stencil;
    ctx->resource_copy_region = noop_resource_copy_region;
+   ctx->image_copy_buffer = noop_image_copy_buffer;
    ctx->generate_mipmap = noop_generate_mipmap;
    ctx->blit = noop_blit;
    ctx->flush_resource = noop_flush_resource;
@@ -559,20 +571,11 @@ static struct disk_cache *noop_get_disk_shader_cache(struct pipe_screen *pscreen
    return screen->get_disk_shader_cache(screen);
 }
 
-static const void *noop_get_compiler_options(struct pipe_screen *pscreen,
-                                             enum pipe_shader_ir ir,
-                                             enum pipe_shader_type shader)
+static void noop_finalize_nir(struct pipe_screen *pscreen, struct nir_shader *nir)
 {
    struct pipe_screen *screen = ((struct noop_pipe_screen*)pscreen)->oscreen;
 
-   return screen->get_compiler_options(screen, ir, shader);
-}
-
-static char *noop_finalize_nir(struct pipe_screen *pscreen, struct nir_shader *nir)
-{
-   struct pipe_screen *screen = ((struct noop_pipe_screen*)pscreen)->oscreen;
-
-   return screen->finalize_nir(screen, nir);
+   screen->finalize_nir(screen, nir);
 }
 
 static bool noop_check_resource_capability(struct pipe_screen *screen,
@@ -600,7 +603,7 @@ static void noop_set_max_shader_compiler_threads(struct pipe_screen *screen,
 
 static bool noop_is_parallel_shader_compilation_finished(struct pipe_screen *screen,
                                                          void *shader,
-                                                         enum pipe_shader_type shader_type)
+                                                         mesa_shader_stage shader_type)
 {
    return true;
 }
@@ -733,15 +736,6 @@ static void noop_vertex_state_destroy(struct pipe_screen *screen,
    FREE(state);
 }
 
-static void noop_set_fence_timeline_value(struct pipe_screen *screen,
-                                          struct pipe_fence_handle *fence,
-                                          uint64_t value)
-{
-   struct noop_pipe_screen *noop_screen = (struct noop_pipe_screen *)screen;
-   struct pipe_screen *oscreen = noop_screen->oscreen;
-   oscreen->set_fence_timeline_value(oscreen, fence, value);
-}
-
 static struct pipe_screen * noop_get_driver_pipe_screen(struct pipe_screen *_screen)
 {
    struct pipe_screen * screen = ((struct noop_pipe_screen*)_screen)->oscreen;
@@ -785,7 +779,6 @@ struct pipe_screen *noop_screen_create(struct pipe_screen *oscreen)
    screen->fence_finish = noop_fence_finish;
    screen->query_memory_info = noop_query_memory_info;
    screen->get_disk_shader_cache = noop_get_disk_shader_cache;
-   screen->get_compiler_options = noop_get_compiler_options;
    screen->finalize_nir = noop_finalize_nir;
    if (screen->create_fence_win32)
       screen->create_fence_win32 = noop_create_fence_win32;
@@ -804,8 +797,6 @@ struct pipe_screen *noop_screen_create(struct pipe_screen *oscreen)
    screen->vertex_state_destroy = noop_vertex_state_destroy;
    if (oscreen->get_sparse_texture_virtual_page_size)
       screen->get_sparse_texture_virtual_page_size = noop_get_sparse_texture_virtual_page_size;
-   if (oscreen->set_fence_timeline_value)
-      screen->set_fence_timeline_value = noop_set_fence_timeline_value;
    screen->query_compression_rates = noop_query_compression_rates;
    screen->query_compression_modifiers = noop_query_compression_modifiers;
    screen->get_driver_pipe_screen = noop_get_driver_pipe_screen;
@@ -814,6 +805,7 @@ struct pipe_screen *noop_screen_create(struct pipe_screen *oscreen)
    *(struct pipe_caps *)&screen->caps = oscreen->caps;
    *(struct pipe_compute_caps *)&screen->compute_caps = oscreen->compute_caps;
    memcpy((void *)screen->shader_caps, oscreen->shader_caps, sizeof(screen->shader_caps));
+   memcpy((void *)screen->nir_options, oscreen->nir_options, sizeof(screen->nir_options));
 
    slab_create_parent(&noop_screen->pool_transfers,
                       sizeof(struct pipe_transfer), 64);

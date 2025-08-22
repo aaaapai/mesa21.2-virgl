@@ -169,17 +169,17 @@ virgl_get_video_param(struct pipe_screen *screen,
 static void
 virgl_init_shader_caps(struct virgl_screen *vscreen)
 {
-   for (unsigned i = 0; i <= PIPE_SHADER_COMPUTE; i++) {
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
          (struct pipe_shader_caps *)&vscreen->base.shader_caps[i];
 
       switch (i) {
-      case PIPE_SHADER_TESS_CTRL:
-      case PIPE_SHADER_TESS_EVAL:
+      case MESA_SHADER_TESS_CTRL:
+      case MESA_SHADER_TESS_EVAL:
          if (!vscreen->caps.caps.v1.bset.has_tessellation_shaders)
             continue;
          break;
-      case PIPE_SHADER_COMPUTE:
+      case MESA_SHADER_COMPUTE:
          if (!(vscreen->caps.caps.v2.capability_bits & VIRGL_CAP_COMPUTE_SHADER))
             continue;
          break;
@@ -199,20 +199,20 @@ virgl_init_shader_caps(struct virgl_screen *vscreen)
       caps->max_inputs =
          vscreen->caps.caps.v1.glsl_level < 150 ?
          vscreen->caps.caps.v2.max_vertex_attribs :
-         (i == PIPE_SHADER_VERTEX || i == PIPE_SHADER_GEOMETRY ?
+         (i == MESA_SHADER_VERTEX || i == MESA_SHADER_GEOMETRY ?
           vscreen->caps.caps.v2.max_vertex_attribs : 32);
 
       switch (i) {
-      case PIPE_SHADER_FRAGMENT:
+      case MESA_SHADER_FRAGMENT:
          caps->max_outputs = vscreen->caps.caps.v1.max_render_targets;
          break;
-      case PIPE_SHADER_TESS_CTRL:
+      case MESA_SHADER_TESS_CTRL:
          if (vscreen->caps.caps.v2.host_feature_check_version >= 19) {
             caps->max_outputs = vscreen->caps.caps.v2.max_tcs_outputs;
             break;
          }
          FALLTHROUGH;
-      case PIPE_SHADER_TESS_EVAL:
+      case MESA_SHADER_TESS_EVAL:
          if (vscreen->caps.caps.v2.host_feature_check_version >= 19) {
             caps->max_outputs = vscreen->caps.caps.v2.max_tes_outputs;
             break;
@@ -238,14 +238,14 @@ virgl_init_shader_caps(struct virgl_screen *vscreen)
       int max_shader_buffers = VIRGL_SHADER_STAGE_CAP_V2(max_shader_storage_blocks, i);
       if (max_shader_buffers != INT_MAX) {
          caps->max_shader_buffers = max_shader_buffers;
-      } else if (i == PIPE_SHADER_FRAGMENT || i == PIPE_SHADER_COMPUTE) {
+      } else if (i == MESA_SHADER_FRAGMENT || i == MESA_SHADER_COMPUTE) {
          caps->max_shader_buffers = vscreen->caps.caps.v2.max_shader_buffer_frag_compute;
       } else {
          caps->max_shader_buffers = vscreen->caps.caps.v2.max_shader_buffer_other_stages;
       }
 
       caps->max_shader_images =
-         i == PIPE_SHADER_FRAGMENT || i == PIPE_SHADER_COMPUTE ?
+         i == MESA_SHADER_FRAGMENT || i == MESA_SHADER_COMPUTE ?
          vscreen->caps.caps.v2.max_shader_image_frag_compute :
          vscreen->caps.caps.v2.max_shader_image_other_stages;
 
@@ -974,16 +974,6 @@ fixup_renderer(union virgl_caps *caps)
    memcpy(caps->v2.renderer, renderer, renderer_len + 1);
 }
 
-static const void *
-virgl_get_compiler_options(struct pipe_screen *pscreen,
-                           enum pipe_shader_ir ir,
-                           enum pipe_shader_type shader)
-{
-   struct virgl_screen *vscreen = virgl_screen(pscreen);
-
-   return &vscreen->compiler_options;
-}
-
 static int
 virgl_screen_get_fd(struct pipe_screen *pscreen)
 {
@@ -1032,12 +1022,14 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
    screen->tweak_l8_srgb_readback |= !!(virgl_debug & VIRGL_DEBUG_L8_SRGB_ENABLE_READBACK);
    screen->shader_sync |= !!(virgl_debug & VIRGL_DEBUG_SHADER_SYNC);
 
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
+      screen->base.nir_options[i] = &screen->compiler_options;
+
    screen->vws = vws;
    screen->base.get_name = virgl_get_name;
    screen->base.get_vendor = virgl_get_vendor;
    screen->base.get_screen_fd = virgl_screen_get_fd;
    screen->base.get_video_param = virgl_get_video_param;
-   screen->base.get_compiler_options = virgl_get_compiler_options;
    screen->base.is_format_supported = virgl_is_format_supported;
    screen->base.is_video_format_supported = virgl_is_video_format_supported;
    screen->base.destroy = virgl_destroy_screen;
@@ -1070,8 +1062,7 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
    virgl_init_screen_caps(screen);
 
    /* Set up the NIR shader compiler options now that we've figured out the caps. */
-   screen->compiler_options = *(nir_shader_compiler_options *)
-      nir_to_tgsi_get_compiler_options(&screen->base, PIPE_SHADER_IR_NIR, PIPE_SHADER_FRAGMENT);
+   screen->compiler_options = nir_to_tgsi_compiler_options;
    if (screen->base.caps.doubles) {
       /* virglrenderer is missing DFLR support, so avoid turning 64-bit
        * ffract+fsub back into ffloor.
@@ -1085,16 +1076,12 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
    screen->compiler_options.lower_ldexp = true;
    screen->compiler_options.lower_image_offset_to_range_base = true;
    screen->compiler_options.lower_atomic_offset_to_range_base = true;
-   screen->compiler_options.support_indirect_outputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES);
+   screen->compiler_options.support_indirect_outputs = BITFIELD_BIT(MESA_SHADER_TESS_CTRL);
 
    if (screen->caps.caps.v2.capability_bits & VIRGL_CAP_INDIRECT_INPUT_ADDR) {
       screen->compiler_options.support_indirect_inputs |= BITFIELD_BIT(MESA_SHADER_TESS_CTRL) |
                                                            BITFIELD_BIT(MESA_SHADER_TESS_EVAL) |
-                                                           BITFIELD_BIT(MESA_SHADER_GEOMETRY) |
                                                            BITFIELD_BIT(MESA_SHADER_FRAGMENT);
-
-      if (!(screen->caps.caps.v2.capability_bits & VIRGL_CAP_HOST_IS_GLES))
-         screen->compiler_options.support_indirect_inputs |= BITFIELD_BIT(MESA_SHADER_VERTEX);
    }
 
    slab_create_parent(&screen->transfer_pool, sizeof(struct virgl_transfer), 16);

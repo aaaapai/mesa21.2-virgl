@@ -45,12 +45,11 @@
 #include "main/glconfig.h"
 #include "main/menums.h"
 #include "main/config.h"
-#include "glapi/glapi.h"
+#include "glapi/glapi/glapi.h"
 #include "math/m_matrix.h"	/* GLmatrix */
 #include "compiler/shader_enums.h"
 #include "compiler/shader_info.h"
 #include "main/formats.h"       /* MESA_FORMAT_COUNT */
-#include "compiler/glsl/list.h"
 #include "util/u_idalloc.h"
 #include "util/simple_mtx.h"
 #include "util/u_dynarray.h"
@@ -2283,9 +2282,9 @@ struct gl_pipeline_object
     *
     * There is a separate program set for each shader stage.
     */
-   struct gl_program *CurrentProgram[MESA_SHADER_STAGES];
+   struct gl_program *CurrentProgram[MESA_SHADER_MESH_STAGES];
 
-   struct gl_shader_program *ReferencedPrograms[MESA_SHADER_STAGES];
+   struct gl_shader_program *ReferencedPrograms[MESA_SHADER_MESH_STAGES];
 
    /**
     * Program used by glUniform calls.
@@ -2365,6 +2364,11 @@ struct gl_query_state
 
    /** GL_ARB_pipeline_statistics_query */
    struct gl_query_object *pipeline_stats[MAX_PIPELINE_STATISTICS];
+
+   /** GL_EXT_mesh_shader */
+   struct gl_query_object *task_shader_invocations;
+   struct gl_query_object *mesh_shader_invocations;
+   struct gl_query_object *mesh_primitives_generated;
 
    GLenum16 CondRenderMode;
 };
@@ -2904,7 +2908,7 @@ struct gl_driver_flags
    uint64_t NewFragClamp;
 
    /** Shader constants (uniforms, program parameters, state constants) */
-   uint64_t NewShaderConstants[MESA_SHADER_STAGES];
+   uint64_t NewShaderConstants[MESA_SHADER_MESH_STAGES];
 
    /** For GL_CLAMP emulation */
    uint64_t NewSamplersWithClamp;
@@ -3507,7 +3511,7 @@ struct gl_context
     */
    struct gl_image_unit ImageUnits[MAX_IMAGE_UNITS];
 
-   struct gl_subroutine_index_binding SubroutineIndex[MESA_SHADER_STAGES];
+   struct gl_subroutine_index_binding SubroutineIndex[MESA_SHADER_MESH_STAGES];
    /*@}*/
 
    struct gl_meta_state *Meta;  /**< for "meta" operations */

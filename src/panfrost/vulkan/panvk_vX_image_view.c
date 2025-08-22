@@ -39,7 +39,7 @@ panvk_view_type_to_mali_tex_dim(VkImageViewType type)
    case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY:
       return MALI_TEXTURE_DIMENSION_CUBE;
    default:
-      unreachable("Invalid view type");
+      UNREACHABLE("Invalid view type");
    }
 }
 
@@ -68,7 +68,7 @@ panvk_convert_swizzle(const VkComponentMapping *in, unsigned char *out)
          out[i] = PIPE_SWIZZLE_W;
          break;
       default:
-         unreachable("Invalid swizzle");
+         UNREACHABLE("Invalid swizzle");
       }
    }
 }
@@ -314,9 +314,10 @@ panvk_per_arch(CreateImageView)(VkDevice _device,
    if (view == NULL)
       return panvk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
+   enum pipe_format pfmt = vk_format_to_pipe_format(view->vk.view_format);
    view->pview = (struct pan_image_view){
-      .format = vk_format_to_pipe_format(view->vk.view_format),
-      .astc.hdr = util_format_is_astc_hdr(view->vk.view_format),
+      .format = pfmt,
+      .astc.hdr = util_format_is_astc_hdr(pfmt),
       .dim = panvk_view_type_to_mali_tex_dim(view->vk.view_type),
       .nr_samples = image->vk.samples,
       .first_level = view->vk.base_mip_level,

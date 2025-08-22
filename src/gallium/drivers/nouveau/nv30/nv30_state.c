@@ -327,7 +327,7 @@ nv30_set_sample_mask(struct pipe_context *pipe, unsigned sample_mask)
 
 static void
 nv30_set_constant_buffer(struct pipe_context *pipe,
-                         enum pipe_shader_type shader, uint index,
+                         mesa_shader_stage shader, uint index,
                          bool pass_reference,
                          const struct pipe_constant_buffer *cb)
 {
@@ -345,7 +345,7 @@ nv30_set_constant_buffer(struct pipe_context *pipe,
    if (buf)
       size = buf->width0 / (4 * sizeof(float));
 
-   if (shader == PIPE_SHADER_VERTEX) {
+   if (shader == MESA_SHADER_VERTEX) {
       if (pass_reference) {
          pipe_resource_reference(&nv30->vertprog.constbuf, NULL);
          nv30->vertprog.constbuf = buf;
@@ -355,7 +355,7 @@ nv30_set_constant_buffer(struct pipe_context *pipe,
       nv30->vertprog.constbuf_nr = size;
       nv30->dirty |= NV30_NEW_VERTCONST;
    } else
-   if (shader == PIPE_SHADER_FRAGMENT) {
+   if (shader == MESA_SHADER_FRAGMENT) {
       if (pass_reference) {
          pipe_resource_reference(&nv30->fragprog.constbuf, NULL);
          nv30->fragprog.constbuf = buf;
@@ -399,7 +399,7 @@ nv30_set_framebuffer_state(struct pipe_context *pipe,
           debug_printf("Mismatched color and zeta formats, ignoring zeta.\n");
        }
     }
-    util_framebuffer_init(pipe, &nv30->framebuffer, nv30->fb_cbufs, &nv30->fb_zsbuf);
+    nv30_framebuffer_init(pipe, &nv30->framebuffer, nv30->fb_cbufs, &nv30->fb_zsbuf);
 }
 
 static void

@@ -57,28 +57,6 @@ texel_fetch(nir_builder *b, VkImageViewType view_type,
    return &tex->def;
 }
 
-static nir_variable *
-color_output_var(nir_builder *b, VkImageViewType view_type,
-                 VkImageAspectFlags aspect, VkSampleCountFlagBits samples,
-                 nir_alu_type fmt_type, unsigned rt)
-{
-   enum glsl_base_type base_type =
-      nir_get_glsl_base_type_for_nir_type(fmt_type);
-   const struct glsl_type *var_type = glsl_vector_type(base_type, 4);
-   static const char *var_names[] = {
-      "gl_FragData[0]", "gl_FragData[1]", "gl_FragData[2]", "gl_FragData[3]",
-      "gl_FragData[4]", "gl_FragData[5]", "gl_FragData[6]", "gl_FragData[7]",
-   };
-
-   assert(rt < ARRAY_SIZE(var_names));
-
-   nir_variable *var = nir_variable_create(b->shader, nir_var_shader_out,
-                                           var_type, var_names[rt]);
-   var->data.location = FRAG_RESULT_DATA0 + rt;
-
-   return var;
-}
-
 static nir_def *
 get_layer_id(nir_builder *b)
 {
@@ -170,11 +148,14 @@ get_preload_shader(struct panvk_device *dev,
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
    struct pan_compile_inputs inputs = {
-      .gpu_id = phys_dev->kmod.props.gpu_prod_id,
+      .gpu_id = phys_dev->kmod.props.gpu_id,
       .is_blit = true,
    };
 
    pan_shader_preprocess(nir, inputs.gpu_id);
+   pan_shader_lower_texture_early(nir, inputs.gpu_id);
+   pan_shader_lower_texture(nir, inputs.gpu_id);
+   pan_shader_postprocess(nir, inputs.gpu_id);
 
    VkResult result = panvk_per_arch(create_internal_shader)(
       dev, nir, &inputs, &shader);
@@ -522,11 +503,11 @@ cmd_emit_dcd(struct panvk_cmd_buffer *cmdbuf, struct pan_fb_info *fbinfo,
        */
       struct panvk_physical_device *pdev =
          to_panvk_physical_device(dev->vk.physical);
-      unsigned gpu_id = pdev->kmod.props.gpu_prod_id;
+      unsigned gpu_prod_id = pdev->kmod.props.gpu_id >> 16;
 
       /* the PAN_ARCH check is redundant but allows compiler optimization
          when PAN_ARCH <= 6 */
-      if (PAN_ARCH > 6 && gpu_id >= 0x7200)
+      if (PAN_ARCH > 6 && gpu_prod_id >= 0x7200)
          fbinfo->bifrost.pre_post.modes[dcd_idx] =
             MALI_PRE_POST_FRAME_SHADER_MODE_EARLY_ZS_ALWAYS;
       else

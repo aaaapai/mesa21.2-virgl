@@ -98,27 +98,18 @@ _mesa_reference_shader(struct gl_context *ctx, struct gl_shader **ptr,
    _reference_shader(ctx, ptr, sh, false);
 }
 
-static void
-_mesa_init_shader(struct gl_shader *shader)
-{
-   shader->RefCount = 1;
-   shader->info.Geom.VerticesOut = -1;
-   shader->info.Geom.InputType = MESA_PRIM_TRIANGLES;
-   shader->info.Geom.OutputType = MESA_PRIM_TRIANGLE_STRIP;
-}
-
 /**
  * Allocate a new gl_shader object, initialize it.
  */
 struct gl_shader *
-_mesa_new_shader(GLuint name, gl_shader_stage stage)
+_mesa_new_shader(GLuint name, mesa_shader_stage stage)
 {
    struct gl_shader *shader;
    shader = rzalloc(NULL, struct gl_shader);
    if (shader) {
       shader->Stage = stage;
       shader->Name = name;
-      _mesa_init_shader(shader);
+      shader->RefCount = 1;
    }
    return shader;
 }
@@ -301,7 +292,7 @@ init_shader_program(struct gl_shader_program *prog)
 
    prog->TransformFeedback.BufferMode = GL_INTERLEAVED_ATTRIBS;
 
-   exec_list_make_empty(&prog->EmptyUniformLocations);
+   ir_exec_list_make_empty(&prog->EmptyUniformLocations);
 }
 
 /**
@@ -332,7 +323,7 @@ void
 _mesa_clear_shader_program_data(struct gl_context *ctx,
                                 struct gl_shader_program *shProg)
 {
-   for (gl_shader_stage sh = 0; sh < MESA_SHADER_STAGES; sh++) {
+   for (mesa_shader_stage sh = 0; sh < MESA_SHADER_MESH_STAGES; sh++) {
       if (shProg->_LinkedShaders[sh] != NULL) {
          _mesa_delete_linked_shader(ctx, shProg->_LinkedShaders[sh]);
          shProg->_LinkedShaders[sh] = NULL;

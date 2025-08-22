@@ -57,9 +57,15 @@ enum Label {
    label_omod5 = 1 << 10,
    label_clamp = 1 << 12,
    label_b2f = 1 << 16,
+   /* This label means that it's either 0 or -1, and the ssa_info::temp is an s1 which is 0 or 1. */
    label_uniform_bool = 1 << 21,
    label_constant_64bit = 1 << 22,
+   /* This label is added to the first definition of s_not/s_or/s_xor/s_and when all operands are
+    * uniform_bool or uniform_bitwise. The first definition of ssa_info::instr would be 0 or -1 and
+    * the second is SCC.
+    */
    label_uniform_bitwise = 1 << 23,
+   /* This label means that it's either 0 or 1 and ssa_info::temp is the inverse. */
    label_scc_invert = 1 << 24,
    label_scc_needed = 1 << 26,
    label_b2i = 1 << 27,
@@ -516,6 +522,7 @@ alu_can_accept_constant(const aco_ptr<Instruction>& instr, unsigned operand)
    case aco_opcode::p_bpermute_readlane:
    case aco_opcode::p_bpermute_shared_vgpr:
    case aco_opcode::p_bpermute_permlane:
+   case aco_opcode::p_permlane64_shared_vgpr:
    case aco_opcode::p_interp_gfx11:
    case aco_opcode::p_dual_src_export_gfx11:
    case aco_opcode::v_interp_p1_f32:
@@ -1164,13 +1171,19 @@ can_eliminate_fcanonicalize(opt_ctx& ctx, aco_ptr<Instruction>& instr, Temp tmp,
 }
 
 bool
-can_eliminate_and_exec(opt_ctx& ctx, Temp tmp, unsigned pass_flags)
+can_eliminate_and_exec(opt_ctx& ctx, Temp tmp, unsigned pass_flags, bool allow_cselect = false)
 {
    Instruction* instr = ctx.info[tmp.id()].parent_instr;
    /* Remove superfluous s_and when the VOPC instruction uses the same exec and thus
     * already produces the same result */
    if (instr->isVOPC())
       return instr->pass_flags == pass_flags;
+
+   if (allow_cselect && instr->pass_flags == pass_flags &&
+       (instr->opcode == aco_opcode::s_cselect_b32 || instr->opcode == aco_opcode::s_cselect_b64)) {
+      return (instr->operands[0].constantEquals(0) && instr->operands[1].constantEquals(-1)) ||
+             (instr->operands[1].constantEquals(0) && instr->operands[0].constantEquals(-1));
+   }
 
    if (instr->operands.size() != 2 || instr->pass_flags != pass_flags)
       return false;
@@ -1518,7 +1531,10 @@ label_instruction(opt_ctx& ctx, aco_ptr<Instruction>& instr)
          if (has_usable_ds_offset && i == 0 &&
              parse_base_offset(ctx, instr.get(), i, &base, &offset, false) &&
              base.regClass() == instr->operands[i].regClass() &&
-             instr->opcode != aco_opcode::ds_swizzle_b32) {
+             instr->opcode != aco_opcode::ds_swizzle_b32 &&
+             instr->opcode != aco_opcode::ds_bvh_stack_push4_pop1_rtn_b32 &&
+             instr->opcode != aco_opcode::ds_bvh_stack_push8_pop1_rtn_b32 &&
+             instr->opcode != aco_opcode::ds_bvh_stack_push8_pop2_rtn_b64) {
             if (instr->opcode == aco_opcode::ds_write2_b32 ||
                 instr->opcode == aco_opcode::ds_read2_b32 ||
                 instr->opcode == aco_opcode::ds_write2_b64 ||
@@ -1901,15 +1917,11 @@ label_instruction(opt_ctx& ctx, aco_ptr<Instruction>& instr)
              * uniform bool into divergent */
             ctx.info[instr->definitions[1].tempId()].set_temp(
                ctx.info[instr->operands[0].tempId()].temp);
-            ctx.info[instr->definitions[0].tempId()].set_uniform_bool(
-               ctx.info[instr->operands[0].tempId()].temp);
             break;
          } else if (ctx.info[instr->operands[0].tempId()].is_uniform_bitwise()) {
             /* Try to get rid of the superfluous s_and_b64, since the uniform bitwise instruction
              * already produces the same SCC */
             ctx.info[instr->definitions[1].tempId()].set_temp(
-               ctx.info[instr->operands[0].tempId()].parent_instr->definitions[1].getTemp());
-            ctx.info[instr->definitions[0].tempId()].set_uniform_bool(
                ctx.info[instr->operands[0].tempId()].parent_instr->definitions[1].getTemp());
             break;
          } else if ((ctx.program->stage.num_sw_stages() > 1 ||
@@ -1940,8 +1952,7 @@ label_instruction(opt_ctx& ctx, aco_ptr<Instruction>& instr)
       if (instr->operands[0].constantEquals((unsigned)-1) && instr->operands[1].constantEquals(0)) {
          /* Found a cselect that operates on a uniform bool that comes from eg. s_cmp */
          ctx.info[instr->definitions[0].tempId()].set_uniform_bool(instr->operands[2].getTemp());
-      }
-      if (instr->operands[2].isTemp() && ctx.info[instr->operands[2].tempId()].is_scc_invert()) {
+      } else if (instr->operands[2].isTemp() && ctx.info[instr->operands[2].tempId()].is_scc_invert()) {
          /* Flip the operands to get rid of the scc_invert instruction */
          std::swap(instr->operands[0], instr->operands[1]);
          instr->operands[2].setTemp(ctx.info[instr->operands[2].tempId()].temp);
@@ -3155,7 +3166,7 @@ apply_load_extract(opt_ctx& ctx, aco_ptr<Instruction>& extract)
    else if (bits_loaded == 16 && load->isSMEM() && !is_s_buffer)
       load->opcode = sign_ext ? aco_opcode::s_load_sshort : aco_opcode::s_load_ushort;
    else
-      unreachable("Forgot to add opcode above.");
+      UNREACHABLE("Forgot to add opcode above.");
 
    if (dst_bitsize <= 16 && ctx.program->gfx_level >= GFX9) {
       switch (load->opcode) {
@@ -4289,12 +4300,29 @@ to_uniform_bool_instr(opt_ctx& ctx, aco_ptr<Instruction>& instr)
    case aco_opcode::s_or_b64: instr->opcode = aco_opcode::s_or_b32; break;
    case aco_opcode::s_xor_b32:
    case aco_opcode::s_xor_b64: instr->opcode = aco_opcode::s_absdiff_i32; break;
+   case aco_opcode::s_not_b32:
+   case aco_opcode::s_not_b64: {
+      aco_ptr<Instruction> new_instr{
+         create_instruction(aco_opcode::s_absdiff_i32, Format::SOP2, 2, 2)};
+      new_instr->operands[0] = instr->operands[0];
+      new_instr->operands[1] = Operand::c32(1);
+      new_instr->definitions[0] = instr->definitions[0];
+      new_instr->definitions[1] = instr->definitions[1];
+      new_instr->pass_flags = instr->pass_flags;
+      instr = std::move(new_instr);
+      ctx.info[instr->definitions[0].tempId()].parent_instr = instr.get();
+      ctx.info[instr->definitions[1].tempId()].parent_instr = instr.get();
+      break;
+   }
    default:
       /* Don't transform other instructions. They are very unlikely to appear here. */
       return false;
    }
 
    for (Operand& op : instr->operands) {
+      if (!op.isTemp())
+         continue;
+
       ctx.uses[op.tempId()]--;
 
       if (ctx.info[op.tempId()].is_uniform_bool()) {
@@ -4312,7 +4340,7 @@ to_uniform_bool_instr(opt_ctx& ctx, aco_ptr<Instruction>& instr)
                 pred_instr->definitions[1].physReg() == scc);
          op.setTemp(pred_instr->definitions[1].getTemp());
       } else {
-         unreachable("Invalid operand on uniform bitwise instruction.");
+         UNREACHABLE("Invalid operand on uniform bitwise instruction.");
       }
 
       ctx.uses[op.tempId()]++;
@@ -4320,8 +4348,8 @@ to_uniform_bool_instr(opt_ctx& ctx, aco_ptr<Instruction>& instr)
 
    instr->definitions[0].setTemp(Temp(instr->definitions[0].tempId(), s1));
    ctx.program->temp_rc[instr->definitions[0].tempId()] = s1;
-   assert(instr->operands[0].regClass() == s1);
-   assert(instr->operands[1].regClass() == s1);
+   assert(!instr->operands[0].isTemp() || instr->operands[0].regClass() == s1);
+   assert(!instr->operands[1].isTemp() || instr->operands[1].regClass() == s1);
    return true;
 }
 
@@ -4547,9 +4575,19 @@ select_instruction(opt_ctx& ctx, aco_ptr<Instruction>& instr)
       if (instr->operands[0].isTemp() && fixed_to_exec(instr->operands[1]) &&
           ctx.uses[instr->operands[0].tempId()] == 1 &&
           ctx.uses[instr->definitions[1].tempId()] == 0 &&
-          can_eliminate_and_exec(ctx, instr->operands[0].getTemp(), instr->pass_flags)) {
+          can_eliminate_and_exec(ctx, instr->operands[0].getTemp(), instr->pass_flags, true)) {
          ctx.uses[instr->operands[0].tempId()]--;
          Instruction* op_instr = ctx.info[instr->operands[0].tempId()].parent_instr;
+
+         if (op_instr->opcode == aco_opcode::s_cselect_b32 ||
+             op_instr->opcode == aco_opcode::s_cselect_b64) {
+            for (unsigned i = 0; i < 2; i++) {
+               if (op_instr->operands[i].constantEquals(-1))
+                  op_instr->operands[i] = instr->operands[1];
+            }
+            ctx.info[op_instr->definitions[0].tempId()].label &= label_uniform_bool;
+         }
+
          op_instr->definitions[0].setTemp(instr->definitions[0].getTemp());
          ctx.info[op_instr->definitions[0].tempId()].parent_instr = op_instr;
          instr.reset();
@@ -4754,7 +4792,7 @@ sopc_is_signed(aco_opcode opcode)
       SOPC(ge)
       SOPC(lt)
       SOPC(le)
-   default: unreachable("Not a valid SOPC instruction.");
+   default: UNREACHABLE("Not a valid SOPC instruction.");
    }
 #undef SOPC
 }

@@ -115,12 +115,13 @@ nir_metadata_invalidate(nir_shader *shader)
          }
          block->live_in = block->live_out = NULL;
 
-         if (impl->valid_metadata & nir_metadata_dominance)
+         if (impl->valid_metadata & nir_metadata_dominance &&
+             block->dom_children != block->_dom_children_storage)
             ralloc_free(block->dom_children);
          block->dom_children = NULL;
          block->num_dom_children = 1;
          block->dom_pre_index = block->dom_post_index = 0;
-         _mesa_set_clear(block->dom_frontier, NULL);
+         _mesa_set_clear(&block->dom_frontier, NULL);
 
          if (block->cf_node.parent->type == nir_cf_node_loop &&
              nir_cf_node_is_first(&block->cf_node)) {

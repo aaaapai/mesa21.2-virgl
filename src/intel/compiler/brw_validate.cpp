@@ -193,7 +193,7 @@ validate_memory_logical(const brw_shader &s, const brw_inst *inst)
       fsv_assert(!include_helpers);
       break;
    default:
-      unreachable("invalid opcode");
+      UNREACHABLE("invalid opcode");
    }
 }
 
@@ -210,7 +210,7 @@ brw_shader_phase_to_string(enum brw_shader_phase phase)
    case BRW_SHADER_PHASE_AFTER_REGALLOC:        return "AFTER_REGALLOC";
    case BRW_SHADER_PHASE_INVALID:               break;
    }
-   unreachable("invalid_phase");
+   UNREACHABLE("invalid_phase");
    return NULL;
 }
 
@@ -313,7 +313,18 @@ brw_validate(const brw_shader &s)
 
          switch (inst->opcode) {
          case SHADER_OPCODE_SEND:
-            fsv_assert(is_uniform(inst->src[0]) && is_uniform(inst->src[1]));
+            fsv_assert(inst->sources == SEND_NUM_SRCS);
+            fsv_assert(is_uniform(inst->src[SEND_SRC_DESC]));
+            fsv_assert(is_uniform(inst->src[SEND_SRC_EX_DESC]));
+            fsv_assert(inst->src[SEND_SRC_PAYLOAD1].file != BAD_FILE);
+            fsv_assert(inst->ex_mlen > 0 ||
+                       inst->src[SEND_SRC_PAYLOAD2].file == BAD_FILE);
+            /* Send payloads cannot be immediates nor have source modifiers */
+            for (unsigned i = 0; i < 2; i++) {
+               fsv_assert(inst->src[SEND_SRC_PAYLOAD1 + i].file != IMM);
+               fsv_assert(!inst->src[SEND_SRC_PAYLOAD1 + i].abs);
+               fsv_assert(!inst->src[SEND_SRC_PAYLOAD1 + i].negate);
+            }
             break;
 
          case SHADER_OPCODE_SEND_GATHER:

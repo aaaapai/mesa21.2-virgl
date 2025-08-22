@@ -100,8 +100,7 @@ static nir_def *cs_create_shader(struct vl_compositor *c, struct cs_shader *s)
       glsl_sampler_type(sampler_dim, /*is_shadow*/ false, s->array, GLSL_TYPE_FLOAT);
    const struct glsl_type *image_type =
       glsl_image_type(GLSL_SAMPLER_DIM_2D, /*is_array*/ false, GLSL_TYPE_FLOAT);
-   const nir_shader_compiler_options *options =
-      c->pipe->screen->get_compiler_options(c->pipe->screen, PIPE_SHADER_IR_NIR, PIPE_SHADER_COMPUTE);
+   const nir_shader_compiler_options *options = c->pipe->screen->nir_options[MESA_SHADER_COMPUTE];
 
    s->b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, options, "vl:%s", s->name);
    nir_builder *b = &s->b;
@@ -264,7 +263,8 @@ static inline nir_def *cs_fetch_texel(struct cs_shader *s, nir_def *coords, unsi
    nir_builder *b = &s->b;
    nir_deref_instr *tex_deref = nir_build_deref_var(b, s->samplers[sampler]);
    nir_component_mask_t mask = s->array ? 0x7 : 0x3;
-   return nir_tex_deref(b, tex_deref, tex_deref, nir_channels(b, coords, mask));
+   return nir_tex(b, nir_channels(b, coords, mask),
+                  .texture_deref = tex_deref, .sampler_deref = tex_deref);
 }
 
 static inline nir_def *cs_image_load(struct cs_shader *s, nir_def *pos)
@@ -615,7 +615,7 @@ cs_launch(struct vl_compositor *c,
    image.shader_access = image.access = PIPE_IMAGE_ACCESS_READ_WRITE;
    image.format = c->fb_state.cbufs[0].texture->format;
 
-   ctx->set_shader_images(c->pipe, PIPE_SHADER_COMPUTE, 0, 1, 0, &image);
+   ctx->set_shader_images(c->pipe, MESA_SHADER_COMPUTE, 0, 1, 0, &image);
 
    /* Bind compute shader */
    ctx->bind_compute_state(ctx, cs);
@@ -854,20 +854,20 @@ draw_layers(struct vl_compositor       *c,
          calc_proj(layer, sampler1->texture, drawn.chroma_proj);
          set_viewport(s, &drawn, samplers);
 
-         c->pipe->bind_sampler_states(c->pipe, PIPE_SHADER_COMPUTE, 0,
+         c->pipe->bind_sampler_states(c->pipe, MESA_SHADER_COMPUTE, 0,
                         num_sampler_views, layer->samplers);
-         c->pipe->set_sampler_views(c->pipe, PIPE_SHADER_COMPUTE, 0,
+         c->pipe->set_sampler_views(c->pipe, MESA_SHADER_COMPUTE, 0,
                         num_sampler_views, 0, samplers);
 
          cs_launch(c, layer->cs, &(drawn.area));
 
          /* Unbind. */
-         c->pipe->set_shader_images(c->pipe, PIPE_SHADER_COMPUTE, 0, 0, 1, NULL);
-         c->pipe->set_constant_buffer(c->pipe, PIPE_SHADER_COMPUTE, 0, false, NULL);
-         c->pipe->set_sampler_views(c->pipe, PIPE_SHADER_COMPUTE, 0, 0,
+         c->pipe->set_shader_images(c->pipe, MESA_SHADER_COMPUTE, 0, 0, 1, NULL);
+         c->pipe->set_constant_buffer(c->pipe, MESA_SHADER_COMPUTE, 0, false, NULL);
+         c->pipe->set_sampler_views(c->pipe, MESA_SHADER_COMPUTE, 0, 0,
                         num_sampler_views, NULL);
          c->pipe->bind_compute_state(c->pipe, NULL);
-         c->pipe->bind_sampler_states(c->pipe, PIPE_SHADER_COMPUTE, 0,
+         c->pipe->bind_sampler_states(c->pipe, MESA_SHADER_COMPUTE, 0,
                         num_sampler_views, NULL);
 
          if (dirty) {
@@ -910,7 +910,7 @@ vl_compositor_cs_render(struct vl_compositor_state *s,
       dirty_area->x1 = dirty_area->y1 = VL_COMPOSITOR_MIN_DIRTY;
    }
 
-   pipe_set_constant_buffer(c->pipe, PIPE_SHADER_COMPUTE, 0, s->shader_params);
+   pipe_set_constant_buffer(c->pipe, MESA_SHADER_COMPUTE, 0, s->shader_params);
 
    draw_layers(c, s, dirty_area);
 }

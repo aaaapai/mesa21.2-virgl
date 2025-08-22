@@ -120,6 +120,29 @@ nvk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
    memset(&cmd->state, 0, sizeof(cmd->state));
 }
 
+static VkQueueFlags
+nvk_cmd_buffer_queue_flags(struct nvk_cmd_buffer *cmd)
+{
+   const struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
+   const struct nvk_physical_device *pdev = nvk_device_physical(dev);
+
+   uint32_t queue_family_index = cmd->vk.pool->queue_family_index;
+   assert(queue_family_index < pdev->queue_family_count);
+   const struct nvk_queue_family *queue_family =
+      &pdev->queue_families[queue_family_index];
+
+   return queue_family->queue_flags;
+}
+
+static uint8_t
+nvk_cmd_buffer_subchannel_mask(struct nvk_cmd_buffer *cmd)
+{
+   VkQueueFlags queue_flags = nvk_cmd_buffer_queue_flags(cmd);
+   enum nvkmd_engines engines =
+      nvk_queue_engines_from_queue_flags(queue_flags);
+   return nvk_queue_subchannels_from_engines(engines);
+}
+
 const struct vk_command_buffer_ops nvk_cmd_buffer_ops = {
    .create = nvk_create_cmd_buffer,
    .reset = nvk_reset_cmd_buffer,
@@ -170,15 +193,17 @@ nvk_cmd_buffer_new_push(struct nvk_cmd_buffer *cmd)
 {
    nvk_cmd_buffer_flush_push(cmd, false);
 
+   uint8_t subc_mask = nvk_cmd_buffer_subchannel_mask(cmd);
+
    VkResult result = nvk_cmd_buffer_alloc_mem(cmd, false, &cmd->push_mem);
    if (unlikely(result != VK_SUCCESS)) {
       vk_command_buffer_set_error(&cmd->vk, result);
       STATIC_ASSERT(NVK_CMD_BUFFER_MAX_PUSH <= NVK_CMD_MEM_SIZE / 4);
       cmd->push_mem = NULL;
-      nv_push_init(&cmd->push, push_runout, 0);
+      nv_push_init(&cmd->push, push_runout, 0, subc_mask);
       cmd->push_mem_limit = &push_runout[NVK_CMD_BUFFER_MAX_PUSH];
    } else {
-      nv_push_init(&cmd->push, cmd->push_mem->mem->map, 0);
+      nv_push_init(&cmd->push, cmd->push_mem->mem->map, 0, subc_mask);
       cmd->push_mem_limit =
          (uint32_t *)((char *)cmd->push_mem->mem->map + NVK_CMD_MEM_SIZE);
    }
@@ -348,6 +373,7 @@ nvk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                        const VkCommandBufferBeginInfo *pBeginInfo)
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
+   VkQueueFlags queue_flags = nvk_cmd_buffer_queue_flags(cmd);
 
    nvk_reset_cmd_buffer(&cmd->vk, 0);
 
@@ -356,8 +382,11 @@ nvk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
    P_MTHD(p, NV90B5, NOP);
    P_NV90B5_NOP(p, 0);
 
-   nvk_cmd_buffer_begin_compute(cmd, pBeginInfo);
-   nvk_cmd_buffer_begin_graphics(cmd, pBeginInfo);
+   if (queue_flags & VK_QUEUE_COMPUTE_BIT)
+      nvk_cmd_buffer_begin_compute(cmd, pBeginInfo);
+
+   if (queue_flags & VK_QUEUE_GRAPHICS_BIT)
+      nvk_cmd_buffer_begin_graphics(cmd, pBeginInfo);
 
    return VK_SUCCESS;
 }
@@ -665,7 +694,7 @@ nvk_CmdPipelineBarrier2(VkCommandBuffer commandBuffer,
 void
 nvk_cmd_bind_shaders(struct vk_command_buffer *vk_cmd,
                      uint32_t stage_count,
-                     const gl_shader_stage *stages,
+                     const mesa_shader_stage *stages,
                      struct vk_shader ** const shaders)
 {
    struct nvk_cmd_buffer *cmd = container_of(vk_cmd, struct nvk_cmd_buffer, vk);
@@ -700,7 +729,7 @@ nvk_cmd_dirty_cbufs_for_descriptors(struct nvk_cmd_buffer *cmd,
 
    uint32_t groups = 0;
    u_foreach_bit(i, stages & NVK_VK_GRAPHICS_STAGE_BITS) {
-      gl_shader_stage stage = vk_to_mesa_shader_stage(1 << i);
+      mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << i);
       uint32_t g = nvk_cbuf_binding_for_stage(stage);
       groups |= BITFIELD_BIT(g);
    }
@@ -724,7 +753,7 @@ nvk_cmd_dirty_cbufs_for_descriptors(struct nvk_cmd_buffer *cmd,
             break;
 
          default:
-            unreachable("Invalid cbuf type");
+            UNREACHABLE("Invalid cbuf type");
          }
       }
    }
@@ -1099,7 +1128,7 @@ nvk_cmd_buffer_get_cbuf_addr(struct nvk_cmd_buffer *cmd,
       return true;
 
    case NVK_CBUF_TYPE_ROOT_DESC:
-      unreachable("The caller should handle root descriptors");
+      UNREACHABLE("The caller should handle root descriptors");
       return false;
 
    case NVK_CBUF_TYPE_SHADER_DATA:
@@ -1140,7 +1169,7 @@ nvk_cmd_buffer_get_cbuf_addr(struct nvk_cmd_buffer *cmd,
    }
 
    default:
-      unreachable("Invalid cbuf type");
+      UNREACHABLE("Invalid cbuf type");
    }
 }
 
@@ -1161,7 +1190,7 @@ nvk_cmd_buffer_get_cbuf_descriptor_addr(struct nvk_cmd_buffer *cmd,
    }
 
    default:
-      unreachable("Unknown descriptor set type");
+      UNREACHABLE("Unknown descriptor set type");
    }
 }
 

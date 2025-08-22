@@ -6,6 +6,7 @@
 #include "panvk_cmd_buffer.h"
 #include "panvk_entrypoints.h"
 #include "panvk_event.h"
+#include "panvk_instr.h"
 
 #include "util/bitscan.h"
 
@@ -17,7 +18,7 @@ panvk_per_arch(CmdResetEvent2)(VkCommandBuffer commandBuffer, VkEvent _event,
    VK_FROM_HANDLE(panvk_event, event, _event);
 
    /* Wrap stageMask with a VkDependencyInfo object so we can re-use
-    * get_cs_deps(). */
+    * add_cs_deps(). */
    const VkMemoryBarrier2 barrier = {
       .srcStageMask = stageMask,
    };
@@ -25,9 +26,9 @@ panvk_per_arch(CmdResetEvent2)(VkCommandBuffer commandBuffer, VkEvent _event,
       .memoryBarrierCount = 1,
       .pMemoryBarriers = &barrier,
    };
-   struct panvk_cs_deps deps;
+   struct panvk_cs_deps deps = {0};
 
-   panvk_per_arch(get_cs_deps)(cmdbuf, &info, &deps);
+   panvk_per_arch(add_cs_deps)(cmdbuf, PANVK_BARRIER_STAGE_FIRST, &info, &deps);
 
    for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++) {
       struct cs_builder *b = panvk_get_cs_builder(cmdbuf, i);
@@ -63,9 +64,9 @@ panvk_per_arch(CmdSetEvent2)(VkCommandBuffer commandBuffer, VkEvent _event,
 {
    VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
    VK_FROM_HANDLE(panvk_event, event, _event);
-   struct panvk_cs_deps deps;
+   struct panvk_cs_deps deps = {0};
 
-   panvk_per_arch(get_cs_deps)(cmdbuf, pDependencyInfo, &deps);
+   panvk_per_arch(add_cs_deps)(cmdbuf, PANVK_BARRIER_STAGE_FIRST, pDependencyInfo, &deps);
 
    if (deps.needs_draw_flush)
       panvk_per_arch(cmd_flush_draws)(cmdbuf);
@@ -87,9 +88,7 @@ panvk_per_arch(CmdSetEvent2)(VkCommandBuffer commandBuffer, VkEvent _event,
          cs_case(b, 0) {
             struct panvk_cache_flush_info cache_flush = deps.src[i].cache_flush;
 
-            if (cache_flush.l2 != MALI_CS_FLUSH_MODE_NONE ||
-                cache_flush.lsc != MALI_CS_FLUSH_MODE_NONE ||
-                cache_flush.others != MALI_CS_OTHER_FLUSH_MODE_NONE) {
+            if (!panvk_cache_flush_is_nop(&cache_flush)) {
                /* We rely on r88 being zero since we're in the if (r88 == 0)
                 * branch. */
                cs_flush_caches(b, cache_flush.l2, cache_flush.lsc,
@@ -107,12 +106,13 @@ panvk_per_arch(CmdSetEvent2)(VkCommandBuffer commandBuffer, VkEvent _event,
 }
 
 static void
-cmd_wait_event(struct panvk_cmd_buffer *cmdbuf, struct panvk_event *event,
-               const VkDependencyInfo *info)
+cmd_wait_event(struct panvk_cmd_buffer *cmdbuf,
+   struct panvk_event *event, const VkDependencyInfo *info,
+   struct panvk_cs_deps *trans_deps, bool *needs_trans_barrier)
 {
-   struct panvk_cs_deps deps;
+   struct panvk_cs_deps deps = {0};
 
-   panvk_per_arch(get_cs_deps)(cmdbuf, info, &deps);
+   panvk_per_arch(add_cs_deps)(cmdbuf, PANVK_BARRIER_STAGE_FIRST, info, &deps);
 
    for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++) {
       struct cs_builder *b = panvk_get_cs_builder(cmdbuf, i);
@@ -126,8 +126,23 @@ cmd_wait_event(struct panvk_cmd_buffer *cmdbuf, struct panvk_event *event,
                          (j * sizeof(struct panvk_cs_sync32)));
 
          cs_move32_to(b, seqno, 0);
-         cs_sync32_wait(b, false, MALI_CS_CONDITION_GREATER, seqno, sync_addr);
+         panvk_instr_sync32_wait(cmdbuf, i, false, MALI_CS_CONDITION_GREATER,
+                                 seqno, sync_addr);
       }
+   }
+
+   if (deps.needs_layout_transitions) {
+      for (uint32_t i = 0; i < info->imageMemoryBarrierCount; i++) {
+         const VkImageMemoryBarrier2 *barrier = &info->pImageMemoryBarriers[i];
+
+         panvk_per_arch(cmd_transition_image_layout)(
+            panvk_cmd_buffer_to_handle(cmdbuf), barrier);
+      }
+
+      panvk_per_arch(add_cs_deps)(
+         cmdbuf, PANVK_BARRIER_STAGE_AFTER_LAYOUT_TRANSITION,
+         info, trans_deps);
+      *needs_trans_barrier = true;
    }
 }
 
@@ -138,9 +153,19 @@ panvk_per_arch(CmdWaitEvents2)(VkCommandBuffer commandBuffer,
 {
    VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
 
+   struct panvk_cs_deps trans_deps = {0};
+   bool needs_trans_barrier = false;
+
    for (uint32_t i = 0; i < eventCount; i++) {
       VK_FROM_HANDLE(panvk_event, event, pEvents[i]);
+      const VkDependencyInfo *info = &pDependencyInfos[i];
 
-      cmd_wait_event(cmdbuf, event, &pDependencyInfos[i]);
+      cmd_wait_event(cmdbuf, event, info, &trans_deps, &needs_trans_barrier);
+   }
+
+   if (needs_trans_barrier) {
+      assert(!trans_deps.needs_draw_flush);
+
+      panvk_per_arch(emit_barrier)(cmdbuf, trans_deps);
    }
 }

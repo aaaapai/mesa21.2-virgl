@@ -52,7 +52,7 @@ vk_image_sampler_dim(const struct vk_image *image)
       else
          return GLSL_SAMPLER_DIM_2D;
    case VK_IMAGE_TYPE_3D: return GLSL_SAMPLER_DIM_3D;
-   default: unreachable("Invalid image type");
+   default: UNREACHABLE("Invalid image type");
    }
 }
 
@@ -70,7 +70,7 @@ aspect_to_tex_binding(VkImageAspectFlagBits aspect)
    case VK_IMAGE_ASPECT_COLOR_BIT: return BLIT_DESC_BINDING_COLOR;
    case VK_IMAGE_ASPECT_DEPTH_BIT: return BLIT_DESC_BINDING_DEPTH;
    case VK_IMAGE_ASPECT_STENCIL_BIT: return BLIT_DESC_BINDING_STENCIL;
-   default: unreachable("Unsupported aspect");
+   default: UNREACHABLE("Unsupported aspect");
    }
 }
 
@@ -98,9 +98,7 @@ compute_off_scale(uint32_t src_level_size,
       *dst1_out = dst0;
 
       /* Flip the source region */
-      uint32_t tmp = src0;
-      src0 = src1;
-      src1 = tmp;
+      SWAP(src0, src1);
    }
 
    double src_region_size = (double)src1 - (double)src0;
@@ -131,7 +129,7 @@ build_tex_resolve(nir_builder *b, nir_deref_instr *t,
                   VkSampleCountFlagBits samples,
                   VkResolveModeFlagBits resolve_mode)
 {
-   nir_def *accum = nir_txf_ms_deref(b, t, coord, nir_imm_int(b, 0));
+   nir_def *accum = nir_txf_ms(b, coord, nir_imm_int(b, 0), .texture_deref = t);
    if (resolve_mode == VK_RESOLVE_MODE_SAMPLE_ZERO_BIT)
       return accum;
 
@@ -139,7 +137,7 @@ build_tex_resolve(nir_builder *b, nir_deref_instr *t,
       glsl_get_sampler_result_type(t->type);
 
    for (unsigned i = 1; i < samples; i++) {
-      nir_def *val = nir_txf_ms_deref(b, t, coord, nir_imm_int(b, i));
+      nir_def *val = nir_txf_ms(b, coord, nir_imm_int(b, i), .texture_deref = t);
       switch (resolve_mode) {
       case VK_RESOLVE_MODE_AVERAGE_BIT:
          assert(base_type == GLSL_TYPE_FLOAT);
@@ -158,7 +156,7 @@ build_tex_resolve(nir_builder *b, nir_deref_instr *t,
             accum = nir_fmin(b, accum, val);
             break;
          default:
-            unreachable("Invalid sample result type");
+            UNREACHABLE("Invalid sample result type");
          }
          break;
 
@@ -174,12 +172,12 @@ build_tex_resolve(nir_builder *b, nir_deref_instr *t,
             accum = nir_fmax(b, accum, val);
             break;
          default:
-            unreachable("Invalid sample result type");
+            UNREACHABLE("Invalid sample result type");
          }
          break;
 
       default:
-         unreachable("Unsupported resolve mode");
+         UNREACHABLE("Unsupported resolve mode");
       }
    }
 
@@ -291,7 +289,7 @@ build_blit_shader(const struct vk_meta_blit_key *key)
          out_comps = 1;
          break;
       default:
-         unreachable("Unsupported aspect");
+         UNREACHABLE("Unsupported aspect");
       }
 
       const bool is_array = key->dim != GLSL_SAMPLER_DIM_3D;
@@ -305,7 +303,8 @@ build_blit_shader(const struct vk_meta_blit_key *key)
 
       nir_def *val;
       if (resolve_mode == VK_RESOLVE_MODE_NONE) {
-         val = nir_txl_deref(b, t, s, src_coord, nir_imm_float(b, 0));
+         val = nir_txl(b, src_coord, nir_imm_float(b, 0),
+                       .texture_deref = t, .sampler_deref = s);
       } else {
          val = build_tex_resolve(b, t, nir_f2u32(b, src_coord),
                                  key->src_samples, resolve_mode);

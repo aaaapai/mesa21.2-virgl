@@ -344,7 +344,7 @@ ir3_context_error(struct ir3_context *ctx, const char *format, ...)
    nir_log_shader_annotated(ctx->s, errors);
    ralloc_free(errors);
    ctx->error = true;
-   unreachable("");
+   UNREACHABLE("");
 }
 
 static struct ir3_instruction *
@@ -375,7 +375,7 @@ create_addr0(struct ir3_builder *build, struct ir3_instruction *src, int align)
       instr = ir3_SHL_B(build, instr, 0, immed, 0);
       break;
    default:
-      unreachable("bad align");
+      UNREACHABLE("bad align");
       return NULL;
    }
 
@@ -437,7 +437,18 @@ ir3_get_predicate(struct ir3_context *ctx, struct ir3_instruction *src)
 
    /* condition always goes in predicate register: */
    cond->dsts[0]->flags |= IR3_REG_PREDICATE;
-   cond->dsts[0]->flags &= ~IR3_REG_SHARED;
+
+   /* The builders will mark the dst as shared when both srcs are shared.
+    * Predicates can't be shared but do support the scalar ALU when marked as
+    * uniform.
+    */
+   if (cond->dsts[0]->flags & IR3_REG_SHARED) {
+      cond->dsts[0]->flags &= ~IR3_REG_SHARED;
+
+      if (ctx->compiler->has_scalar_predicates) {
+         cond->dsts[0]->flags |= IR3_REG_UNIFORM;
+      }
+   }
 
    _mesa_hash_table_insert(ctx->predicate_conversions, src, cond);
    return cond;
@@ -558,12 +569,6 @@ ir3_create_array_store(struct ir3_context *ctx, struct ir3_array *arr, int n,
       ir3_instr_set_address(mov, address);
 
    arr->last_write = dst;
-
-   /* the array store may only matter to something in an earlier
-    * block (ie. loops), but since arrays are not in SSA, depth
-    * pass won't know this.. so keep all array stores:
-    */
-   array_insert(block, block->keeps, mov);
 }
 
 void

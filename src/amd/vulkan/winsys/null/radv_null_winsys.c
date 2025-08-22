@@ -117,6 +117,7 @@ radv_null_winsys_query_info(struct radeon_winsys *rws, struct radeon_info *gpu_i
       gpu_info->num_physical_sgprs_per_simd = 512;
 
    gpu_info->has_timeline_syncobj = true;
+   gpu_info->has_vm_always_valid = true;
    gpu_info->has_3d_cube_border_color_mipmap = true;
    gpu_info->has_image_opcodes = true;
    gpu_info->has_attr_ring = gpu_info->gfx_level >= GFX11;
@@ -150,8 +151,7 @@ radv_null_winsys_query_info(struct radeon_winsys *rws, struct radeon_info *gpu_i
       gpu_info->family == CHIP_VEGA20 ||
       (gpu_info->family >= CHIP_MI100 && gpu_info->family != CHIP_NAVI10 && gpu_info->family != CHIP_GFX1013);
 
-   gpu_info->has_image_bvh_intersect_ray = gpu_info->gfx_level >= GFX10_3 ||
-                                           gpu_info->family == CHIP_GFX1013;
+   gpu_info->has_image_bvh_intersect_ray = gpu_info->gfx_level >= GFX10_3 || gpu_info->family == CHIP_GFX1013;
 
    gpu_info->address32_hi = gpu_info->gfx_level >= GFX9 ? 0xffff8000u : 0x0;
 

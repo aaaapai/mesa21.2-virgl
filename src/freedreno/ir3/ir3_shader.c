@@ -172,6 +172,8 @@ ir3_shader_assemble(struct ir3_shader_variant *v)
    if (compiler->gen >= 4)
       v->constlen = align(v->constlen, 4);
 
+   info->constlen = v->constlen;
+
    /* Use the per-wave layout by default on a6xx for compute shaders. It
     * should result in better performance when loads/stores are to a uniform
     * index.
@@ -393,16 +395,22 @@ assemble_variant(struct ir3_shader_variant *v, bool internal)
 {
    v->bin = ir3_shader_assemble(v);
 
-   bool dbg_enabled = shader_debug_enabled(v->type, internal);
+   unsigned char sha1[21];
+
+   struct mesa_sha1 ctx;
+
+   _mesa_sha1_init(&ctx);
+   _mesa_sha1_update(&ctx, v->bin, v->info.size);
+   _mesa_sha1_update(&ctx, &v->info.double_threadsize,
+                     sizeof(v->info.double_threadsize));
+   _mesa_sha1_final(&ctx, sha1);
+   _mesa_sha1_format(v->sha1_str, sha1);
+
+   bool dbg_enabled = shader_debug_enabled(v->type, internal) ||
+                      ir3_shader_bisect_disasm_select(v);
    if (dbg_enabled || ir3_shader_override_path || v->disasm_info.write_disasm) {
-      unsigned char sha1[21];
-      char sha1buf[41];
-
-      _mesa_sha1_compute(v->bin, v->info.size, sha1);
-      _mesa_sha1_format(sha1buf, sha1);
-
       bool shader_overridden =
-         ir3_shader_override_path && try_override_shader_variant(v, sha1buf);
+         ir3_shader_override_path && try_override_shader_variant(v, v->sha1_str);
 
       if (v->disasm_info.write_disasm) {
          char *stream_data = NULL;
@@ -412,7 +420,7 @@ assemble_variant(struct ir3_shader_variant *v, bool internal)
          fprintf(stream,
                  "Native code%s for unnamed %s shader %s with sha1 %s:\n",
                  shader_overridden ? " (overridden)" : "", ir3_shader_stage(v),
-                 v->name, sha1buf);
+                 v->name, v->sha1_str);
          ir3_shader_disasm(v, v->bin, stream);
 
          fclose(stream);
@@ -431,7 +439,7 @@ assemble_variant(struct ir3_shader_variant *v, bool internal)
          fprintf(stream,
                  "Native code%s for unnamed %s shader %s with sha1 %s:\n",
                  shader_overridden ? " (overridden)" : "", ir3_shader_stage(v),
-                 v->name, sha1buf);
+                 v->name, v->sha1_str);
          if (v->type == MESA_SHADER_FRAGMENT)
             fprintf(stream, "SIMD0\n");
          ir3_shader_disasm(v, v->bin, stream);
@@ -503,6 +511,7 @@ alloc_variant(struct ir3_shader *shader, const struct ir3_shader_key *key,
       return NULL;
 
    v->id = ++shader->variant_count;
+   v->shader = shader;
    v->shader_id = shader->id;
    v->binning_pass = !!nonbinning;
    v->nonbinning = nonbinning;
@@ -1187,6 +1196,11 @@ ir3_shader_disasm(struct ir3_shader_variant *so, uint32_t *bin, FILE *out)
       type, so->shader_id, so->id, so->info.sstall, so->info.ss,
       so->info.systall, so->info.sy, so->loops);
 
+   fprintf(
+      out,
+      "; %s prog %d/%d: %u max_waves, %u double_threadsize\n",
+      type, so->shader_id, so->id, so->info.max_waves, so->info.double_threadsize);
+
    if (so->info.preamble_instrs_count) {
       fprintf(
          out, "; %u preamble-instr, %d early-preamble\n",
@@ -1243,7 +1257,7 @@ ir3_shader_outputs(const struct ir3_shader *so)
 void
 ir3_shader_get_subgroup_size(const struct ir3_compiler *compiler,
                              const struct ir3_shader_options *options,
-                             gl_shader_stage stage, unsigned *subgroup_size,
+                             mesa_shader_stage stage, unsigned *subgroup_size,
                              unsigned *max_subgroup_size)
 {
    switch (options->api_wavesize) {

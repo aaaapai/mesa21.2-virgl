@@ -5,6 +5,7 @@ from mako.template import Template, exceptions
 from pco_pygen_common import *
 from pco_ops import *
 from pco_isa import *
+from pco_map import *
 
 template = """/*
  * Copyright © 2024 Imagination Technologies Ltd.
@@ -48,7 +49,7 @@ const char *${enum.name}_str(uint64_t val) {
       break;
    }
 
-   unreachable();
+   UNREACHABLE("");
 }
 
 % endfor

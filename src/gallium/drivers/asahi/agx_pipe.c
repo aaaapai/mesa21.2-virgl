@@ -106,7 +106,7 @@ agx_resource_debug(struct agx_resource *res, const char *msg)
 
    agx_msg(
       "%s%s %dx%dx%d %dL %d/%dM %dS M:%llx %s%s %s%s S:0x%llx LS:0x%llx CS:0x%llx "
-      "Base=0x%llx Size=0x%llx Meta=0x%llx/0x%llx (%s) %s%s%s%s%s%sfd:%d(%d) B:%x @ %p\n",
+      "Base=0x%llx Size=0x%llx Meta=0x%llx/0x%llx (%s) %s%s%s%s%s%sfd:%d(%d) B:%x H:%x/%x @ %p\n",
       msg ?: "", util_format_short_name(res->base.format), res->base.width0,
       res->base.height0, res->base.depth0, res->base.array_size,
       res->base.last_level, res->layout.levels, res->layout.sample_count_sa,
@@ -128,7 +128,7 @@ agx_resource_debug(struct agx_resource *res, const char *msg)
       res->bo->flags & AGX_BO_WRITEBACK ? "WB " : "",
       res->bo->flags & AGX_BO_SHAREABLE ? "SA " : "",
       res->bo->flags & AGX_BO_READONLY ? "RO " : "", res->bo->prime_fd, ino,
-      res->base.bind, res);
+      res->base.bind, res->bo->handle, res->bo->uapi_handle, res);
 }
 
 static void
@@ -181,7 +181,7 @@ agx_resource_from_handle(struct pipe_screen *pscreen,
     */
    if (rsc->modifier == DRM_FORMAT_MOD_LINEAR && (whandle->stride % 16) != 0) {
       FREE(rsc);
-      return false;
+      return NULL;
    }
 
    prsc = &rsc->base;
@@ -259,6 +259,9 @@ agx_resource_get_handle(struct pipe_screen *pscreen, struct pipe_context *ctx,
       return renderonly_get_handle(rsrc->scanout, handle);
    } else if (handle->type == WINSYS_HANDLE_TYPE_KMS) {
       rsrc_debug(rsrc, "Get handle: %p (KMS)\n", rsrc);
+
+      /* BO must be considered shared at this point. */
+      agx_bo_make_shared(dev, rsrc->bo);
 
       handle->handle = rsrc->bo->handle;
    } else if (handle->type == WINSYS_HANDLE_TYPE_FD) {
@@ -1748,6 +1751,7 @@ agx_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
     */
 
    ctx->queue_id = agx_create_command_queue(agx_device(screen), priority);
+   ctx->virt_ring_idx = priority + 1;
 
    pctx->destroy = agx_destroy_context;
    pctx->flush = agx_flush;
@@ -1861,7 +1865,7 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
 {
    bool is_no16 = agx_device(pscreen)->debug & AGX_DBG_NO16;
 
-   for (unsigned i = 0; i <= PIPE_SHADER_COMPUTE; i++) {
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
          (struct pipe_shader_caps *)&pscreen->shader_caps[i];
 
@@ -1870,14 +1874,14 @@ agx_init_shader_caps(struct pipe_screen *pscreen)
 
       caps->max_control_flow_depth = 1024;
 
-      caps->max_inputs = i == PIPE_SHADER_VERTEX ? 16 : 32;
+      caps->max_inputs = i == MESA_SHADER_VERTEX ? 16 : 32;
 
       /* For vertex, the spec min/max is 16. We need more to handle dmat3
        * correctly, though. The full 32 is undesirable since it would require
        * shenanigans to handle.
        */
-      caps->max_outputs = i == PIPE_SHADER_FRAGMENT ? 8
-                          : i == PIPE_SHADER_VERTEX ? 24
+      caps->max_outputs = i == MESA_SHADER_FRAGMENT ? 8
+                          : i == MESA_SHADER_VERTEX ? 24
                                                     : 32;
 
       caps->max_temps = 256; /* GL_MAX_PROGRAM_TEMPORARIES_ARB */
@@ -1951,8 +1955,8 @@ agx_init_compute_caps(struct pipe_screen *pscreen)
    caps->max_compute_units = agx_get_num_cores(dev);
 
    caps->subgroup_sizes = 32;
-
-   caps->max_variable_threads_per_block = 1024; // TODO
+   caps->max_variable_threads_per_block = 1024;
+   caps->max_subgroups = caps->max_variable_threads_per_block / 32;
 }
 
 static void
@@ -1995,6 +1999,12 @@ agx_init_screen_caps(struct pipe_screen *pscreen)
 
    /* Timer resolution is the length of a single tick in nanos */
    caps->timer_resolution = agx_gpu_timestamp_to_ns(agx_device(pscreen), 1);
+
+   caps->shader_subgroup_size = 32;
+   caps->shader_subgroup_supported_stages = BITFIELD_MASK(MESA_SHADER_STAGES);
+   caps->shader_subgroup_supported_features =
+      BITFIELD_MASK(PIPE_SHADER_SUBGROUP_NUM_FEATURES);
+   caps->shader_subgroup_quad_all_stages = true;
 
    caps->sampler_view_target = true;
    caps->texture_swizzle = true;
@@ -2293,13 +2303,6 @@ agx_destroy_screen(struct pipe_screen *pscreen)
    ralloc_free(screen);
 }
 
-static const void *
-agx_get_compiler_options(struct pipe_screen *pscreen, enum pipe_shader_ir ir,
-                         enum pipe_shader_type shader)
-{
-   return &agx_nir_options;
-}
-
 static void
 agx_resource_set_stencil(struct pipe_resource *prsrc,
                          struct pipe_resource *stencil)
@@ -2432,9 +2435,11 @@ agx_screen_create(int fd, struct renderonly *ro,
    screen->fence_reference = agx_fence_reference;
    screen->fence_finish = agx_fence_finish;
    screen->fence_get_fd = agx_fence_get_fd;
-   screen->get_compiler_options = agx_get_compiler_options;
    screen->get_disk_shader_cache = agx_get_disk_shader_cache;
    screen->get_cl_cts_version = agx_get_cl_cts_version;
+
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
+      screen->nir_options[i] = &agx_nir_options;
 
    screen->resource_create = u_transfer_helper_resource_create;
    screen->resource_destroy = u_transfer_helper_resource_destroy;

@@ -10,8 +10,8 @@
 #ifndef RADV_META_NIR_H
 #define RADV_META_NIR_H
 
-#include "vulkan/vulkan_core.h"
 #include "compiler/shader_enums.h"
+#include "vulkan/vulkan_core.h"
 #include "nir_defines.h"
 
 #ifdef __cplusplus
@@ -22,7 +22,7 @@ struct radv_device;
 struct radeon_surf;
 
 nir_builder PRINTFLIKE(3, 4)
-   radv_meta_nir_init_shader(struct radv_device *dev, gl_shader_stage stage, const char *name, ...);
+   radv_meta_nir_init_shader(struct radv_device *dev, mesa_shader_stage stage, const char *name, ...);
 
 nir_shader *radv_meta_nir_build_vs_generate_vertices(struct radv_device *dev);
 nir_shader *radv_meta_nir_build_fs_noop(struct radv_device *dev);
@@ -108,6 +108,8 @@ nir_shader *radv_meta_nir_build_depth_stencil_resolve_fragment_shader(struct rad
                                                                       VkResolveModeFlagBits resolve_mode);
 
 nir_shader *radv_meta_nir_build_resolve_fs(struct radv_device *dev);
+
+nir_shader *radv_meta_nir_build_clear_hiz_compute_shader(struct radv_device *dev, int samples);
 
 #ifdef __cplusplus
 }

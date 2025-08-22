@@ -167,7 +167,7 @@ validate_DispatchComputeGroupSizeARB(struct gl_context *ctx,
     *  for compute shaders with variable group size
     *  (MAX_COMPUTE_VARIABLE_GROUP_INVOCATIONS_ARB)."
     */
-   uint64_t total_invocations = info->block[0] * info->block[1];
+   uint64_t total_invocations = info->block[0] * (uint64_t) info->block[1];
    if (total_invocations <= UINT32_MAX) {
       /* Only bother multiplying the third value if total still fits in
        * 32-bit, since MaxComputeVariableGroupInvocations is also 32-bit.
@@ -296,6 +296,7 @@ prepare_compute(struct gl_context *ctx)
       _mesa_update_state(ctx);
 
    st_validate_state(st, ST_PIPELINE_COMPUTE_STATE_MASK);
+   st_context_add_work(st);
 }
 
 static ALWAYS_INLINE void

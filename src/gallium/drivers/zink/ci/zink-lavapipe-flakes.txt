@@ -1,4 +1,5 @@
 KHR-GL46.es_31_compatibility.sample_variables.mask.rgba8ui.samples_0.mask_5
+KHR-Single-GL46.subgroups.quad.framebuffer.subgroupquadbroadcast_2_dvec4_tess_eval
 dEQP-GLES2.functional.texture.filtering.cube.nearest_linear_mirror_l8_pot
 spec@khr_debug@push-pop-group_gl.*
 glx@glx-multi-window-single-context
@@ -24,8 +25,13 @@ glx@glx-destroycontext-1
 
 glx@glx-multithread-texture
 
+# glx-multithread-clearbuffer: ../src/util/u_queue.h:111: util_queue_fence_reset: Assertion `v == 0' failed.
+glx@glx-multithread-clearbuffer
+
 # does not happen very often, but rarely does
 KHR-GL46.limits.max_fragment_interpolation_offset
+
+spec@ext_framebuffer_object@fbo-flushing-2
 
 # no output timeout, probably stuck in some X11 connection thing
 spec@ext_framebuffer_multisample@accuracy all_samples depth_resolve depthstencil
@@ -45,3 +51,10 @@ KHR-GL46.limits.max_geometry_total_output_components
 
 # reported to pass locally, seems to bounce around in CI
 KHR-GL46.sparse_buffer_tests.BufferStorageTest_.*
+
+# deqp-egl-x11: ../src/gallium/auxiliary/draw/draw_context.c:859: draw_do_flush: Assertion `!draw->flushing' failed.
+x11-dEQP-EGL.functional.sharing.gles2.multithread.random_egl_sync.textures.copytexsubimage2d.*
+x11-dEQP-EGL.functional.sharing.gles2.multithread.random.textures.copytexsubimage2d.*
+
+x11-dEQP-EGL.functional.swap_buffers_with_damage.resize_before_swap.buffer_age_render
+x11-dEQP-EGL.functional.swap_buffers_with_damage.resize_after_swap.buffer_age_clear_render

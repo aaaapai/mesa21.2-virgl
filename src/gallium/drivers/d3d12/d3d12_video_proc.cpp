@@ -55,7 +55,7 @@ d3d12_video_processor_begin_frame(struct pipe_video_codec * codec,
     if (FAILED(hr)) {
         debug_printf(
             "[d3d12_video_processor] resetting ID3D12GraphicsCommandList failed with HR %x\n",
-            hr);
+            (unsigned)hr);
         assert(false);
     }
 
@@ -179,10 +179,10 @@ d3d12_video_processor_end_frame(struct pipe_video_codec * codec,
 
     pD3D12Proc->m_spCommandList->ResourceBarrier(static_cast<uint32_t>(barrier_transitions.size()), barrier_transitions.data());
 
-    ASSERTED bool success = d3d12_reset_fence(&pD3D12Proc->m_PendingFences[d3d12_video_processor_pool_current_index(pD3D12Proc)], pD3D12Proc->m_spFence.Get(), pD3D12Proc->m_fenceValue);
-    assert(success);
-
-    *picture->fence = (pipe_fence_handle*) &pD3D12Proc->m_PendingFences[d3d12_video_processor_pool_current_index(pD3D12Proc)];
+    d3d12_unique_fence &fence = pD3D12Proc->m_PendingFences[d3d12_video_processor_pool_current_index(pD3D12Proc)];
+    fence.reset(d3d12_create_fence_raw(pD3D12Proc->m_spFence.Get(), pD3D12Proc->m_fenceValue));
+    if (picture->out_fence)
+      d3d12_fence_reference((struct d3d12_fence **)picture->out_fence, fence.get());
     return 0;
 }
 
@@ -193,8 +193,9 @@ d3d12_video_processor_process_frame(struct pipe_video_codec *codec,
 {
     struct d3d12_video_processor * pD3D12Proc = (struct d3d12_video_processor *) codec;
 
-    // begin_frame gets only called once so wouldn't update process_properties->src_surface_fence correctly
-    pD3D12Proc->input_surface_fence = (struct d3d12_fence*) process_properties->src_surface_fence;
+    // begin_frame gets only called once so wouldn't update process_properties->base.in_fence correctly
+    pD3D12Proc->input_surface_fence = (struct d3d12_fence*) process_properties->base.in_fence;
+    pD3D12Proc->input_surface_fence_value = process_properties->base.in_fence_value;
 
     // Get the underlying resources from the pipe_video_buffers
     struct d3d12_video_buffer *pInputVideoBuffer = (struct d3d12_video_buffer *) input_texture;
@@ -275,8 +276,8 @@ d3d12_video_processor_process_frame(struct pipe_video_codec *codec,
     };
 
     debug_printf("ProcessFrame InArgs Orientation %d \n\tSrc top: %d left: %d right: %d bottom: %d\n\tDst top: %d left: %d right: %d bottom: %d\n", InputArguments.Transform.Orientation, 
-        InputArguments.Transform.SourceRectangle.top, InputArguments.Transform.SourceRectangle.left, InputArguments.Transform.SourceRectangle.right, InputArguments.Transform.SourceRectangle.bottom,
-        InputArguments.Transform.DestinationRectangle.top, InputArguments.Transform.DestinationRectangle.left, InputArguments.Transform.DestinationRectangle.right, InputArguments.Transform.DestinationRectangle.bottom);
+        (int)InputArguments.Transform.SourceRectangle.top, (int)InputArguments.Transform.SourceRectangle.left, (int)InputArguments.Transform.SourceRectangle.right, (int)InputArguments.Transform.SourceRectangle.bottom,
+        (int)InputArguments.Transform.DestinationRectangle.top, (int)InputArguments.Transform.DestinationRectangle.left, (int)InputArguments.Transform.DestinationRectangle.right, (int)InputArguments.Transform.DestinationRectangle.bottom);
 
     pD3D12Proc->m_ProcessInputs.push_back(InputArguments);    
     pD3D12Proc->m_InputBuffers.push_back(pInputVideoBuffer);
@@ -342,7 +343,7 @@ d3d12_video_processor_flush(struct pipe_video_codec * codec)
             debug_printf("[d3d12_video_processor] d3d12_video_processor_flush"
                             " - D3D12Device was removed BEFORE commandlist "
                             "execution with HR %x.\n",
-                            hr);
+                            (unsigned)hr);
             goto flush_fail;
         }
 
@@ -357,7 +358,7 @@ d3d12_video_processor_flush(struct pipe_video_codec * codec)
 
         hr = pD3D12Proc->m_spCommandList->Close();
         if (FAILED(hr)) {
-            debug_printf("[d3d12_video_processor] d3d12_video_processor_flush - Can't close command list with HR %x\n", hr);
+            debug_printf("[d3d12_video_processor] d3d12_video_processor_flush - Can't close command list with HR %x\n", (unsigned)hr);
             goto flush_fail;
         }
 
@@ -370,7 +371,7 @@ d3d12_video_processor_flush(struct pipe_video_codec * codec)
 
         struct d3d12_fence *input_surface_fence = pD3D12Proc->input_surface_fence;
         if (input_surface_fence)
-            pD3D12Proc->m_spCommandQueue->Wait(input_surface_fence->cmdqueue_fence, input_surface_fence->value);
+           d3d12_fence_wait_impl(input_surface_fence, pD3D12Proc->m_spCommandQueue.Get(), pD3D12Proc->input_surface_fence_value);
 
         ID3D12CommandList *ppCommandLists[1] = { pD3D12Proc->m_spCommandList.Get() };
         pD3D12Proc->m_spCommandQueue->ExecuteCommandLists(1, ppCommandLists);
@@ -382,7 +383,7 @@ d3d12_video_processor_flush(struct pipe_video_codec * codec)
             debug_printf("[d3d12_video_processor] d3d12_video_processor_flush"
                             " - D3D12Device was removed AFTER commandlist "
                             "execution with HR %x, but wasn't before.\n",
-                            hr);
+                            (unsigned)hr);
             goto flush_fail;
         }
 
@@ -426,6 +427,7 @@ d3d12_video_processor_create(struct pipe_context *context, const struct pipe_vid
    pD3D12Proc->base.end_frame = d3d12_video_processor_end_frame;
    pD3D12Proc->base.flush = d3d12_video_processor_flush;
    pD3D12Proc->base.fence_wait = d3d12_video_processor_fence_wait;
+   pD3D12Proc->base.destroy_fence = d3d12_video_destroy_fence;
 
    ///
 
@@ -607,7 +609,7 @@ d3d12_video_processor_check_caps_and_create_processor(struct d3d12_video_process
         if (FAILED(hr)) {
         debug_printf("[d3d12_video_processor] d3d12_video_processor_check_caps_and_create_processor - CheckFeatureSupport "
                         "failed with HR %x\n",
-                        hr);
+                        (unsigned)hr);
         return false;
         }
 
@@ -637,7 +639,7 @@ d3d12_video_processor_check_caps_and_create_processor(struct d3d12_video_process
     if (FAILED(hr)) {
         debug_printf("[d3d12_video_processor] d3d12_video_processor_check_caps_and_create_processor - CreateVideoProcessor "
                     "failed with HR %x\n",
-                    hr);
+                    (unsigned)hr);
         return false;
     }
 
@@ -657,7 +659,7 @@ d3d12_video_processor_create_command_objects(struct d3d12_video_processor *pD3D1
     if (FAILED(hr)) {
         debug_printf("[d3d12_video_processor] d3d12_video_processor_create_command_objects - Call to CreateCommandQueue "
                         "failed with HR %x\n",
-                        hr);
+                        (unsigned)hr);
         return false;
     }
 
@@ -668,7 +670,7 @@ d3d12_video_processor_create_command_objects(struct d3d12_video_processor *pD3D1
     if (FAILED(hr)) {
         debug_printf(
             "[d3d12_video_processor] d3d12_video_processor_create_command_objects - Call to CreateFence failed with HR %x\n",
-            hr);
+            (unsigned)hr);
         return false;
     }
 
@@ -681,7 +683,7 @@ d3d12_video_processor_create_command_objects(struct d3d12_video_processor *pD3D1
         if (FAILED(hr)) {
             debug_printf("[d3d12_video_processor] d3d12_video_processor_create_command_objects - Call to "
                             "CreateCommandAllocator failed with HR %x\n",
-                            hr);
+                            (unsigned)hr);
             return false;
         }
     }
@@ -702,7 +704,7 @@ d3d12_video_processor_create_command_objects(struct d3d12_video_processor *pD3D1
     if (FAILED(hr)) {
         debug_printf("[d3d12_video_processor] d3d12_video_processor_create_command_objects - Call to CreateCommandList "
                         "failed with HR %x\n",
-                        hr);
+                        (unsigned)hr);
         return false;
     }
 
@@ -779,7 +781,7 @@ d3d12_video_processor_ensure_fence_finished(struct pipe_video_codec *codec,
          debug_printf("[d3d12_video_processor] d3d12_video_processor_ensure_fence_finished - SetEventOnCompletion for "
                       "fenceValue %" PRIu64 " failed with HR %x\n",
                       fenceValueToWaitOn,
-                      hr);
+                      (unsigned)hr);
          goto ensure_fence_finished_fail;
       }
 
@@ -820,7 +822,7 @@ d3d12_video_processor_sync_completion(struct pipe_video_codec *codec, uint64_t f
    hr =
       pD3D12Proc->m_spCommandAllocators[fenceValueToWaitOn % D3D12_VIDEO_PROC_ASYNC_DEPTH]->Reset();
    if (FAILED(hr)) {
-      debug_printf("m_spCommandAllocator->Reset() failed with %x.\n", hr);
+      debug_printf("m_spCommandAllocator->Reset() failed with %x.\n", (unsigned)hr);
       goto sync_with_token_fail;
    }
 
@@ -830,7 +832,7 @@ d3d12_video_processor_sync_completion(struct pipe_video_codec *codec, uint64_t f
       debug_printf("[d3d12_video_processor] d3d12_video_processor_sync_completion"
                    " - D3D12Device was removed AFTER d3d12_video_processor_ensure_fence_finished "
                    "execution with HR %x, but wasn't before.\n",
-                   hr);
+                   (unsigned)hr);
       goto sync_with_token_fail;
    }
 

@@ -37,7 +37,7 @@ void si_blitter_begin(struct si_context *sctx, enum si_blitter_op op)
 
    if (op & SI_SAVE_FRAGMENT_STATE) {
       struct pipe_constant_buffer fs_cb = {};
-      si_get_pipe_constant_buffer(sctx, PIPE_SHADER_FRAGMENT, 0, &fs_cb);
+      si_get_pipe_constant_buffer(sctx, MESA_SHADER_FRAGMENT, 0, &fs_cb);
 
       if (op & SI_SAVE_FRAGMENT_CONSTANT)
          util_blitter_save_fragment_constant_buffer_slot(sctx->blitter, &fs_cb);
@@ -58,10 +58,10 @@ void si_blitter_begin(struct si_context *sctx, enum si_blitter_op op)
 
    if (op & SI_SAVE_TEXTURES) {
       util_blitter_save_fragment_sampler_states(
-         sctx->blitter, 2, (void **)sctx->samplers[PIPE_SHADER_FRAGMENT].sampler_states);
+         sctx->blitter, 2, (void **)sctx->samplers[MESA_SHADER_FRAGMENT].sampler_states);
 
       util_blitter_save_fragment_sampler_views(sctx->blitter, 2,
-                                               sctx->samplers[PIPE_SHADER_FRAGMENT].views);
+                                               sctx->samplers[MESA_SHADER_FRAGMENT].views);
    }
 
    if (op & SI_DISABLE_RENDER_COND)
@@ -757,14 +757,12 @@ static void si_check_render_feedback(struct si_context *sctx)
    if (!si_any_colorbuffer_written(sctx))
       return;
 
-   for (int i = 0; i < SI_NUM_GRAPHICS_SHADERS; ++i) {
-      if (!sctx->shaders[i].cso)
-         continue;
+   if (sctx->shaders[MESA_SHADER_FRAGMENT].cso) {
+      struct si_shader_info *info = &sctx->shaders[MESA_SHADER_FRAGMENT].cso->info;
 
-      struct si_shader_info *info = &sctx->shaders[i].cso->info;
-      si_check_render_feedback_images(sctx, &sctx->images[i],
+      si_check_render_feedback_images(sctx, &sctx->images[MESA_SHADER_FRAGMENT],
                                       BITFIELD_MASK(info->base.num_images));
-      si_check_render_feedback_textures(sctx, &sctx->samplers[i],
+      si_check_render_feedback_textures(sctx, &sctx->samplers[MESA_SHADER_FRAGMENT],
                                         info->base.textures_used);
    }
 
@@ -857,14 +855,15 @@ void gfx6_decompress_textures(struct si_context *sctx, unsigned shader_mask)
       sctx->b.flush(&sctx->b, NULL, RADEON_FLUSH_ASYNC_START_NEXT_GFX_IB_NOW);
    }
 
-   if (shader_mask & BITFIELD_MASK(SI_NUM_GRAPHICS_SHADERS)) {
-      if (sctx->uses_bindless_samplers) {
-         si_decompress_resident_color_textures(sctx);
-         si_decompress_resident_depth_textures(sctx);
-      }
-      if (sctx->uses_bindless_images)
-         si_decompress_resident_images(sctx);
+   if (sctx->uses_bindless_samplers & shader_mask) {
+      si_decompress_resident_color_textures(sctx);
+      si_decompress_resident_depth_textures(sctx);
+   }
 
+   if (sctx->uses_bindless_images & shader_mask)
+      si_decompress_resident_images(sctx);
+
+   if (shader_mask & BITFIELD_BIT(MESA_SHADER_FRAGMENT)) {
       if (sctx->ps_uses_fbfetch) {
          struct pipe_surface *cb0 = &sctx->framebuffer.state.cbufs[0];
          si_decompress_color_texture(sctx, (struct si_texture *)cb0->texture,
@@ -872,13 +871,6 @@ void gfx6_decompress_textures(struct si_context *sctx, unsigned shader_mask)
       }
 
       si_check_render_feedback(sctx);
-   } else if (shader_mask & (1 << PIPE_SHADER_COMPUTE)) {
-      if (sctx->cs_shader_state.program->sel.info.uses_bindless_samplers) {
-         si_decompress_resident_color_textures(sctx);
-         si_decompress_resident_depth_textures(sctx);
-      }
-      if (sctx->cs_shader_state.program->sel.info.uses_bindless_images)
-         si_decompress_resident_images(sctx);
    }
 }
 
@@ -895,15 +887,11 @@ void gfx11_decompress_textures(struct si_context *sctx, unsigned shader_mask)
    }
 
    /* Decompress bindless depth textures and disable DCC for render feedback. */
-   if (shader_mask & BITFIELD_MASK(SI_NUM_GRAPHICS_SHADERS)) {
-      if (sctx->uses_bindless_samplers)
-         si_decompress_resident_depth_textures(sctx);
+   if (sctx->uses_bindless_samplers & shader_mask)
+      si_decompress_resident_depth_textures(sctx);
 
+   if (shader_mask & BITFIELD_BIT(MESA_SHADER_FRAGMENT))
       si_check_render_feedback(sctx);
-   } else if (shader_mask & (1 << PIPE_SHADER_COMPUTE)) {
-      if (sctx->cs_shader_state.program->sel.info.uses_bindless_samplers)
-         si_decompress_resident_depth_textures(sctx);
-   }
 }
 
 /* Helper for decompressing a portion of a color or depth resource before
@@ -987,8 +975,8 @@ void si_gfx_copy_image(struct si_context *sctx, struct pipe_resource *dst,
 
    /* If the blitter isn't available fail here instead of crashing. */
    if (!sctx->blitter) {
-      fprintf(stderr, "si_resource_copy_region failed src_format: %s dst_format: %s\n",
-              util_format_name(src->format), util_format_name(dst->format));
+      mesa_loge("si_resource_copy_region failed src_format: %s dst_format: %s",
+                util_format_name(src->format), util_format_name(dst->format));
       return;
    }
 
@@ -1028,8 +1016,8 @@ void si_gfx_copy_image(struct si_context *sctx, struct pipe_resource *dst,
          dst_templ.format = src_templ.format = PIPE_FORMAT_R32G32B32A32_UINT;
          break;
       default:
-         fprintf(stderr, "Unhandled format %s with blocksize %u\n",
-                 util_format_short_name(src->format), ssrc->surface.bpe);
+         mesa_loge("Unhandled format %s with blocksize %u",
+                   util_format_short_name(src->format), ssrc->surface.bpe);
          assert(0);
       }
    }
@@ -1153,7 +1141,7 @@ bool si_msaa_resolve_blit_via_CB(struct pipe_context *ctx, const struct pipe_bli
          break;
 
       default:
-         unreachable("unexpected gfx version");
+         UNREACHABLE("unexpected gfx version");
       }
    }
 
@@ -1349,8 +1337,7 @@ void si_gfx_blit(struct pipe_context *ctx, const struct pipe_blit_info *info)
       fs = _mesa_hash_table_u64_search(sctx->ps_resolve_shaders, key.key);
       if (!fs) {
          struct ac_ps_resolve_options options = {
-            .nir_options = sctx->b.screen->get_compiler_options(sctx->b.screen, PIPE_SHADER_IR_NIR,
-                                                                PIPE_SHADER_FRAGMENT),
+            .nir_options = sctx->b.screen->nir_options[MESA_SHADER_FRAGMENT],
             .info = &sctx->screen->info,
             .use_aco = sctx->screen->use_aco,
             .no_fmask = sctx->screen->debug_flags & DBG(NO_FMASK),
@@ -1438,7 +1425,7 @@ void si_decompress_dcc(struct si_context *sctx, struct si_texture *tex)
     * If blitter is running, we can't decompress DCC either because it
     * will cause a blitter recursion.
     */
-   if (!tex->surface.meta_offset || !sctx->has_graphics || sctx->blitter_running)
+   if (!tex->surface.meta_offset || !sctx->is_gfx_queue || sctx->blitter_running)
       return;
 
    si_blit_decompress_color(sctx, tex, 0, tex->buffer.b.b.last_level, 0,
@@ -1449,7 +1436,7 @@ void si_init_blit_functions(struct si_context *sctx)
 {
    sctx->b.resource_copy_region = si_resource_copy_region;
 
-   if (sctx->has_graphics) {
+   if (sctx->is_gfx_queue) {
       sctx->b.blit = si_blit;
       sctx->b.flush_resource = si_flush_resource;
       sctx->b.generate_mipmap = si_generate_mipmap;

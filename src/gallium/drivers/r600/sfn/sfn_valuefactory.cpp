@@ -147,6 +147,24 @@ ValueFactory::allocate_pinned_vec4(int sel, bool is_ssa)
    return retval;
 }
 
+LocalArray *
+ValueFactory::allocate_pinned_array(int start, int size, int channels)
+{
+   auto array = new LocalArray(start, channels, 4, 0);
+
+   for (int i = 0; i < channels; ++i) {
+      RegisterKey key(start, i, vp_array);
+      m_registers[key] = array;
+   }
+
+   for (auto reg : *array) {
+      reg->set_pin(pin_fully);
+      reg->set_flag(Register::pin_start);
+      reg->set_flag(Register::ssa);
+   }
+   return array;
+}
+
 void
 ValueFactory::inject_value(const nir_def& def, int chan, PVirtualValue value)
 {
@@ -334,7 +352,8 @@ ValueFactory::dest(const nir_def& ssa, int chan, Pin pin_channel, uint8_t chan_m
       sel = m_next_register_index++;
       sfn_log << SfnLog::reg << "Assign " << sel << " to index " << ssa.index << " in "
               << &m_ssa_index_to_sel << "\n";
-      m_ssa_index_to_sel[ssa.index] = sel;
+      if (pin_channel != pin_free)
+         m_ssa_index_to_sel[ssa.index] = sel;
    }
 
    if (pin_channel == pin_free)
@@ -404,7 +423,7 @@ ValueFactory::ssa_src(const nir_def& ssa, int chan)
       return iarray->second;
 
    std::cerr << "Didn't find source with key " << key << "\n";
-   unreachable("Source values should always exist");
+   UNREACHABLE("Source values should always exist");
 }
 
 PVirtualValue
@@ -463,7 +482,7 @@ ValueFactory::src_vec4(const nir_src& source, Pin pin, const RegisterVec4::Swizz
 
    int sel = sx ? sx->sel() : (sy ? sy->sel() : (sz ? sz->sel() : sw ? sw->sel() : -1));
    if (sel < 0)
-      unreachable("source vector without valid components");
+      UNREACHABLE("source vector without valid components");
 
    if (!sx)
       sx = new Register(sel, 7, pin);
@@ -514,7 +533,7 @@ chan_from_char(char chan)
    case '_':
       return 7;
    }
-   unreachable("Unknown swizzle char");
+   UNREACHABLE("Unknown swizzle char");
 }
 
 static int
@@ -567,7 +586,7 @@ split_register_string(const string& s,
          size_str.append(1, s[i]);
          break;
       default:
-         unreachable("Malformed Array allocation string");
+         UNREACHABLE("Malformed Array allocation string");
       }
    }
    return true;
@@ -629,7 +648,7 @@ ValueFactory::dest_from_string(const std::string& s)
       pool = vp_ssa;
       break;
    default:
-      unreachable("Unknown value type");
+      UNREACHABLE("Unknown value type");
    }
 
    bool is_ssa = s[0] == 'S';
@@ -701,7 +720,7 @@ ValueFactory::src_from_string(const std::string& s)
 
    default:
       std::cerr << "'" << s << "'";
-      unreachable("Unknown register type");
+      UNREACHABLE("Unknown register type");
    }
 
    assert(strchr("ARS_", s[0]));
@@ -739,7 +758,7 @@ ValueFactory::src_from_string(const std::string& s)
       pool = vp_ssa;
       break;
    default:
-      unreachable("Unknown value type");
+      UNREACHABLE("Unknown value type");
    }
 
    RegisterKey key(sel, chan, pool);
@@ -764,7 +783,7 @@ ValueFactory::src_from_string(const std::string& s)
    } else {
       if (sel != std::numeric_limits<int>::max()) {
          std::cerr << "register " << key << "not found \n";
-         unreachable("Source register should exist");
+         UNREACHABLE("Source register should exist");
       } else {
          auto reg = new Register(sel, chan, p);
          m_registers[key] = reg;
@@ -882,7 +901,7 @@ ValueFactory::array_from_string(const std::string& s)
          size_str.append(1, s[i]);
          break;
       default:
-         unreachable("Malformed Array allocation string");
+         UNREACHABLE("Malformed Array allocation string");
       }
    }
 

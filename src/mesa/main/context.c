@@ -274,7 +274,7 @@ _mesa_init_current(struct gl_context *ctx)
  * Important: drivers should override these with actual limits.
  */
 static void
-init_program_limits(struct gl_constants *consts, gl_shader_stage stage,
+init_program_limits(struct gl_constants *consts, mesa_shader_stage stage,
                     struct gl_program_constants *prog)
 {
    prog->MaxInstructions = MAX_PROGRAM_INSTRUCTIONS;
@@ -314,11 +314,19 @@ init_program_limits(struct gl_constants *consts, gl_shader_stage stage,
       prog->MaxOutputComponents = 16 * 4; /* old limit not to break tnl and swrast */
       break;
    case MESA_SHADER_COMPUTE:
+   case MESA_SHADER_TASK:
       prog->MaxParameters = 0; /* not meaningful for compute shaders */
       prog->MaxAttribs = 0; /* not meaningful for compute shaders */
       prog->MaxUniformComponents = 4 * MAX_UNIFORMS;
       prog->MaxInputComponents = 0; /* not meaningful for compute shaders */
       prog->MaxOutputComponents = 0; /* not meaningful for compute shaders */
+      break;
+   case MESA_SHADER_MESH:
+      prog->MaxParameters = 0;
+      prog->MaxAttribs = 0;
+      prog->MaxUniformComponents = 4 * MAX_UNIFORMS;
+      prog->MaxInputComponents = 0;
+      prog->MaxOutputComponents = 16 * 4;
       break;
    default:
       assert(0 && "Bad shader stage in init_program_limits()");
@@ -421,9 +429,9 @@ _mesa_init_constants(struct gl_constants *consts, gl_api api)
 
    /* GL_ARB_explicit_uniform_location, GL_MAX_UNIFORM_LOCATIONS */
    consts->MaxUserAssignableUniformLocations =
-      4 * MESA_SHADER_STAGES * MAX_UNIFORMS;
+      4 * MESA_SHADER_MESH_STAGES * MAX_UNIFORMS;
 
-   for (i = 0; i < MESA_SHADER_STAGES; i++)
+   for (i = 0; i < MESA_SHADER_MESH_STAGES; i++)
       init_program_limits(consts, i, &consts->Program[i]);
 
    consts->MaxProgramMatrices = MAX_PROGRAM_MATRICES;

@@ -175,7 +175,7 @@ void
 iris_predraw_resolve_inputs(struct iris_context *ice,
                             struct iris_batch *batch,
                             bool *draw_aux_buffer_disabled,
-                            gl_shader_stage stage,
+                            mesa_shader_stage stage,
                             bool consider_framebuffer)
 {
    struct iris_shader_state *shs = &ice->state.shaders[stage];
@@ -288,7 +288,7 @@ iris_predraw_resolve_framebuffer(struct iris_context *ice,
 
 void
 iris_postdraw_update_image_resolve_tracking(struct iris_context *ice,
-                                            gl_shader_stage stage)
+                                            mesa_shader_stage stage)
 {
    struct iris_screen *screen = (void *) ice->ctx.screen;
    ASSERTED const struct intel_device_info *devinfo = screen->devinfo;
@@ -389,7 +389,7 @@ iris_postdraw_update_resolve_tracking(struct iris_context *ice)
    }
 
    if (devinfo->ver >= 12) {
-      for (gl_shader_stage stage = 0; stage < MESA_SHADER_COMPUTE; stage++) {
+      for (mesa_shader_stage stage = 0; stage < MESA_SHADER_COMPUTE; stage++) {
          iris_postdraw_update_image_resolve_tracking(ice, stage);
       }
    }
@@ -479,7 +479,7 @@ flush_ssbos(struct iris_batch *batch,
 void
 iris_predraw_flush_buffers(struct iris_context *ice,
                            struct iris_batch *batch,
-                           gl_shader_stage stage)
+                           mesa_shader_stage stage)
 {
    struct iris_shader_state *shs = &ice->state.shaders[stage];
 
@@ -696,7 +696,7 @@ iris_hiz_exec(struct iris_context *ice,
       break;
    case ISL_AUX_OP_PARTIAL_RESOLVE:
    case ISL_AUX_OP_NONE:
-      unreachable("Invalid HiZ op");
+      UNREACHABLE("Invalid HiZ op");
    }
 
    //DBG("%s %s to mt %p level %d layers %d-%d\n",
@@ -912,7 +912,7 @@ iris_resource_prepare_access(struct iris_context *ice,
          } else if (isl_aux_usage_has_hiz(res->aux.usage)) {
             iris_hiz_exec(ice, batch, res, level, layer, 1, aux_op);
          } else if (res->aux.usage == ISL_AUX_USAGE_STC_CCS) {
-            unreachable("iris doesn't resolve STC_CCS resources");
+            UNREACHABLE("iris doesn't resolve STC_CCS resources");
          } else {
             assert(isl_aux_usage_has_ccs(res->aux.usage));
             iris_resolve_color(ice, batch, res, level, layer, aux_op);

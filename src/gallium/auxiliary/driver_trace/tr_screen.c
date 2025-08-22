@@ -105,31 +105,6 @@ trace_screen_get_device_vendor(struct pipe_screen *_screen)
 }
 
 
-static const void *
-trace_screen_get_compiler_options(struct pipe_screen *_screen,
-                                  enum pipe_shader_ir ir,
-                                  enum pipe_shader_type shader)
-{
-   struct trace_screen *tr_scr = trace_screen(_screen);
-   struct pipe_screen *screen = tr_scr->screen;
-   const void *result;
-
-   trace_dump_call_begin("pipe_screen", "get_compiler_options");
-
-   trace_dump_arg(ptr, screen);
-   trace_dump_arg_enum(pipe_shader_ir, ir);
-   trace_dump_arg_enum(pipe_shader_type, shader);
-
-   result = screen->get_compiler_options(screen, ir, shader);
-
-   trace_dump_ret(ptr, result);
-
-   trace_dump_call_end();
-
-   return result;
-}
-
-
 static struct disk_cache *
 trace_screen_get_disk_shader_cache(struct pipe_screen *_screen)
 {
@@ -1099,12 +1074,12 @@ trace_screen_get_timestamp(struct pipe_screen *_screen)
    return result;
 }
 
-static char *
+static void
 trace_screen_finalize_nir(struct pipe_screen *_screen, struct nir_shader *nir)
 {
    struct pipe_screen *screen = trace_screen(_screen)->screen;
 
-   return screen->finalize_nir(screen, nir);
+   screen->finalize_nir(screen, nir);
 }
 
 static void
@@ -1332,22 +1307,6 @@ static void trace_screen_vertex_state_destroy(struct pipe_screen *_screen,
    screen->vertex_state_destroy(screen, state);
 }
 
-static void trace_screen_set_fence_timeline_value(struct pipe_screen *_screen,
-                                                  struct pipe_fence_handle *fence,
-                                                  uint64_t value)
-{
-   struct trace_screen *tr_scr = trace_screen(_screen);
-   struct pipe_screen *screen = tr_scr->screen;
-
-   trace_dump_call_begin("pipe_screen", "set_fence_timeline_value");
-   trace_dump_arg(ptr, screen);
-   trace_dump_arg(ptr, fence);
-   trace_dump_arg(uint, value);
-   trace_dump_call_end();
-
-   screen->set_fence_timeline_value(screen, fence, value);
-}
-
 static void trace_screen_query_compression_rates(struct pipe_screen *_screen,
                                                  enum pipe_format format,
                                                  int max, uint32_t *rates,
@@ -1520,7 +1479,6 @@ trace_screen_create(struct pipe_screen *screen)
    tr_scr->base.get_name = trace_screen_get_name;
    tr_scr->base.get_vendor = trace_screen_get_vendor;
    tr_scr->base.get_device_vendor = trace_screen_get_device_vendor;
-   SCR_INIT(get_compiler_options);
    SCR_INIT(get_disk_shader_cache);
    SCR_INIT(get_video_param);
    tr_scr->base.is_format_supported = trace_screen_is_format_supported;
@@ -1569,7 +1527,6 @@ trace_screen_create(struct pipe_screen *screen)
    SCR_INIT(vertex_state_destroy);
    tr_scr->base.transfer_helper = screen->transfer_helper;
    SCR_INIT(get_sparse_texture_virtual_page_size);
-   SCR_INIT(set_fence_timeline_value);
    SCR_INIT(driver_thread_add_job);
    SCR_INIT(query_compression_rates);
    SCR_INIT(query_compression_modifiers);
@@ -1593,6 +1550,7 @@ trace_screen_create(struct pipe_screen *screen)
    *(struct pipe_caps *)&tr_scr->base.caps = screen->caps;
    *(struct pipe_compute_caps *)&tr_scr->base.compute_caps = screen->compute_caps;
    memcpy((void *)tr_scr->base.shader_caps, screen->shader_caps, sizeof(screen->shader_caps));
+   memcpy((void *)tr_scr->base.nir_options, screen->nir_options, sizeof(screen->nir_options));
 
    return &tr_scr->base;
 

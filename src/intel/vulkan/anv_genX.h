@@ -102,10 +102,10 @@ void genX(emit_pipeline_select)(struct anv_batch *batch, uint32_t pipeline,
 
 void genX(apply_task_urb_workaround)(struct anv_cmd_buffer *cmd_buffer);
 
-void genX(batch_emit_vertex_input)(struct anv_batch *batch,
-                                   struct anv_device *device,
-                                   struct anv_graphics_pipeline *pipeline,
-                                   const struct vk_vertex_input_state *vi);
+void genX(batch_emit_pipeline_vertex_input)(struct anv_batch *batch,
+                                            struct anv_device *device,
+                                            struct anv_graphics_pipeline *pipeline,
+                                            const struct vk_vertex_input_state *vi);
 
 enum anv_pipe_bits
 genX(emit_apply_pipe_flushes)(struct anv_batch *batch,
@@ -131,7 +131,7 @@ genX(cmd_buffer_ensure_wa_14018283232)(struct anv_cmd_buffer *cmd_buffer,
    if (intel_needs_workaround(cmd_buffer->device->info, 14018283232) &&
        hw_state->wa_14018283232_toggle != toggle) {
       hw_state->wa_14018283232_toggle = toggle;
-      BITSET_SET(hw_state->dirty, ANV_GFX_STATE_WA_14018283232);
+      BITSET_SET(hw_state->emit_dirty, ANV_GFX_STATE_WA_14018283232);
       genX(batch_emit_wa_14018283232)(&cmd_buffer->batch);
    }
 }
@@ -164,7 +164,7 @@ genX(cmd_buffer_set_coarse_pixel_active)(struct anv_cmd_buffer *cmd_buffer,
    if (intel_needs_workaround(cmd_buffer->device->info, 18038825448) &&
        gfx->dyn_state.coarse_state != state) {
       gfx->dyn_state.coarse_state = state;
-      BITSET_SET(gfx->dyn_state.dirty, ANV_GFX_STATE_COARSE_STATE);
+      BITSET_SET(gfx->dyn_state.emit_dirty, ANV_GFX_STATE_PS_EXTRA);
       return true;
    }
    return false;
@@ -194,13 +194,14 @@ void genX(cmd_buffer_config_l3)(struct anv_cmd_buffer *cmd_buffer,
                                 const struct intel_l3_config *cfg);
 
 void genX(flush_descriptor_buffers)(struct anv_cmd_buffer *cmd_buffer,
-                                    struct anv_cmd_pipeline_state *pipe_state);
+                                    struct anv_cmd_pipeline_state *pipe_state,
+                                    VkShaderStageFlags active_stages);
 
 uint32_t
 genX(cmd_buffer_flush_descriptor_sets)(struct anv_cmd_buffer *cmd_buffer,
                                        struct anv_cmd_pipeline_state *pipe_state,
                                        const VkShaderStageFlags dirty,
-                                       struct anv_shader_bin **shaders,
+                                       const struct anv_shader_bin **shaders,
                                        uint32_t num_shaders);
 
 void genX(cmd_buffer_flush_gfx_hw_state)(struct anv_cmd_buffer *cmd_buffer);
@@ -232,12 +233,9 @@ void genX(cmd_buffer_ensure_cfe_state)(struct anv_cmd_buffer *cmd_buffer,
                                        uint32_t total_scratch);
 
 void
-genX(emit_urb_setup)(struct anv_device *device, struct anv_batch *batch,
-                     const struct intel_l3_config *l3_config,
-                     VkShaderStageFlags active_stages,
-                     const struct intel_urb_config *urb_cfg_in,
-                     struct intel_urb_config *urb_cfg_out,
-                     enum intel_urb_deref_block_size *deref_block_size);
+genX(emit_urb_setup)(struct anv_batch *batch,
+                     const struct anv_device *device,
+                     const struct intel_urb_config *urb_cfg);
 
 void genX(emit_sample_pattern)(struct anv_batch *batch,
                                const struct vk_sample_locations_state *sl);
@@ -374,10 +372,10 @@ void genX(batch_emit_breakpoint)(struct anv_batch *batch,
 static inline void
 genX(emit_breakpoint)(struct anv_batch *batch,
                       struct anv_device *device,
-                      bool emit_before_draw)
+                      bool emit_before_draw_or_dispatch)
 {
-   if (INTEL_DEBUG(DEBUG_DRAW_BKP))
-      genX(batch_emit_breakpoint)(batch, device, emit_before_draw);
+   if (INTEL_DEBUG(DEBUG_DRAW_BKP) || INTEL_DEBUG(DEBUG_DISPATCH_BKP))
+      genX(batch_emit_breakpoint)(batch, device, emit_before_draw_or_dispatch);
 }
 
 void
@@ -433,20 +431,18 @@ genX(cmd_buffer_emit_push_descriptor_surfaces)(struct anv_cmd_buffer *cmd_buffer
 
 static inline VkShaderStageFlags
 genX(cmd_buffer_flush_push_descriptors)(struct anv_cmd_buffer *cmd_buffer,
-                                        struct anv_cmd_pipeline_state *state,
-                                        struct anv_pipeline *pipeline)
+                                        struct anv_cmd_pipeline_state *state)
 {
-   if (!pipeline->use_push_descriptor && !pipeline->use_push_descriptor_buffer)
+   if (state->push_buffer_stages == 0 && state->push_descriptor_stages == 0)
       return 0;
 
-   assert(pipeline->layout.push_descriptor_set_index != -1);
+   assert(state->push_descriptor_index != UINT8_MAX);
    struct anv_descriptor_set *set =
-      state->descriptors[pipeline->layout.push_descriptor_set_index];
+      state->descriptors[state->push_descriptor_index];
    assert(set->is_push);
 
    const VkShaderStageFlags push_buffer_dirty =
-      cmd_buffer->state.push_descriptors_dirty &
-      pipeline->use_push_descriptor_buffer;
+      cmd_buffer->state.push_descriptors_dirty & state->push_buffer_stages;
    if (push_buffer_dirty) {
       if (set->desc_surface_state.map == NULL)
          genX(cmd_buffer_emit_push_descriptor_buffer_surface)(cmd_buffer, set);
@@ -456,7 +452,7 @@ genX(cmd_buffer_flush_push_descriptors)(struct anv_cmd_buffer *cmd_buffer,
    }
 
    const VkShaderStageFlags push_descriptor_dirty =
-      cmd_buffer->state.push_descriptors_dirty & pipeline->use_push_descriptor;
+      cmd_buffer->state.push_descriptors_dirty & state->push_descriptor_stages;
    if (push_descriptor_dirty) {
       genX(cmd_buffer_emit_push_descriptor_surfaces)(cmd_buffer, set);
 

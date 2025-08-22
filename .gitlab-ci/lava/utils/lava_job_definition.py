@@ -11,7 +11,7 @@ from ruamel.yaml import YAML
 
 from os import getenv
 
-from lava.utils.lava_farm import get_lava_farm
+from lava.utils.lava_farm import get_lava_farm, get_lava_boot_method
 from lava.utils.log_section import LAVA_DEPLOY_TIMEOUT
 from lava.utils.ssh_job_definition import (
     generate_docker_test,
@@ -60,11 +60,15 @@ class LAVAJobDefinition:
         if FORCE_UART:
             return False
 
-        # Only Collabora's farm supports to run docker container as a LAVA actions,
-        # which is required to follow the job in a SSH section
         current_farm = get_lava_farm()
+        boot_method = get_lava_boot_method()
 
-        return current_farm == "collabora"
+        # Some Chromebooks have unreliable serial connections, so SSH is preferred.
+        # Only Collabora's farm supports running docker container as a LAVA actions,
+        # which is required to follow the job in an SSH section
+        # Chromebooks use the "depthcharge" boot method, so use SSH in that case,
+        # and UART for everything else.
+        return current_farm == "collabora" and boot_method == "depthcharge"
 
     def generate_lava_yaml_payload(self) -> dict[str, Any]:
         """
@@ -249,20 +253,17 @@ class LAVAJobDefinition:
         return steps
 
     def init_stage1_steps(self) -> list[str]:
-        run_steps = []
         # job execution script:
-        #   - inline .gitlab-ci/common/init-stage1.sh
+        #   - source .gitlab-ci/common/init-stage1.sh
         #   - fetch and unpack per-pipeline build artifacts from build job
-        #   - fetch, unpack and encode per-job env from lava-submit.sh
+        #   - inline and encode per-job env from lava-submit.sh
         #   - exec .gitlab-ci/common/init-stage2.sh
-
-        with open(self.job_submitter.first_stage_init, "r") as init_sh:
-            # For vmware farm, patch nameserver as 8.8.8.8 is off limit.
-            # This is temporary and will be reverted once the farm is moved.
-            if self.job_submitter.mesa_job_name.startswith("vmware-"):
-                run_steps += [x.rstrip().replace("nameserver 8.8.8.8", "nameserver 192.19.189.10") for x in init_sh if not x.startswith("#") and x.rstrip()]
-            else:
-                run_steps += [x.rstrip() for x in init_sh if not x.startswith("#") and x.rstrip()]
+        run_steps = [
+            f"FARM={self.job_submitter.farm} "
+            # We need to source the init-stage1.sh script, so that the environment
+            # variables including PWD are set in the current shell.
+            f". {self.job_submitter.project_dir}/install/common/init-stage1.sh"
+        ]
 
         # We cannot distribute the Adreno 660 shader firmware inside rootfs,
         # since the license isn't bundled inside the repository

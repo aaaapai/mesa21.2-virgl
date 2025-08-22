@@ -41,7 +41,7 @@ pub struct SPIRVKernelArg {
 }
 
 pub struct CLCHeader<'a> {
-    pub name: CString,
+    pub name: &'a CString,
     pub source: &'a CString,
 }
 
@@ -339,7 +339,7 @@ impl SPIRVBin {
                 self.spirv.size / 4,
                 spec_constants.as_mut_ptr(),
                 spec_constants.len() as u32,
-                gl_shader_stage::MESA_SHADER_KERNEL,
+                mesa_shader_stage::MESA_SHADER_KERNEL,
                 c_entry.as_ptr(),
                 &spirv_options,
                 nir_options,
@@ -350,7 +350,8 @@ impl SPIRVBin {
     }
 
     pub fn get_lib_clc(screen: &PipeScreen, spirv_caps: &spirv_capabilities) -> Option<NirShader> {
-        let nir_options = screen.nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE);
+        let nir_options =
+            screen.nir_shader_compiler_options(mesa_shader_stage::MESA_SHADER_COMPUTE);
         let address_bits = screen.compute_caps().address_bits;
         let spirv_options =
             Self::get_spirv_options(false, ptr::null(), address_bits, spirv_caps, None);

@@ -28,6 +28,7 @@
 #include "genxml/genX_rt_pack.h"
 
 #include "common/intel_compute_slm.h"
+#include "common/intel_common.h"
 #include "common/intel_genX_state_brw.h"
 #include "common/intel_l3_config.h"
 #include "common/intel_sample_positions.h"
@@ -123,7 +124,7 @@ vertex_element_comp_control(enum isl_format format, unsigned comp)
    case 1: bits = isl_format_layouts[format].channels.g.bits; break;
    case 2: bits = isl_format_layouts[format].channels.b.bits; break;
    case 3: bits = isl_format_layouts[format].channels.a.bits; break;
-   default: unreachable("Invalid component");
+   default: UNREACHABLE("Invalid component");
    }
 
    /*
@@ -174,7 +175,8 @@ emit_ves_vf_instancing(struct anv_batch *batch,
                        bool emit_in_pipeline)
 {
    const struct anv_device *device = pipeline->base.base.device;
-   const struct brw_vs_prog_data *vs_prog_data = get_vs_prog_data(pipeline);
+   const struct brw_vs_prog_data *vs_prog_data =
+      get_pipeline_vs_prog_data(pipeline);
    const uint64_t inputs_read = vs_prog_data->inputs_read;
    const uint64_t double_inputs_read =
       vs_prog_data->double_inputs_read & inputs_read;
@@ -213,10 +215,8 @@ emit_ves_vf_instancing(struct anv_batch *batch,
    }
 
    u_foreach_bit(a, vi->attributes_valid) {
-      enum isl_format format = anv_get_vbo_format(device->physical,
-                                                  vi->attributes[a].format,
-                                                  VK_IMAGE_ASPECT_COLOR_BIT,
-                                                  VK_IMAGE_TILING_LINEAR);
+      enum isl_format format = anv_get_vbo_format(
+         device->physical, vi->attributes[a].format);
       assume(format < ISL_NUM_FORMATS);
 
       uint32_t binding = vi->attributes[a].binding;
@@ -276,10 +276,10 @@ emit_ves_vf_instancing(struct anv_batch *batch,
 }
 
 void
-genX(batch_emit_vertex_input)(struct anv_batch *batch,
-                              struct anv_device *device,
-                              struct anv_graphics_pipeline *pipeline,
-                              const struct vk_vertex_input_state *vi)
+genX(batch_emit_pipeline_vertex_input)(struct anv_batch *batch,
+                                       struct anv_device *device,
+                                       struct anv_graphics_pipeline *pipeline,
+                                       const struct vk_vertex_input_state *vi)
 {
    const uint32_t ve_count =
       pipeline->vs_input_elements + pipeline->svgs_count;
@@ -324,7 +324,7 @@ emit_vertex_input(struct anv_graphics_pipeline *pipeline,
                              pipeline, vi, true /* emit_in_pipeline */);
    }
 
-   const struct brw_vs_prog_data *vs_prog_data = get_vs_prog_data(pipeline);
+   const struct brw_vs_prog_data *vs_prog_data = get_pipeline_vs_prog_data(pipeline);
    const bool needs_svgs_elem = pipeline->svgs_count > 1 ||
                                 !vs_prog_data->uses_drawid;
    const uint32_t id_slot = pipeline->vs_input_elements;
@@ -444,201 +444,17 @@ emit_vertex_input(struct anv_graphics_pipeline *pipeline,
    }
 }
 
-void
-genX(emit_urb_setup)(struct anv_device *device, struct anv_batch *batch,
-                     const struct intel_l3_config *l3_config,
-                     VkShaderStageFlags active_stages,
-                     const struct intel_urb_config *urb_cfg_in,
-                     struct intel_urb_config *urb_cfg_out,
-                     enum intel_urb_deref_block_size *deref_block_size)
-{
-   const struct intel_device_info *devinfo = device->info;
-
-   bool constrained;
-   intel_get_urb_config(devinfo, l3_config,
-                        active_stages &
-                           VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
-                        active_stages & VK_SHADER_STAGE_GEOMETRY_BIT,
-                        urb_cfg_out, deref_block_size,
-                        &constrained);
-
-#if INTEL_NEEDS_WA_16014912113
-   if (genX(need_wa_16014912113)(urb_cfg_in, urb_cfg_out)) {
-      for (int i = 0; i <= MESA_SHADER_GEOMETRY; i++) {
-#if GFX_VER >= 12
-         anv_batch_emit(batch, GENX(3DSTATE_URB_ALLOC_VS), urb) {
-            urb._3DCommandSubOpcode             += i;
-            urb.VSURBEntryAllocationSize        = urb_cfg_in->size[i] - 1;
-            urb.VSURBStartingAddressSlice0      = urb_cfg_in->start[i];
-            urb.VSURBStartingAddressSliceN      = urb_cfg_in->start[i];
-            urb.VSNumberofURBEntriesSlice0      = i == 0 ? 256 : 0;
-            urb.VSNumberofURBEntriesSliceN      = i == 0 ? 256 : 0;
-         }
-#else
-         anv_batch_emit(batch, GENX(3DSTATE_URB_VS), urb) {
-            urb._3DCommandSubOpcode      += i;
-            urb.VSURBStartingAddress      = urb_cfg_in->start[i];
-            urb.VSURBEntryAllocationSize  = urb_cfg_in->size[i] - 1;
-            urb.VSNumberofURBEntries      = i == 0 ? 256 : 0;
-         }
-#endif
-      }
-      genx_batch_emit_pipe_control(batch, device->info, _3D,
-                                   ANV_PIPE_HDC_PIPELINE_FLUSH_BIT);
-   }
-#endif
-
-   for (int i = 0; i <= MESA_SHADER_GEOMETRY; i++) {
-#if GFX_VER >= 12
-      anv_batch_emit(batch, GENX(3DSTATE_URB_ALLOC_VS), urb) {
-         urb._3DCommandSubOpcode             += i;
-         urb.VSURBEntryAllocationSize        = urb_cfg_out->size[i] - 1;
-         urb.VSURBStartingAddressSlice0      = urb_cfg_out->start[i];
-         urb.VSURBStartingAddressSliceN      = urb_cfg_out->start[i];
-         urb.VSNumberofURBEntriesSlice0      = urb_cfg_out->entries[i];
-         urb.VSNumberofURBEntriesSliceN      = urb_cfg_out->entries[i];
-      }
-#else
-      anv_batch_emit(batch, GENX(3DSTATE_URB_VS), urb) {
-         urb._3DCommandSubOpcode      += i;
-         urb.VSURBStartingAddress      = urb_cfg_out->start[i];
-         urb.VSURBEntryAllocationSize  = urb_cfg_out->size[i] - 1;
-         urb.VSNumberofURBEntries      = urb_cfg_out->entries[i];
-      }
-#endif
-   }
-
-#if GFX_VERx10 >= 125
-   if (device->vk.enabled_extensions.EXT_mesh_shader) {
-      anv_batch_emit(batch, GENX(3DSTATE_URB_ALLOC_MESH), zero);
-      anv_batch_emit(batch, GENX(3DSTATE_URB_ALLOC_TASK), zero);
-   }
-#endif
-}
-
-#if GFX_VERx10 >= 125
-static void
-emit_urb_setup_mesh(struct anv_graphics_pipeline *pipeline,
-                    enum intel_urb_deref_block_size *deref_block_size)
-{
-   const struct intel_device_info *devinfo = pipeline->base.base.device->info;
-
-   const struct brw_task_prog_data *task_prog_data =
-      anv_pipeline_has_stage(pipeline, MESA_SHADER_TASK) ?
-      get_task_prog_data(pipeline) : NULL;
-   const struct brw_mesh_prog_data *mesh_prog_data = get_mesh_prog_data(pipeline);
-
-   const struct intel_mesh_urb_allocation alloc =
-      intel_get_mesh_urb_config(devinfo, pipeline->base.base.l3_config,
-                                task_prog_data ? task_prog_data->map.size_dw : 0,
-                                mesh_prog_data->map.size / 4);
-
-   /* Zero out the primitive pipeline URB allocations. */
-   for (int i = 0; i <= MESA_SHADER_GEOMETRY; i++) {
-#if GFX_VER >= 12
-      anv_pipeline_emit(pipeline, final.urb, GENX(3DSTATE_URB_ALLOC_VS), urb) {
-         urb._3DCommandSubOpcode += i;
-      }
-#else
-      anv_pipeline_emit(pipeline, final.urb, GENX(3DSTATE_URB_VS), urb) {
-         urb._3DCommandSubOpcode += i;
-      }
-#endif
-   }
-
-   anv_pipeline_emit(pipeline, final.urb, GENX(3DSTATE_URB_ALLOC_TASK), urb) {
-      if (task_prog_data) {
-         urb.TASKURBEntryAllocationSize   = alloc.task_entry_size_64b - 1;
-         urb.TASKNumberofURBEntriesSlice0 = alloc.task_entries;
-         urb.TASKNumberofURBEntriesSliceN = alloc.task_entries;
-         urb.TASKURBStartingAddressSlice0 = alloc.task_starting_address_8kb;
-         urb.TASKURBStartingAddressSliceN = alloc.task_starting_address_8kb;
-      }
-   }
-
-   anv_pipeline_emit(pipeline, final.urb, GENX(3DSTATE_URB_ALLOC_MESH), urb) {
-      urb.MESHURBEntryAllocationSize   = alloc.mesh_entry_size_64b - 1;
-      urb.MESHNumberofURBEntriesSlice0 = alloc.mesh_entries;
-      urb.MESHNumberofURBEntriesSliceN = alloc.mesh_entries;
-      urb.MESHURBStartingAddressSlice0 = alloc.mesh_starting_address_8kb;
-      urb.MESHURBStartingAddressSliceN = alloc.mesh_starting_address_8kb;
-   }
-
-   *deref_block_size = alloc.deref_block_size;
-}
-#endif
-
-static void
-emit_urb_setup(struct anv_graphics_pipeline *pipeline,
-               enum intel_urb_deref_block_size *deref_block_size)
-{
-#if GFX_VERx10 >= 125
-   if (anv_pipeline_is_mesh(pipeline)) {
-      emit_urb_setup_mesh(pipeline, deref_block_size);
-      return;
-   }
-#endif
-   for (int i = MESA_SHADER_VERTEX; i <= MESA_SHADER_GEOMETRY; i++) {
-      const struct brw_vue_prog_data *prog_data =
-         !anv_pipeline_has_stage(pipeline, i) ? NULL :
-         (const struct brw_vue_prog_data *) pipeline->base.shaders[i]->prog_data;
-
-      pipeline->urb_cfg.size[i] = prog_data ? prog_data->urb_entry_size : 1;
-   }
-
-   struct anv_device *device = pipeline->base.base.device;
-   const struct intel_device_info *devinfo = device->info;
-
-
-   bool constrained;
-   intel_get_urb_config(devinfo,
-                        pipeline->base.base.l3_config,
-                        pipeline->base.base.active_stages &
-                           VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
-                        pipeline->base.base.active_stages &
-                           VK_SHADER_STAGE_GEOMETRY_BIT,
-                        &pipeline->urb_cfg, deref_block_size,
-                        &constrained);
-
-   for (int i = 0; i <= MESA_SHADER_GEOMETRY; i++) {
-#if GFX_VER >= 12
-      anv_pipeline_emit(pipeline, final.urb, GENX(3DSTATE_URB_ALLOC_VS), urb) {
-         urb._3DCommandSubOpcode          += i;
-         urb.VSURBEntryAllocationSize      = pipeline->urb_cfg.size[i] - 1;
-         urb.VSURBStartingAddressSlice0    = pipeline->urb_cfg.start[i];
-         urb.VSURBStartingAddressSliceN    = pipeline->urb_cfg.start[i];
-         urb.VSNumberofURBEntriesSlice0    = pipeline->urb_cfg.entries[i];
-         urb.VSNumberofURBEntriesSliceN    = pipeline->urb_cfg.entries[i];
-      }
-#else
-      anv_pipeline_emit(pipeline, final.urb, GENX(3DSTATE_URB_VS), urb) {
-         urb._3DCommandSubOpcode      += i;
-         urb.VSURBStartingAddress      = pipeline->urb_cfg.start[i];
-         urb.VSURBEntryAllocationSize  = pipeline->urb_cfg.size[i] - 1;
-         urb.VSNumberofURBEntries      = pipeline->urb_cfg.entries[i];
-      }
-#endif
-   }
-
-#if GFX_VERx10 >= 125
-   if (device->vk.enabled_extensions.EXT_mesh_shader) {
-      anv_pipeline_emit(pipeline, final.urb, GENX(3DSTATE_URB_ALLOC_TASK), zero);
-      anv_pipeline_emit(pipeline, final.urb, GENX(3DSTATE_URB_ALLOC_MESH), zero);
-   }
-#endif
-
-}
-
 static bool
 sbe_primitive_id_override(struct anv_graphics_pipeline *pipeline)
 {
-   const struct brw_wm_prog_data *wm_prog_data = get_wm_prog_data(pipeline);
+   const struct brw_wm_prog_data *wm_prog_data =
+      get_pipeline_wm_prog_data(pipeline);
    if (!wm_prog_data)
       return false;
 
    if (anv_pipeline_is_mesh(pipeline)) {
       const struct brw_mesh_prog_data *mesh_prog_data =
-         get_mesh_prog_data(pipeline);
+         get_pipeline_mesh_prog_data(pipeline);
       const struct brw_mue_map *mue = &mesh_prog_data->map;
       return (wm_prog_data->inputs & VARYING_BIT_PRIMITIVE_ID) &&
               mue->per_primitive_offsets[VARYING_SLOT_PRIMITIVE_ID] == -1;
@@ -649,250 +465,6 @@ sbe_primitive_id_override(struct anv_graphics_pipeline *pipeline)
 
    return (wm_prog_data->inputs & VARYING_BIT_PRIMITIVE_ID) &&
           (fs_input_map->slots_valid & VARYING_BIT_PRIMITIVE_ID) == 0;
-}
-
-static void
-emit_3dstate_sbe(struct anv_graphics_pipeline *pipeline)
-{
-   const struct brw_wm_prog_data *wm_prog_data = get_wm_prog_data(pipeline);
-   const struct brw_mesh_prog_data *mesh_prog_data =
-      get_mesh_prog_data(pipeline);
-   UNUSED const struct anv_device *device = pipeline->base.base.device;
-
-   if (!anv_pipeline_has_stage(pipeline, MESA_SHADER_FRAGMENT)) {
-      anv_pipeline_emit(pipeline, final.sbe, GENX(3DSTATE_SBE), sbe);
-      anv_pipeline_emit(pipeline, final.sbe_swiz, GENX(3DSTATE_SBE_SWIZ), sbe);
-#if GFX_VERx10 >= 125
-      if (device->vk.enabled_extensions.EXT_mesh_shader)
-         anv_pipeline_emit(pipeline, final.sbe_mesh, GENX(3DSTATE_SBE_MESH), sbe);
-#endif
-      return;
-   }
-
-   const struct intel_vue_map *vue_map =
-      anv_pipeline_is_mesh(pipeline) ?
-      &get_mesh_prog_data(pipeline)->map.vue_map :
-      &anv_pipeline_get_last_vue_prog_data(pipeline)->vue_map;
-
-   anv_pipeline_emit(pipeline, final.sbe, GENX(3DSTATE_SBE), sbe) {
-   anv_pipeline_emit(pipeline, final.sbe_swiz, GENX(3DSTATE_SBE_SWIZ), swiz) {
-      int max_source_attr = 0;
-      uint32_t vertex_read_offset, vertex_read_length, vertex_varyings, flat_inputs;
-      brw_compute_sbe_per_vertex_urb_read(
-         vue_map, mesh_prog_data != NULL,
-         mesh_prog_data ? mesh_prog_data->map.wa_18019110168_active : false,
-         wm_prog_data,
-         &vertex_read_offset, &vertex_read_length, &vertex_varyings,
-         &pipeline->primitive_id_index,
-         &flat_inputs);
-
-      pipeline->first_vue_slot = vertex_read_offset * 2;
-
-      sbe.AttributeSwizzleEnable = anv_pipeline_is_primitive(pipeline);
-      sbe.PointSpriteTextureCoordinateOrigin = UPPERLEFT;
-      sbe.ConstantInterpolationEnable = flat_inputs;
-      sbe.NumberofSFOutputAttributes = vertex_varyings;
-#if GFX_VERx10 >= 200
-      sbe.VertexAttributesBypass = wm_prog_data->vertex_attributes_bypass;
-#endif
-
-      for (unsigned i = 0; i < 32; i++)
-         sbe.AttributeActiveComponentFormat[i] = ACF_XYZW;
-
-      /* As far as we can test, some of the fields in 3DSTATE_SBE & all of
-       * 3DSTATE_SBE_SWIZ has no effect when the pipeline is using Mesh so
-       * don't bother filling those fields.
-       */
-      if (anv_pipeline_is_primitive(pipeline)) {
-         for (uint8_t idx = 0; idx < wm_prog_data->urb_setup_attribs_count; idx++) {
-            uint8_t attr = wm_prog_data->urb_setup_attribs[idx];
-            int input_index = wm_prog_data->urb_setup[attr];
-
-            assert(0 <= input_index);
-
-            if (attr == VARYING_SLOT_PNTC) {
-               sbe.PointSpriteTextureCoordinateEnable = 1 << input_index;
-               continue;
-            }
-
-            const int slot = vue_map->varying_to_slot[attr];
-
-            if (slot == -1) {
-               /* This attribute does not exist in the VUE--that means that
-                * the vertex shader did not write to it. It could be that it's
-                * a regular varying read by the fragment shader but not
-                * written by the vertex shader or it's gl_PrimitiveID. In the
-                * first case the value is undefined, in the second it needs to
-                * be gl_PrimitiveID.
-                */
-               swiz.Attribute[input_index].ConstantSource = PRIM_ID;
-               swiz.Attribute[input_index].ComponentOverrideX = true;
-               swiz.Attribute[input_index].ComponentOverrideY = true;
-               swiz.Attribute[input_index].ComponentOverrideZ = true;
-               swiz.Attribute[input_index].ComponentOverrideW = true;
-               continue;
-            }
-
-            /* We have to subtract two slots to account for the URB entry
-             * output read offset in the VS and GS stages.
-             */
-            const int source_attr = slot - 2 * vertex_read_offset;
-            assert(source_attr >= 0 && source_attr < 32);
-            max_source_attr = MAX2(max_source_attr, source_attr);
-            /* The hardware can only do overrides on 16 overrides at a time,
-             * and the other up to 16 have to be lined up so that the input
-             * index = the output index. We'll need to do some tweaking to
-             * make sure that's the case.
-             */
-            if (input_index < 16)
-               swiz.Attribute[input_index].SourceAttribute = source_attr;
-            else
-               assert(source_attr == input_index);
-         }
-
-         sbe.VertexURBEntryReadOffset = vertex_read_offset;
-         sbe.VertexURBEntryReadLength = vertex_read_length;
-         sbe.ForceVertexURBEntryReadOffset = true;
-         sbe.ForceVertexURBEntryReadLength = true;
-      }
-
-      /* Ask the hardware to supply PrimitiveID if the fragment shader reads
-       * it but a previous stage didn't write one.
-       */
-      if (sbe_primitive_id_override(pipeline)) {
-         sbe.PrimitiveIDOverrideAttributeSelect =
-            wm_prog_data->urb_setup[VARYING_SLOT_PRIMITIVE_ID];
-         sbe.PrimitiveIDOverrideComponentX = true;
-         sbe.PrimitiveIDOverrideComponentY = true;
-         sbe.PrimitiveIDOverrideComponentZ = true;
-         sbe.PrimitiveIDOverrideComponentW = true;
-      }
-
-#if GFX_VERx10 >= 125
-      if (device->vk.enabled_extensions.EXT_mesh_shader) {
-         anv_pipeline_emit(pipeline, final.sbe_mesh,
-                           GENX(3DSTATE_SBE_MESH), sbe_mesh) {
-            if (mesh_prog_data == NULL)
-               continue;
-
-            sbe_mesh.PerVertexURBEntryOutputReadOffset = vertex_read_offset;
-            sbe_mesh.PerVertexURBEntryOutputReadLength = vertex_read_length;
-
-            uint32_t prim_read_offset, prim_read_length;
-            brw_compute_sbe_per_primitive_urb_read(wm_prog_data->per_primitive_inputs,
-                                                   wm_prog_data->num_per_primitive_inputs,
-                                                   &mesh_prog_data->map,
-                                                   &prim_read_offset,
-                                                   &prim_read_length);
-
-            sbe_mesh.PerPrimitiveURBEntryOutputReadOffset = prim_read_offset;
-            sbe_mesh.PerPrimitiveURBEntryOutputReadLength = prim_read_length;
-         }
-      }
-#endif
-   }
-   }
-}
-
-static void
-emit_rs_state(struct anv_graphics_pipeline *pipeline,
-              const struct vk_input_assembly_state *ia,
-              const struct vk_rasterization_state *rs,
-              const struct vk_multisample_state *ms,
-              const struct vk_render_pass_state *rp,
-              enum intel_urb_deref_block_size urb_deref_block_size)
-{
-   anv_pipeline_emit(pipeline, partial.sf, GENX(3DSTATE_SF), sf) {
-      sf.ViewportTransformEnable = true;
-      sf.StatisticsEnable = true;
-      sf.VertexSubPixelPrecisionSelect = _8Bit;
-      sf.AALineDistanceMode = true;
-
-#if GFX_VER >= 12
-      sf.DerefBlockSize = urb_deref_block_size;
-#endif
-
-      bool point_from_shader;
-      if (anv_pipeline_is_primitive(pipeline)) {
-         const struct brw_vue_prog_data *last_vue_prog_data =
-            anv_pipeline_get_last_vue_prog_data(pipeline);
-         point_from_shader = last_vue_prog_data->vue_map.slots_valid & VARYING_BIT_PSIZ;
-      } else {
-         assert(anv_pipeline_is_mesh(pipeline));
-         const struct brw_mesh_prog_data *mesh_prog_data = get_mesh_prog_data(pipeline);
-         point_from_shader = mesh_prog_data->map.vue_map.slots_valid & VARYING_BIT_PSIZ;
-      }
-
-      if (point_from_shader) {
-         sf.PointWidthSource = Vertex;
-      } else {
-         sf.PointWidthSource = State;
-         sf.PointWidth = 1.0;
-      }
-   }
-}
-
-static void
-emit_3dstate_clip(struct anv_graphics_pipeline *pipeline,
-                  const struct vk_input_assembly_state *ia,
-                  const struct vk_viewport_state *vp,
-                  const struct vk_rasterization_state *rs)
-{
-   const struct brw_wm_prog_data *wm_prog_data = get_wm_prog_data(pipeline);
-   (void) wm_prog_data;
-
-   anv_pipeline_emit(pipeline, partial.clip, GENX(3DSTATE_CLIP), clip) {
-      clip.ClipEnable               = true;
-      clip.StatisticsEnable         = true;
-      clip.EarlyCullEnable          = true;
-      clip.GuardbandClipTestEnable  = true;
-
-      clip.VertexSubPixelPrecisionSelect = _8Bit;
-      clip.ClipMode = CLIPMODE_NORMAL;
-
-      clip.MinimumPointWidth = 0.125;
-      clip.MaximumPointWidth = 255.875;
-
-      /* TODO(mesh): Multiview. */
-      if (anv_pipeline_is_primitive(pipeline)) {
-         const struct brw_vue_prog_data *last =
-            anv_pipeline_get_last_vue_prog_data(pipeline);
-
-         /* From the Vulkan 1.0.45 spec:
-          *
-          *    "If the last active vertex processing stage shader entry point's
-          *    interface does not include a variable decorated with Layer, then
-          *    the first layer is used."
-          */
-         clip.ForceZeroRTAIndexEnable =
-            !(last->vue_map.slots_valid & VARYING_BIT_LAYER);
-
-      } else if (anv_pipeline_is_mesh(pipeline)) {
-         const struct brw_mesh_prog_data *mesh_prog_data = get_mesh_prog_data(pipeline);
-
-         clip.ForceZeroRTAIndexEnable =
-            mesh_prog_data->map.per_primitive_offsets[VARYING_SLOT_LAYER] < 0;
-      }
-
-      clip.NonPerspectiveBarycentricEnable = wm_prog_data ?
-         wm_prog_data->uses_nonperspective_interp_modes : 0;
-   }
-
-#if GFX_VERx10 >= 125
-   const struct anv_device *device = pipeline->base.base.device;
-   if (device->vk.enabled_extensions.EXT_mesh_shader) {
-      anv_pipeline_emit(pipeline, final.clip_mesh,
-                        GENX(3DSTATE_CLIP_MESH), clip_mesh) {
-         if (!anv_pipeline_is_mesh(pipeline))
-            continue;
-
-         const struct brw_mesh_prog_data *mesh_prog_data = get_mesh_prog_data(pipeline);
-         clip_mesh.PrimitiveHeaderEnable = mesh_prog_data->map.has_per_primitive_header;
-         clip_mesh.UserClipDistanceClipTestEnableBitmask = mesh_prog_data->clip_distance_mask;
-         clip_mesh.UserClipDistanceCullTestEnableBitmask = mesh_prog_data->cull_distance_mask;
-      }
-   }
-#endif
 }
 
 static void
@@ -1059,7 +631,7 @@ get_sampler_count(const struct anv_shader_bin *bin)
 
 static UNUSED struct anv_address
 get_scratch_address(struct anv_pipeline *pipeline,
-                    gl_shader_stage stage,
+                    mesa_shader_stage stage,
                     const struct anv_shader_bin *bin)
 {
    return (struct anv_address) {
@@ -1078,7 +650,7 @@ get_scratch_space(const struct anv_shader_bin *bin)
 
 static UNUSED uint32_t
 get_scratch_surf(struct anv_pipeline *pipeline,
-                 gl_shader_stage stage,
+                 mesa_shader_stage stage,
                  const struct anv_shader_bin *bin,
                  bool protected)
 {
@@ -1100,7 +672,8 @@ static void
 emit_3dstate_vs(struct anv_graphics_pipeline *pipeline)
 {
    const struct intel_device_info *devinfo = pipeline->base.base.device->info;
-   const struct brw_vs_prog_data *vs_prog_data = get_vs_prog_data(pipeline);
+   const struct brw_vs_prog_data *vs_prog_data =
+      get_pipeline_vs_prog_data(pipeline);
    const struct anv_shader_bin *vs_bin =
       pipeline->base.shaders[MESA_SHADER_VERTEX];
 
@@ -1213,8 +786,10 @@ emit_3dstate_hs_ds(struct anv_graphics_pipeline *pipeline,
    const struct anv_shader_bin *tes_bin =
       pipeline->base.shaders[MESA_SHADER_TESS_EVAL];
 
-   const struct brw_tcs_prog_data *tcs_prog_data = get_tcs_prog_data(pipeline);
-   const struct brw_tes_prog_data *tes_prog_data = get_tes_prog_data(pipeline);
+   const struct brw_tcs_prog_data *tcs_prog_data =
+      get_pipeline_tcs_prog_data(pipeline);
+   const struct brw_tes_prog_data *tes_prog_data =
+      get_pipeline_tes_prog_data(pipeline);
 
    uint32_t hs_dwords[GENX(3DSTATE_HS_length)];
    anv_pipeline_emit_tmp(pipeline, hs_dwords, GENX(3DSTATE_HS), hs) {
@@ -1357,13 +932,13 @@ geom_or_tess_prim_id_used(struct anv_graphics_pipeline *pipeline)
 {
    const struct brw_tcs_prog_data *tcs_prog_data =
       anv_pipeline_has_stage(pipeline, MESA_SHADER_TESS_CTRL) ?
-      get_tcs_prog_data(pipeline) : NULL;
+      get_pipeline_tcs_prog_data(pipeline) : NULL;
    const struct brw_tes_prog_data *tes_prog_data =
       anv_pipeline_has_stage(pipeline, MESA_SHADER_TESS_EVAL) ?
-      get_tes_prog_data(pipeline) : NULL;
+      get_pipeline_tes_prog_data(pipeline) : NULL;
    const struct brw_gs_prog_data *gs_prog_data =
       anv_pipeline_has_stage(pipeline, MESA_SHADER_GEOMETRY) ?
-      get_gs_prog_data(pipeline) : NULL;
+      get_pipeline_gs_prog_data(pipeline) : NULL;
 
    return (tcs_prog_data && tcs_prog_data->include_primitive_id) ||
           (tes_prog_data && tes_prog_data->include_primitive_id) ||
@@ -1376,7 +951,7 @@ emit_3dstate_te(struct anv_graphics_pipeline *pipeline)
    anv_pipeline_emit(pipeline, partial.te, GENX(3DSTATE_TE), te) {
       if (anv_pipeline_has_stage(pipeline, MESA_SHADER_TESS_EVAL)) {
          const struct brw_tes_prog_data *tes_prog_data =
-            get_tes_prog_data(pipeline);
+            get_pipeline_tes_prog_data(pipeline);
 
          te.Partitioning = tes_prog_data->partitioning;
          te.TEDomain = tes_prog_data->domain;
@@ -1384,26 +959,8 @@ emit_3dstate_te(struct anv_graphics_pipeline *pipeline)
          te.MaximumTessellationFactorOdd = 63.0;
          te.MaximumTessellationFactorNotOdd = 64.0;
 #if GFX_VERx10 >= 125
-         const struct anv_device *device = pipeline->base.base.device;
-         if (intel_needs_workaround(device->info, 22012699309))
-            te.TessellationDistributionMode = TEDMODE_RR_STRICT;
-         else
-            te.TessellationDistributionMode = TEDMODE_RR_FREE;
-
-         if (intel_needs_workaround(device->info, 14015055625)) {
-            /* Wa_14015055625:
-             *
-             * Disable Tessellation Distribution when primitive Id is enabled.
-             */
-            if (sbe_primitive_id_override(pipeline) ||
-                geom_or_tess_prim_id_used(pipeline))
-               te.TessellationDistributionMode = TEDMODE_OFF;
-         }
-
-         if (!device->physical->instance->enable_te_distribution)
-            te.TessellationDistributionMode = TEDMODE_OFF;
-
 #if GFX_VER >= 20
+         const struct anv_device *device = pipeline->base.base.device;
          if (intel_needs_workaround(device->info, 16025857284))
             te.TessellationDistributionLevel = TEDLEVEL_PATCH;
          else
@@ -1438,7 +995,8 @@ emit_3dstate_gs(struct anv_graphics_pipeline *pipeline)
    const struct intel_device_info *devinfo = pipeline->base.base.device->info;
    const struct anv_shader_bin *gs_bin =
       pipeline->base.shaders[MESA_SHADER_GEOMETRY];
-   const struct brw_gs_prog_data *gs_prog_data = get_gs_prog_data(pipeline);
+   const struct brw_gs_prog_data *gs_prog_data =
+      get_pipeline_gs_prog_data(pipeline);
 
    uint32_t gs_dwords[GENX(3DSTATE_GS_length)];
    anv_pipeline_emit_tmp(pipeline, gs_dwords, GENX(3DSTATE_GS), gs) {
@@ -1517,7 +1075,8 @@ emit_3dstate_wm(struct anv_graphics_pipeline *pipeline,
                 const struct vk_color_blend_state *cb,
                 const struct vk_render_pass_state *rp)
 {
-   const struct brw_wm_prog_data *wm_prog_data = get_wm_prog_data(pipeline);
+   const struct brw_wm_prog_data *wm_prog_data =
+      get_pipeline_wm_prog_data(pipeline);
 
    anv_pipeline_emit(pipeline, partial.wm, GENX(3DSTATE_WM), wm) {
       wm.StatisticsEnable                    = true;
@@ -1553,7 +1112,8 @@ emit_3dstate_ps(struct anv_graphics_pipeline *pipeline,
       return;
    }
 
-   const struct brw_wm_prog_data *wm_prog_data = get_wm_prog_data(pipeline);
+   const struct brw_wm_prog_data *wm_prog_data =
+      get_pipeline_wm_prog_data(pipeline);
 
    uint32_t ps_dwords[GENX(3DSTATE_PS_length)];
    anv_pipeline_emit_tmp(pipeline, ps_dwords, GENX(3DSTATE_PS), ps) {
@@ -1614,7 +1174,8 @@ emit_3dstate_ps_extra(struct anv_graphics_pipeline *pipeline,
                       const struct vk_rasterization_state *rs,
                       const struct vk_graphics_pipeline_state *state)
 {
-   const struct brw_wm_prog_data *wm_prog_data = get_wm_prog_data(pipeline);
+   const struct brw_wm_prog_data *wm_prog_data =
+      get_pipeline_wm_prog_data(pipeline);
 
    if (!anv_pipeline_has_stage(pipeline, MESA_SHADER_FRAGMENT)) {
       anv_pipeline_emit(pipeline, partial.ps_extra, GENX(3DSTATE_PS_EXTRA), ps);
@@ -1672,7 +1233,8 @@ compute_kill_pixel(struct anv_graphics_pipeline *pipeline,
       return;
    }
 
-   const struct brw_wm_prog_data *wm_prog_data = get_wm_prog_data(pipeline);
+   const struct brw_wm_prog_data *wm_prog_data =
+      get_pipeline_wm_prog_data(pipeline);
 
    /* This computes the KillPixel portion of the computation for whether or
     * not we want to enable the PMA fix on gfx8 or gfx9.  It's given by this
@@ -1693,44 +1255,6 @@ compute_kill_pixel(struct anv_graphics_pipeline *pipeline,
       wm_prog_data->uses_omask ||
       (ms && ms->alpha_to_coverage_enable);
 }
-
-#if GFX_VER >= 12
-static void
-emit_3dstate_primitive_replication(struct anv_graphics_pipeline *pipeline,
-                                   const struct vk_render_pass_state *rp)
-{
-   if (anv_pipeline_is_mesh(pipeline)) {
-      anv_pipeline_emit(pipeline, final.primitive_replication,
-                        GENX(3DSTATE_PRIMITIVE_REPLICATION), pr);
-      return;
-   }
-
-   const int replication_count =
-      anv_pipeline_get_last_vue_prog_data(pipeline)->vue_map.num_pos_slots;
-
-   assert(replication_count >= 1);
-   if (replication_count == 1) {
-      anv_pipeline_emit(pipeline, final.primitive_replication,
-                        GENX(3DSTATE_PRIMITIVE_REPLICATION), pr);
-      return;
-   }
-
-   assert(replication_count == util_bitcount(rp->view_mask));
-   assert(replication_count <= MAX_VIEWS_FOR_PRIMITIVE_REPLICATION);
-
-   anv_pipeline_emit(pipeline, final.primitive_replication,
-                     GENX(3DSTATE_PRIMITIVE_REPLICATION), pr) {
-      pr.ReplicaMask = (1 << replication_count) - 1;
-      pr.ReplicationCount = replication_count - 1;
-
-      int i = 0;
-      u_foreach_bit(view_index, rp->view_mask) {
-         pr.RTAIOffset[i] = view_index;
-         i++;
-      }
-   }
-}
-#endif
 
 #if GFX_VERx10 >= 125
 static void
@@ -1774,7 +1298,8 @@ emit_task_state(struct anv_graphics_pipeline *pipeline)
    }
 
    const struct intel_device_info *devinfo = pipeline->base.base.device->info;
-   const struct brw_task_prog_data *task_prog_data = get_task_prog_data(pipeline);
+   const struct brw_task_prog_data *task_prog_data =
+      get_pipeline_task_prog_data(pipeline);
    const struct intel_cs_dispatch_info task_dispatch =
       brw_cs_get_dispatch_info(devinfo, &task_prog_data->base, NULL);
 
@@ -1824,7 +1349,8 @@ emit_mesh_state(struct anv_graphics_pipeline *pipeline)
    assert(anv_pipeline_is_mesh(pipeline));
 
    const struct anv_shader_bin *mesh_bin = pipeline->base.shaders[MESA_SHADER_MESH];
-   const struct brw_mesh_prog_data *mesh_prog_data = get_mesh_prog_data(pipeline);
+   const struct brw_mesh_prog_data *mesh_prog_data =
+      get_pipeline_mesh_prog_data(pipeline);
 
    uint32_t mesh_control_dwords[GENX(3DSTATE_MESH_CONTROL_length)];
    anv_pipeline_emit_tmp(pipeline, mesh_control_dwords, GENX(3DSTATE_MESH_CONTROL), mc) {
@@ -1867,7 +1393,7 @@ emit_mesh_state(struct anv_graphics_pipeline *pipeline)
       index_format = INDEX_U888X;
       break;
    default:
-      unreachable("invalid index format");
+      UNREACHABLE("invalid index format");
    }
 
    anv_pipeline_emit(pipeline, final.mesh_shader,
@@ -1913,6 +1439,13 @@ emit_mesh_state(struct anv_graphics_pipeline *pipeline)
       distrib.TaskDistributionBatchSize = devinfo->num_slices > 2 ? 4 : 9; /* 2^N thread groups */
       distrib.MeshDistributionBatchSize = devinfo->num_slices > 2 ? 3 : 3; /* 2^N thread groups */
    }
+
+   anv_pipeline_emit(pipeline, final.clip_mesh,
+                     GENX(3DSTATE_CLIP_MESH), clip_mesh) {
+      clip_mesh.PrimitiveHeaderEnable = mesh_prog_data->map.has_per_primitive_header;
+      clip_mesh.UserClipDistanceClipTestEnableBitmask = mesh_prog_data->clip_distance_mask;
+      clip_mesh.UserClipDistanceCullTestEnableBitmask = mesh_prog_data->cull_distance_mask;
+   }
 }
 #endif
 
@@ -1920,54 +1453,7 @@ void
 genX(graphics_pipeline_emit)(struct anv_graphics_pipeline *pipeline,
                              const struct vk_graphics_pipeline_state *state)
 {
-   enum intel_urb_deref_block_size urb_deref_block_size;
-   emit_urb_setup(pipeline, &urb_deref_block_size);
-
-   emit_rs_state(pipeline, state->ia, state->rs, state->ms, state->rp,
-                 urb_deref_block_size);
    compute_kill_pixel(pipeline, state->ms, state);
-
-   emit_3dstate_clip(pipeline, state->ia, state->vp, state->rs);
-
-#if GFX_VER >= 12
-   emit_3dstate_primitive_replication(pipeline, state->rp);
-#endif
-
-#if GFX_VERx10 >= 125
-   bool needs_instance_granularity =
-      intel_needs_workaround(pipeline->base.base.device->info, 14019166699) &&
-      (sbe_primitive_id_override(pipeline) ||
-       geom_or_tess_prim_id_used(pipeline));
-
-   anv_pipeline_emit(pipeline, partial.vfg, GENX(3DSTATE_VFG), vfg) {
-      /* Gfx12.5: If 3DSTATE_TE: TE Enable == 1 then RR_STRICT else RR_FREE */
-      vfg.DistributionMode =
-#if GFX_VER < 20
-         !anv_pipeline_has_stage(pipeline, MESA_SHADER_TESS_EVAL) ? RR_FREE :
-#endif
-         RR_STRICT;
-      vfg.DistributionGranularity = needs_instance_granularity ?
-         InstanceLevelGranularity : BatchLevelGranularity;
-#if INTEL_WA_14014851047_GFX_VER
-      vfg.GranularityThresholdDisable =
-         intel_needs_workaround(pipeline->base.base.device->info, 14014851047);
-#endif
-      /* 192 vertices for TRILIST_ADJ */
-      vfg.ListNBatchSizeScale = 0;
-      /* Batch size of 384 vertices */
-      vfg.List3BatchSizeScale = 2;
-      /* Batch size of 128 vertices */
-      vfg.List2BatchSizeScale = 1;
-      /* Batch size of 128 vertices */
-      vfg.List1BatchSizeScale = 2;
-      /* Batch size of 256 vertices for STRIP topologies */
-      vfg.StripBatchSizeScale = 3;
-      /* 192 control points for PATCHLIST_3 */
-      vfg.PatchBatchSizeScale = 1;
-      /* 192 control points for PATCHLIST_3 */
-      vfg.PatchBatchSizeMultiplier = 31;
-   }
-#endif
 
    if (anv_pipeline_is_primitive(pipeline)) {
       emit_vertex_input(pipeline, state, state->vi);
@@ -1991,6 +1477,8 @@ genX(graphics_pipeline_emit)(struct anv_graphics_pipeline *pipeline,
                            GENX(3DSTATE_MESH_SHADER), zero);
          anv_pipeline_emit(pipeline, final.mesh_distrib,
                            GENX(3DSTATE_MESH_DISTRIB), zero);
+         anv_pipeline_emit(pipeline, final.clip_mesh,
+                           GENX(3DSTATE_CLIP_MESH), zero);
          anv_pipeline_emit(pipeline, final.task_control,
                            GENX(3DSTATE_TASK_CONTROL), zero);
          anv_pipeline_emit(pipeline, final.task_control_protected,
@@ -2034,7 +1522,6 @@ genX(graphics_pipeline_emit)(struct anv_graphics_pipeline *pipeline,
 #endif
    }
 
-   emit_3dstate_sbe(pipeline);
    emit_3dstate_wm(pipeline, state->ia, state->rs,
                    state->ms, state->cb, state->rp);
    emit_3dstate_ps(pipeline, state->ms, state->cb);
@@ -2046,55 +1533,64 @@ genX(graphics_pipeline_emit)(struct anv_graphics_pipeline *pipeline,
 void
 genX(compute_pipeline_emit)(struct anv_compute_pipeline *pipeline)
 {
-   const struct brw_cs_prog_data *prog_data = get_cs_prog_data(pipeline);
-   anv_pipeline_setup_l3_config(&pipeline->base, prog_data->base.total_shared > 0);
-
+   const struct brw_cs_prog_data *prog_data =
+      (const struct brw_cs_prog_data *)pipeline->cs->prog_data;
    const struct intel_device_info *devinfo = pipeline->base.device->info;
    const struct intel_cs_dispatch_info dispatch =
       brw_cs_get_dispatch_info(devinfo, prog_data, NULL);
    const struct anv_shader_bin *shader = pipeline->cs;
 
-   struct GENX(COMPUTE_WALKER) walker =  {
-      GENX(COMPUTE_WALKER_header),
-#if GFX_VERx10 == 125
-      .SystolicModeEnable             = prog_data->uses_systolic,
+   struct GENX(COMPUTE_WALKER_BODY) walker =  {
+      /* HSD 14016252163: Use of Morton walk order (and batching using a batch
+       * size of 4) is expected to increase sampler cache hit rates by
+       * increasing sample address locality within a subslice.
+       */
+#if GFX_VER >= 30
+      .DispatchWalkOrder        = prog_data->uses_sampler ?
+                                  MortonWalk :
+                                  LinearWalk,
+      .ThreadGroupBatchSize     = prog_data->uses_sampler ? TG_BATCH_4 :
+                                                            TG_BATCH_1,
 #endif
-      .body = {
-         .SIMDSize                       = dispatch.simd_size / 16,
-         .MessageSIMD                    = dispatch.simd_size / 16,
-         .GenerateLocalID                = prog_data->generate_local_id != 0,
-         .EmitLocal                      = prog_data->generate_local_id,
-         .WalkOrder                      = prog_data->walk_order,
-         .TileLayout                     = prog_data->walk_order == INTEL_WALK_ORDER_YXZ ?
-                                           TileY32bpe : Linear,
-         .LocalXMaximum                  = prog_data->local_size[0] - 1,
-         .LocalYMaximum                  = prog_data->local_size[1] - 1,
-         .LocalZMaximum                  = prog_data->local_size[2] - 1,
-         .ExecutionMask                  = dispatch.right_mask,
-         .PostSync                       = {
-            .MOCS                        = anv_mocs(pipeline->base.device, NULL, 0),
-         },
-         .InterfaceDescriptor            = {
-            .KernelStartPointer                = shader->kernel.offset,
-            /* Typically set to 0 to avoid prefetching on every thread dispatch. */
-            .BindingTableEntryCount            = devinfo->verx10 == 125 ?
-            0 : 1 + MIN2(shader->bind_map.surface_count, 30),
-            .NumberofThreadsinGPGPUThreadGroup = dispatch.threads,
-            .SharedLocalMemorySize             =
-            intel_compute_slm_encode_size(GFX_VER, prog_data->base.total_shared),
-            .PreferredSLMAllocationSize        =
-            intel_compute_preferred_slm_calc_encode_size(devinfo,
-                                                         prog_data->base.total_shared,
-                                                         dispatch.group_size,
-                                                         dispatch.simd_size),
-            .NumberOfBarriers                  = prog_data->uses_barrier,
-         },
-         .EmitInlineParameter            = prog_data->uses_inline_push_addr,
+      .SIMDSize                       = dispatch.simd_size / 16,
+      .MessageSIMD                    = dispatch.simd_size / 16,
+      .GenerateLocalID                = prog_data->generate_local_id != 0,
+      .EmitLocal                      = prog_data->generate_local_id,
+      .WalkOrder                      = prog_data->walk_order,
+      .TileLayout                     = prog_data->walk_order == INTEL_WALK_ORDER_YXZ ?
+                                        TileY32bpe : Linear,
+      .LocalXMaximum                  = prog_data->local_size[0] - 1,
+      .LocalYMaximum                  = prog_data->local_size[1] - 1,
+      .LocalZMaximum                  = prog_data->local_size[2] - 1,
+      .PostSync                       = {
+         .MOCS                        = anv_mocs(pipeline->base.device, NULL, 0),
       },
+      .EmitInlineParameter            = prog_data->uses_inline_push_addr,
+      .InterfaceDescriptor            = {
+         .KernelStartPointer                = shader->kernel.offset,
+         .SamplerCount                      = DIV_ROUND_UP(CLAMP(shader->bind_map.sampler_count, 0, 16), 4),
+         /* Typically set to 0 to avoid prefetching on every thread dispatch. */
+         .BindingTableEntryCount            = devinfo->verx10 == 125 ?
+                                              0 : 1 + MIN2(shader->bind_map.surface_count, 30),
+         .NumberofThreadsinGPGPUThreadGroup = dispatch.threads,
+         .SharedLocalMemorySize             = intel_compute_slm_encode_size(
+            GFX_VER, prog_data->base.total_shared),
+         .PreferredSLMAllocationSize        = intel_compute_preferred_slm_calc_encode_size(
+            devinfo, prog_data->base.total_shared,
+            dispatch.group_size, dispatch.simd_size),
+         .NumberOfBarriers                  = prog_data->uses_barrier,
+#if GFX_VER >= 30
+         .RegistersPerThread                = ptl_register_blocks(prog_data->base.grf_used),
+#endif
+      },
+      .EmitInlineParameter            = prog_data->uses_inline_push_addr,
    };
 
-   assert(ARRAY_SIZE(pipeline->gfx125.compute_walker) >= GENX(COMPUTE_WALKER_length));
-   GENX(COMPUTE_WALKER_pack)(NULL, pipeline->gfx125.compute_walker, &walker);
+   assert(ARRAY_SIZE(pipeline->gfx125.compute_walker_body) >=
+          GENX(COMPUTE_WALKER_BODY_length));
+   GENX(COMPUTE_WALKER_BODY_pack)(NULL,
+                                  pipeline->gfx125.compute_walker_body,
+                                  &walker);
 }
 
 #else /* #if GFX_VERx10 >= 125 */
@@ -2104,9 +1600,8 @@ genX(compute_pipeline_emit)(struct anv_compute_pipeline *pipeline)
 {
    struct anv_device *device = pipeline->base.device;
    const struct intel_device_info *devinfo = device->info;
-   const struct brw_cs_prog_data *cs_prog_data = get_cs_prog_data(pipeline);
-
-   anv_pipeline_setup_l3_config(&pipeline->base, cs_prog_data->base.total_shared > 0);
+   const struct brw_cs_prog_data *cs_prog_data =
+      (struct brw_cs_prog_data *) pipeline->cs->prog_data;
 
    const struct intel_cs_dispatch_info dispatch =
       brw_cs_get_dispatch_info(devinfo, cs_prog_data, NULL);
@@ -2171,7 +1666,10 @@ genX(compute_pipeline_emit)(struct anv_compute_pipeline *pipeline)
        */
       .ThreadPreemptionDisable = true,
 #endif
-
+#if GFX_VERx10 >= 125
+      .ThreadGroupDispatchSize =
+         intel_compute_threads_group_dispatch_size(dispatch->threads),
+#endif
       .NumberofThreadsinGPGPUThreadGroup = dispatch.threads,
    };
    GENX(INTERFACE_DESCRIPTOR_DATA_pack)(NULL,
@@ -2231,7 +1729,7 @@ genX(ray_tracing_pipeline_emit)(struct anv_ray_tracing_pipeline *pipeline)
       }
 
       default:
-         unreachable("Invalid shader group type");
+         UNREACHABLE("Invalid shader group type");
       }
    }
 }
@@ -2241,7 +1739,7 @@ genX(ray_tracing_pipeline_emit)(struct anv_ray_tracing_pipeline *pipeline)
 void
 genX(ray_tracing_pipeline_emit)(struct anv_ray_tracing_pipeline *pipeline)
 {
-   unreachable("Ray tracing not supported");
+   UNREACHABLE("Ray tracing not supported");
 }
 
 #endif /* GFX_VERx10 >= 125 */

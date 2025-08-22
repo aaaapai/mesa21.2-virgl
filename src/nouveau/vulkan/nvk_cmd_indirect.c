@@ -415,7 +415,7 @@ build_process_cs_cmd_seq(nir_builder *b, struct nvk_nir_push *p,
       }
 
       default:
-         unreachable("Unsupported indirect token type");
+         UNREACHABLE("Unsupported indirect token type");
       }
    }
 }
@@ -444,11 +444,11 @@ build_gfx_set_exec(nir_builder *b, struct nvk_nir_push *p, nir_def *token_addr,
 
    case VK_INDIRECT_EXECUTION_SET_INFO_TYPE_SHADER_OBJECTS_EXT: {
       int32_t i = 0;
-      gl_shader_stage type_stage[6] = {};
+      mesa_shader_stage type_stage[6] = {};
       nir_def *type_shader_idx[6] = {};
-      gl_shader_stage last_vtgm = MESA_SHADER_VERTEX;
+      mesa_shader_stage last_vtgm = MESA_SHADER_VERTEX;
       u_foreach_bit(s, token->shaderStages) {
-         gl_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
+         mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
 
          if (stage != MESA_SHADER_FRAGMENT)
             last_vtgm = stage;
@@ -479,7 +479,7 @@ build_gfx_set_exec(nir_builder *b, struct nvk_nir_push *p, nir_def *token_addr,
    }
 
    default:
-      unreachable("Unknown indirect execution set type");
+      UNREACHABLE("Unknown indirect execution set type");
    }
 }
 
@@ -681,7 +681,7 @@ build_process_gfx_cmd_seq(nir_builder *b, struct nvk_nir_push *p,
          break;
 
       default:
-         unreachable("Unsupported indirect token type");
+         UNREACHABLE("Unsupported indirect token type");
       }
    }
 }
@@ -786,7 +786,7 @@ build_process_shader(struct nvk_device *dev,
          build_process_gfx_cmd_seq(b, &push, in_seq_addr, seq_idx,
                                    &in, pdev, info);
       } else {
-         unreachable("Unknown shader stage");
+         UNREACHABLE("Unknown shader stage");
       }
    }
    nir_pop_if(b, NULL);
@@ -799,12 +799,12 @@ build_process_shader(struct nvk_device *dev,
    } else if (info->shaderStages & NVK_SHADER_STAGE_GRAPHICS_BITS) {
       nvk_nir_pad_NOP(b, &push, NV9097);
    } else {
-      unreachable("Unknown shader stage");
+      UNREACHABLE("Unknown shader stage");
    }
 
    /* Replace the out stride with the actual size of a command stream */
    nir_load_const_instr *out_stride_const =
-      nir_instr_as_load_const(out_stride->parent_instr);
+      nir_def_as_load_const(out_stride);
    out_stride_const->value[0].u32 = push.max_dw_count * 4;
 
    /* We also output this stride to go in the layout struct */
@@ -1076,7 +1076,7 @@ nvk_CmdExecuteGeneratedCommandsEXT(VkCommandBuffer commandBuffer,
 
          uint8_t set_types = 0;
          u_foreach_bit(s, layout->set_stages) {
-            gl_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
+            mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
             uint32_t type = mesa_to_nv9097_shader_type(stage);
             set_types |= BITFIELD_BIT(type);
          }

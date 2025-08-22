@@ -740,7 +740,7 @@ anv_cmd_predicated_mcs_resolve(struct anv_cmd_buffer *cmd_buffer,
    anv_image_mcs_op(cmd_buffer, image, format, swizzle, aspect,
                     array_layer, 1, resolve_op, NULL, true);
 #else
-   unreachable("MCS resolves are unsupported on Ivybridge and Bay Trail");
+   UNREACHABLE("MCS resolves are unsupported on Ivybridge and Bay Trail");
 #endif
 }
 
@@ -2397,7 +2397,7 @@ emit_binding_table(struct anv_cmd_buffer *cmd_buffer,
             break;
 
          default:
-            unreachable("Invalid descriptor type");
+            UNREACHABLE("Invalid descriptor type");
          }
          assert(surface_state.map);
          bt_map[s] = surface_state.offset + state_offset;
@@ -2465,7 +2465,7 @@ flush_descriptor_sets(struct anv_cmd_buffer *cmd_buffer,
       if (!shaders[i])
          continue;
 
-      gl_shader_stage stage = shaders[i]->stage;
+      mesa_shader_stage stage = shaders[i]->stage;
       VkShaderStageFlags vk_stage = mesa_to_vk_shader_stage(stage);
       if ((vk_stage & dirty) == 0)
          continue;
@@ -2504,7 +2504,7 @@ flush_descriptor_sets(struct anv_cmd_buffer *cmd_buffer,
          if (!shaders[i])
             continue;
 
-         gl_shader_stage stage = shaders[i]->stage;
+         mesa_shader_stage stage = shaders[i]->stage;
 
          result = emit_samplers(cmd_buffer, pipe_state, shaders[i],
                                 &cmd_buffer->state.samplers[stage]);
@@ -2712,7 +2712,7 @@ get_push_range_bound_size(struct anv_cmd_buffer *cmd_buffer,
 
 static void
 cmd_buffer_emit_push_constant(struct anv_cmd_buffer *cmd_buffer,
-                              gl_shader_stage stage,
+                              mesa_shader_stage stage,
                               struct anv_address *buffers,
                               unsigned buffer_count)
 {
@@ -5907,7 +5907,7 @@ static uint32_t vk_to_intel_index_type(VkIndexType type)
    case VK_INDEX_TYPE_UINT32:
       return INDEX_DWORD;
    default:
-      unreachable("invalid index type");
+      UNREACHABLE("invalid index type");
    }
 }
 
@@ -5958,7 +5958,7 @@ VkResult genX(CmdSetPerformanceOverrideINTEL)(
       break;
 
    default:
-      unreachable("Invalid override");
+      UNREACHABLE("Invalid override");
    }
 
    return VK_SUCCESS;
@@ -6005,7 +6005,7 @@ void genX(cmd_emit_timestamp)(struct anv_batch *batch,
       break;
 
    default:
-      unreachable("invalid");
+      UNREACHABLE("invalid");
    }
 }
 

@@ -115,9 +115,9 @@ zink_debug_options[] = {
    { "nobgc", ZINK_DEBUG_NOBGC, "Disable all async pipeline compiles" },
    { "mem", ZINK_DEBUG_MEM, "Debug memory allocations" },
    { "quiet", ZINK_DEBUG_QUIET, "Suppress warnings" },
-   { "ioopt", ZINK_DEBUG_IOOPT, "Optimize IO" },
    { "nopc", ZINK_DEBUG_NOPC, "No precompilation" },
    { "msaaopt", ZINK_DEBUG_MSAAOPT, "Optimize out loads/stores of MSAA attachments" },
+   { "rploads", ZINK_DEBUG_RPLOADS, "Zap renderpass loads for DONT_CARE" },
    DEBUG_NAMED_VALUE_END
 };
 
@@ -248,7 +248,7 @@ zink_set_max_shader_compiler_threads(struct pipe_screen *pscreen, unsigned max_t
 }
 
 static bool
-zink_is_parallel_shader_compilation_finished(struct pipe_screen *screen, void *shader, enum pipe_shader_type shader_type)
+zink_is_parallel_shader_compilation_finished(struct pipe_screen *screen, void *shader, mesa_shader_stage shader_type)
 {
    if (shader_type == MESA_SHADER_COMPUTE) {
       struct zink_program *pg = shader;
@@ -496,7 +496,7 @@ have_fp32_filter_linear(struct zink_screen *screen)
 static void
 zink_init_shader_caps(struct zink_screen *screen)
 {
-   for (unsigned i = 0; i <= PIPE_SHADER_COMPUTE; i++) {
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
          (struct pipe_shader_caps *)&screen->base.shader_caps[i];
 
@@ -687,7 +687,7 @@ zink_init_screen_caps(struct zink_screen *screen)
 
    caps->null_textures = screen->info.rb_image_feats.robustImageAccess;
    /* support OVR_multiview and OVR_multiview2 */
-   caps->multiview = screen->info.have_vulkan13 ? 2 * screen->info.feats11.multiview : 0;
+   caps->multiview = screen->info.feats11.multiview;
    caps->texrect = false;
    caps->multi_draw_indirect_partial_stride = false;
    caps->anisotropic_filter = screen->info.feats.features.samplerAnisotropy;
@@ -924,6 +924,8 @@ zink_init_screen_caps(struct zink_screen *screen)
 
    caps->min_texel_offset = screen->info.props.limits.minTexelOffset;
    caps->max_texel_offset = screen->info.props.limits.maxTexelOffset;
+
+   caps->max_timeline_semaphore_difference = screen->info.timeline_props.maxTimelineSemaphoreValueDifference;
 
    caps->vertex_color_unclamped = true;
 
@@ -1317,7 +1319,7 @@ zink_is_format_supported(struct pipe_screen *pscreen,
          break;
 
       default:
-         unreachable("unknown texture target");
+         UNREACHABLE("unknown texture target");
       }
       u_foreach_bit(b, bind) {
          switch (1<<b) {
@@ -1362,6 +1364,11 @@ zink_is_format_supported(struct pipe_screen *pscreen,
          }
       }
 
+      /* We can't swizzle buffer views */
+      if (bind & (PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_SHADER_IMAGE) &&
+          util_format_is_intensity(format))
+          return false;
+
       if (bind & PIPE_BIND_SAMPLER_VIEW &&
          !(props->bufferFeatures & VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT))
             return false;
@@ -1401,6 +1408,10 @@ zink_is_format_supported(struct pipe_screen *pscreen,
 
       if (bind & PIPE_BIND_SHADER_IMAGE &&
           !(props->optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
+         return false;
+
+      /* Can't swizzle storage images. */
+      if (bind & PIPE_BIND_SHADER_IMAGE && util_format_is_intensity(format))
          return false;
    }
 
@@ -1528,8 +1539,7 @@ zink_destroy_screen(struct pipe_screen *pscreen)
          }
       }
       if (!device_table.entries) {
-         ralloc_free(device_table.table);
-         device_table.table = NULL;
+         _mesa_set_fini(&device_table, NULL);
       }
       simple_mtx_unlock(&device_lock);
    }
@@ -2299,6 +2309,27 @@ zink_create_exportable_semaphore(struct zink_screen *screen)
    return ret == VK_SUCCESS ? sem : VK_NULL_HANDLE;
 }
 
+#if defined(HAVE_LIBDRM) && (DETECT_OS_LINUX || DETECT_OS_BSD)
+static int
+zink_resource_get_dma_buf(struct zink_screen *screen, struct zink_resource *res)
+{
+   if (res->obj->is_aux) {
+      return os_dupfd_cloexec(res->obj->handle);
+   } else {
+      VkMemoryGetFdInfoKHR fd_info = {0};
+      fd_info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
+      fd_info.memory = zink_bo_get_mem(res->obj->bo);
+      fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+
+      int fd;
+      if (VKSCR(GetMemoryFdKHR)(screen->dev, &fd_info, &fd) != VK_SUCCESS)
+         return -1;
+
+      return fd;
+   }
+}
+#endif
+
 VkSemaphore
 zink_screen_export_dmabuf_semaphore(struct zink_screen *screen, struct zink_resource *res)
 {
@@ -2309,23 +2340,14 @@ zink_screen_export_dmabuf_semaphore(struct zink_screen *screen, struct zink_reso
       .fd = -1,
    };
 
-   int fd = -1;
-   if (res->obj->is_aux) {
-      fd = os_dupfd_cloexec(res->obj->handle);
-   } else {
-      VkMemoryGetFdInfoKHR fd_info = {0};
-      fd_info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
-      fd_info.memory = zink_bo_get_mem(res->obj->bo);
-      fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-      VKSCR(GetMemoryFdKHR)(screen->dev, &fd_info, &fd);
-   }
-
+   int fd = zink_resource_get_dma_buf(screen, res);
    if (unlikely(fd < 0)) {
       mesa_loge("MESA: Unable to get a valid memory fd");
       return VK_NULL_HANDLE;
    }
 
    int ret = drmIoctl(fd, DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &export);
+   close(fd);
    if (ret) {
       if (errno == ENOTTY || errno == EBADF || errno == ENOSYS) {
          assert(!"how did this fail?");
@@ -2346,8 +2368,8 @@ zink_screen_export_dmabuf_semaphore(struct zink_screen *screen, struct zink_reso
       .fd = export.fd,
    };
    bool success = VKSCR(ImportSemaphoreFdKHR)(screen->dev, &sdi) == VK_SUCCESS;
-   close(fd);
    if (!success) {
+      close(export.fd);
       VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
       return VK_NULL_HANDLE;
    }
@@ -2371,17 +2393,7 @@ zink_screen_import_dmabuf_semaphore(struct zink_screen *screen, struct zink_reso
    }
 
    bool ret = false;
-   int fd;
-   if (res->obj->is_aux) {
-      fd = os_dupfd_cloexec(res->obj->handle);
-   } else {
-      VkMemoryGetFdInfoKHR fd_info = {0};
-      fd_info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
-      fd_info.memory = zink_bo_get_mem(res->obj->bo);
-      fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-      if (VKSCR(GetMemoryFdKHR)(screen->dev, &fd_info, &fd) != VK_SUCCESS)
-         fd = -1;
-   }
+   int fd = zink_resource_get_dma_buf(screen, res);
    if (fd != -1) {
       struct dma_buf_import_sync_file import = {
          .flags = DMA_BUF_SYNC_RW,
@@ -3474,6 +3486,9 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    check_base_requirements(screen);
    util_live_shader_cache_init(&screen->shaders, zink_create_gfx_shader_state, zink_delete_shader_state);
 
+   for (unsigned i = 0; i < ARRAY_SIZE(screen->base.nir_options); i++)
+      screen->base.nir_options[i] = &screen->nir_options;
+
    screen->base.get_name = zink_get_name;
    if (screen->instance_info->have_KHR_external_memory_capabilities) {
       screen->base.get_device_uuid = zink_get_device_uuid;
@@ -3489,7 +3504,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    screen->base.get_device_vendor = zink_get_device_vendor;
    screen->base.get_timestamp = zink_get_timestamp;
    screen->base.query_memory_info = zink_query_memory_info;
-   screen->base.get_compiler_options = zink_get_compiler_options;
    screen->base.get_sample_pixel_grid = zink_get_sample_pixel_grid;
    screen->base.is_compute_copy_faster = zink_is_compute_copy_faster;
    screen->base.is_format_supported = zink_is_format_supported;
@@ -3547,8 +3561,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    }
    zink_screen_fence_init(&screen->base);
 
-   if (zink_debug & ZINK_DEBUG_IOOPT)
-      screen->driver_compiler_workarounds.io_opt = true;
    zink_screen_init_compiler(screen);
    if (!disk_cache_init(screen)) {
       if (!screen->driver_name_is_inferred)

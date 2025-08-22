@@ -10,9 +10,6 @@
 
 #include "vn_wsi.h"
 
-#include <xf86drm.h>
-
-#include "drm-uapi/dma-buf.h"
 #include "vk_enum_to_str.h"
 #include "wsi_common_entrypoints.h"
 
@@ -43,18 +40,6 @@
  * VK_IMAGE_TILING_LINEAR (or trigger the prime blit path).  But the fallback
  * can be problematic when the memory is scanned out directly and special
  * requirements (e.g., alignments) must be met.
- *
- * The common WSI support makes other assumptions about the driver to support
- * implicit fencing.  In wsi_create_native_image and wsi_create_prime_image,
- * it assumes wsi_memory_allocate_info can be chained to VkMemoryAllocateInfo.
- * In wsi_common_queue_present, it assumes wsi_memory_signal_submit_info can
- * be chained to VkSubmitInfo.  Finally, in wsi_common_acquire_next_image2, it
- * calls wsi_device::signal_semaphore_for_memory, and
- * wsi_device::signal_fence_for_memory if the driver provides them.
- *
- * Some drivers use wsi_memory_allocate_info to set up implicit fencing.
- * Others use wsi_memory_signal_submit_info to set up implicit IN-fences and
- * use wsi_device::signal_*_for_memory to set up implicit OUT-fences.
  *
  * For venus, implicit fencing is broken (and there is no explicit fencing
  * support yet).  The kernel driver assumes everything is in the same fence
@@ -154,47 +139,113 @@ vn_wsi_create_image(struct vn_device *dev,
    if (result != VK_SUCCESS)
       return result;
 
-   img->wsi.is_wsi = true;
    img->wsi.is_prime_blit_src = wsi_info->blit_src;
 
    *out_img = img;
    return VK_SUCCESS;
 }
 
-/* swapchain commands */
-
-static int
-vn_wsi_export_sync_file(struct vn_device *dev, struct vn_renderer_bo *bo)
+static uint32_t
+vn_modifier_plane_count(struct vn_physical_device *physical_dev,
+                        VkFormat format,
+                        uint64_t modifier)
 {
-   /* Don't keep trying an IOCTL that doesn't exist. */
-   static bool no_dma_buf_sync_file = false;
-   if (no_dma_buf_sync_file)
-      return -1;
+   VkPhysicalDevice physical_dev_handle =
+      vn_physical_device_to_handle(physical_dev);
 
-   /* For simplicity, export dma-buf here and rely on the dma-buf sync file
-    * export api. On legacy kernels without the new uapi, for the record, we
-    * do have the fallback option to track the wsi bo in the sync payload and
-    * do DRM_IOCTL_VIRTGPU_WAIT where we do sync_wait.
-    */
-   int dma_buf_fd = vn_renderer_bo_export_dma_buf(dev->renderer, bo);
-   if (dma_buf_fd < 0)
-      return -1;
-
-   struct dma_buf_export_sync_file export = {
-      .flags = DMA_BUF_SYNC_RW,
-      .fd = -1,
+   VkDrmFormatModifierPropertiesListEXT modifier_list = {
+      .sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
+      .pDrmFormatModifierProperties = NULL,
    };
-   int ret = drmIoctl(dma_buf_fd, DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &export);
+   VkFormatProperties2 format_props = {
+      .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
+      .pNext = &modifier_list,
+   };
+   vn_GetPhysicalDeviceFormatProperties2(physical_dev_handle, format,
+                                         &format_props);
 
-   close(dma_buf_fd);
+   STACK_ARRAY(VkDrmFormatModifierPropertiesEXT, modifier_props,
+               modifier_list.drmFormatModifierCount);
+   if (!modifier_props)
+      return 0;
+   modifier_list.pDrmFormatModifierProperties = modifier_props;
 
-   if (ret && (errno == ENOTTY || errno == EBADF || errno == ENOSYS)) {
-      no_dma_buf_sync_file = true;
-      return -1;
+   vn_GetPhysicalDeviceFormatProperties2(physical_dev_handle, format,
+                                         &format_props);
+
+   uint32_t plane_count = 0;
+   for (uint32_t i = 0; i < modifier_list.drmFormatModifierCount; i++) {
+      const VkDrmFormatModifierPropertiesEXT *props =
+         &modifier_list.pDrmFormatModifierProperties[i];
+      if (modifier == props->drmFormatModifier) {
+         plane_count = props->drmFormatModifierPlaneCount;
+         break;
+      }
    }
 
-   return export.fd;
+   STACK_ARRAY_FINISH(modifier_props);
+   return plane_count;
 }
+
+bool
+vn_wsi_validate_image_format_info(struct vn_physical_device *physical_dev,
+                                  const VkPhysicalDeviceImageFormatInfo2 *info)
+{
+   const VkPhysicalDeviceImageDrmFormatModifierInfoEXT *modifier_info =
+      vk_find_struct_const(
+         info->pNext, PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT);
+
+   /* force common wsi into choosing DRM_FORMAT_MOD_LINEAR or else fall back
+    * to the legacy path, for which Venus also forces LINEAR for wsi images.
+    */
+   if (VN_PERF(NO_TILED_WSI_IMAGE)) {
+      if (modifier_info &&
+          modifier_info->drmFormatModifier != DRM_FORMAT_MOD_LINEAR) {
+         if (VN_DEBUG(WSI)) {
+            vn_log(physical_dev->instance,
+                   "rejecting non-linear wsi image format modifier %" PRIu64,
+                   modifier_info->drmFormatModifier);
+         }
+         return false;
+      }
+   }
+
+   /* Integration with Xwayland (using virgl-backed gbm) may only use
+    * modifiers for which `memory_plane_count == format_plane_count` with the
+    * distinction defined in the spec for VkDrmFormatModifierPropertiesEXT.
+    *
+    * The spec also states that:
+    *   If an image is non-linear, then the partition of the image’s memory
+    *   into memory planes is implementation-specific and may be unrelated to
+    *   the partition of the image’s content into format planes.
+    *
+    * A modifier like I915_FORMAT_MOD_Y_TILED_CCS with an extra CCS
+    * metadata-only _memory_ plane is not supported by virgl. In general,
+    * since the partition of format planes into memory planes (even when their
+    * counts match) cannot be guarantably known, the safest option is to limit
+    * both plane counts to 1 while virgl may be involved.
+    */
+   if (modifier_info &&
+       !physical_dev->instance->enable_wsi_multi_plane_modifiers &&
+       modifier_info->drmFormatModifier != DRM_FORMAT_MOD_LINEAR) {
+      const uint32_t plane_count = vn_modifier_plane_count(
+         physical_dev, info->format, modifier_info->drmFormatModifier);
+      if (plane_count != 1) {
+         if (VN_DEBUG(WSI)) {
+            vn_log(physical_dev->instance,
+                   "rejecting multi-plane (%u) modifier %" PRIu64
+                   " for wsi image with format %u",
+                   plane_count, modifier_info->drmFormatModifier,
+                   info->format);
+         }
+         return false;
+      }
+   }
+
+   return true;
+}
+
+/* swapchain commands */
 
 VkResult
 vn_AcquireNextImage2KHR(VkDevice device,
@@ -216,57 +267,16 @@ vn_AcquireNextImage2KHR(VkDevice device,
    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
       return vn_error(dev->instance, result);
 
-   /* Extract compositor implicit fence and resolve on the driver side upon
-    * the acquire fence being submitted. Since we used to rely on renderer
-    * side drivers being able to handle implicit in-fence, here we only opt-in
-    * the new behavior for those known to be unable to handle it.
-    */
-   int sync_fd = -1;
-   if (dev->physical_device->renderer_driver_id ==
-       VK_DRIVER_ID_NVIDIA_PROPRIETARY) {
-      struct vn_image *wsi_img = vn_image_from_handle(
-         wsi_common_get_image(pAcquireInfo->swapchain, *pImageIndex));
-      assert(wsi_img->wsi.is_wsi);
-
-      struct vn_device_memory *wsi_mem = wsi_img->wsi.is_prime_blit_src
-                                            ? wsi_img->wsi.blit_mem
-                                            : wsi_img->wsi.memory;
-      if (wsi_mem)
-         sync_fd = vn_wsi_export_sync_file(dev, wsi_mem->base_bo);
-   }
-
-   int sem_fd = -1, fence_fd = -1;
-   if (sync_fd >= 0) {
-      if (pAcquireInfo->semaphore != VK_NULL_HANDLE &&
-          pAcquireInfo->fence != VK_NULL_HANDLE) {
-         sem_fd = sync_fd;
-         fence_fd = dup(sync_fd);
-         if (fence_fd < 0) {
-            result = errno == EMFILE ? VK_ERROR_TOO_MANY_OBJECTS
-                                     : VK_ERROR_OUT_OF_HOST_MEMORY;
-            close(sync_fd);
-            return vn_error(dev->instance, result);
-         }
-      } else if (pAcquireInfo->semaphore != VK_NULL_HANDLE) {
-         sem_fd = sync_fd;
-      } else {
-         assert(pAcquireInfo->fence != VK_NULL_HANDLE);
-         fence_fd = sync_fd;
-      }
-   }
-
+   /* XXX this relies on renderer side doing implicit fencing */
    if (pAcquireInfo->semaphore != VK_NULL_HANDLE) {
-      /* venus waits on the driver side when this semaphore is submitted */
       const VkImportSemaphoreFdInfoKHR info = {
          .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
          .semaphore = pAcquireInfo->semaphore,
          .flags = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT,
          .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
-         .fd = sem_fd,
+         .fd = -1,
       };
       result = vn_ImportSemaphoreFdKHR(device, &info);
-      if (result == VK_SUCCESS)
-         sem_fd = -1;
    }
 
    if (result == VK_SUCCESS && pAcquireInfo->fence != VK_NULL_HANDLE) {
@@ -275,17 +285,10 @@ vn_AcquireNextImage2KHR(VkDevice device,
          .fence = pAcquireInfo->fence,
          .flags = VK_FENCE_IMPORT_TEMPORARY_BIT,
          .handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
-         .fd = fence_fd,
+         .fd = -1,
       };
       result = vn_ImportFenceFdKHR(device, &info);
-      if (result == VK_SUCCESS)
-         fence_fd = -1;
    }
-
-   if (sem_fd >= 0)
-      close(sem_fd);
-   if (fence_fd >= 0)
-      close(fence_fd);
 
    return vn_result(dev->instance, result);
 }

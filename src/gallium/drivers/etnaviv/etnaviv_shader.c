@@ -401,7 +401,7 @@ etna_shader_stage(struct etna_shader *shader)
    case MESA_SHADER_FRAGMENT:   return "FRAG";
    case MESA_SHADER_COMPUTE:    return "CL";
    default:
-      unreachable("invalid type");
+      UNREACHABLE("invalid type");
       return NULL;
    }
 }
@@ -613,7 +613,7 @@ etna_set_max_shader_compiler_threads(struct pipe_screen *pscreen,
 static bool
 etna_is_parallel_shader_compilation_finished(struct pipe_screen *pscreen,
                                              void *hwcso,
-                                             enum pipe_shader_type shader_type)
+                                             mesa_shader_stage shader_type)
 {
    struct etna_shader *shader = (struct etna_shader *)hwcso;
 
@@ -643,6 +643,9 @@ etna_shader_screen_init(struct pipe_screen *pscreen)
    screen->compiler = etna_compiler_create(pscreen->get_name(pscreen), screen->info);
    if (!screen->compiler)
       return false;
+
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
+      pscreen->nir_options[i] = etna_compiler_get_options(screen->compiler);
 
    pscreen->set_max_shader_compiler_threads = etna_set_max_shader_compiler_threads;
    pscreen->is_parallel_shader_compilation_finished = etna_is_parallel_shader_compilation_finished;

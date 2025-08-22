@@ -7,7 +7,6 @@ subdir('android_stub')
 subdir('util')
 
 inc_mesa = include_directories('mesa')
-inc_mapi = include_directories('mapi')
 inc_src = include_directories('.')
 inc_gallium = include_directories('gallium/include')
 inc_gallium_aux = include_directories('gallium/auxiliary')
@@ -47,12 +46,11 @@ if cc.get_argument_syntax() == 'msvc'
 else
   idep_getopt = null_dep
 endif
-subdir('x11')
+if with_platform_x11
+  subdir('x11')
+endif
 if with_gallium_or_lvp or with_gbm or with_platform_wayland
   subdir('loader')
-endif
-if with_gallium
-  subdir('mapi')
 endif
 subdir('compiler')
 if with_tools.contains('drm-shim')
@@ -61,7 +59,7 @@ endif
 if with_imgui
   subdir('imgui')
 endif
-if with_platform_wayland
+if with_wayland_bind_display
   subdir('egl/wayland/wayland-drm')
 endif
 if with_any_vk or with_gallium_zink
@@ -122,10 +120,10 @@ endif
 # These require libgallium (shared_glapi_lib)
 if with_gallium and (with_glx != 'disabled' or with_egl)
   if with_gles1 and not with_glvnd
-    subdir('mapi/es1api')
+    subdir('mesa/glapi/es1api')
   endif
   if with_gles2 and not with_glvnd
-    subdir('mapi/es2api')
+    subdir('mesa/glapi/es2api')
   endif
   if with_tests
     subdir('mesa/main/tests')

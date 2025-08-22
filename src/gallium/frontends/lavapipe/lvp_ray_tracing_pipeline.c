@@ -54,7 +54,7 @@ lvp_init_ray_tracing_groups(struct lvp_pipeline *pipeline,
          }
          break;
       default:
-         unreachable("Unimplemented VkRayTracingShaderGroupTypeKHR");
+         UNREACHABLE("Unimplemented VkRayTracingShaderGroupTypeKHR");
       }
 
       dst->handle.index = p_atomic_inc_return(&pipeline->device->group_handle_alloc);
@@ -430,7 +430,7 @@ lvp_call_ray_tracing_stage(nir_builder *b, struct lvp_ray_tracing_pipeline_compi
       compiler->callable_size = MAX2(compiler->callable_size, stage->scratch_size);
       break;
    default:
-      unreachable("Invalid ray tracing stage");
+      UNREACHABLE("Invalid ray tracing stage");
       break;
    }
 }
@@ -1025,26 +1025,13 @@ lvp_lower_ray_tracing_instr(nir_builder *b, nir_instr *instr, void *data)
    return true;
 }
 
-static bool
-lvp_lower_ray_tracing_stack_base(nir_builder *b, nir_intrinsic_instr *instr, void *data)
-{
-   if (instr->intrinsic != nir_intrinsic_load_ray_tracing_stack_base_lvp)
-      return false;
-
-   b->cursor = nir_after_instr(&instr->instr);
-
-   nir_def_replace(&instr->def, nir_imm_int(b, b->shader->scratch_size));
-
-   return true;
-}
-
 static void
 lvp_compile_ray_tracing_pipeline(struct lvp_pipeline *pipeline,
                                  const VkRayTracingPipelineCreateInfoKHR *create_info)
 {
    nir_builder _b = nir_builder_init_simple_shader(
       MESA_SHADER_COMPUTE,
-      pipeline->device->pscreen->get_compiler_options(pipeline->device->pscreen, PIPE_SHADER_IR_NIR, MESA_SHADER_COMPUTE),
+      pipeline->device->pscreen->nir_options[MESA_SHADER_COMPUTE],
       "ray tracing pipeline");
    nir_builder *b = &_b;
 
@@ -1109,8 +1096,9 @@ lvp_compile_ray_tracing_pipeline(struct lvp_pipeline *pipeline,
    NIR_PASS(_, b->shader, nir_lower_explicit_io, nir_var_shader_temp,
             nir_address_format_32bit_offset);
 
-   NIR_PASS(_, b->shader, nir_shader_intrinsics_pass, lvp_lower_ray_tracing_stack_base,
-            nir_metadata_control_flow, NULL);
+   NIR_PASS(_, b->shader, nir_inline_sysval,
+            nir_intrinsic_load_ray_tracing_stack_base_lvp,
+            b->shader->scratch_size);
 
    /* We can not support dynamic stack sizes, assume the worst. */
    b->shader->scratch_size +=
@@ -1122,6 +1110,7 @@ lvp_compile_ray_tracing_pipeline(struct lvp_pipeline *pipeline,
 
    struct lvp_shader *shader = &pipeline->shaders[MESA_SHADER_RAYGEN];
    lvp_shader_init(shader, b->shader);
+   shader->push_constant_size = pipeline->layout->push_constant_size;
    shader->shader_cso = lvp_shader_compile(pipeline->device, shader, nir_shader_clone(NULL, shader->pipeline_nir->nir), false);
 
    _mesa_hash_table_destroy(compiler.functions, NULL);

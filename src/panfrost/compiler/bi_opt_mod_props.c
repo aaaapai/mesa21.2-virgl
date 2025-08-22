@@ -294,7 +294,7 @@ bi_sized_mux_op(unsigned size)
    case 32:
       return BI_OPCODE_MUX_I32;
    default:
-      unreachable("invalid size");
+      UNREACHABLE("invalid size");
    }
 }
 
@@ -396,18 +396,6 @@ bi_optimizer_var_tex(bi_context *ctx, bi_instr *var, bi_instr *tex)
 
    /* Dead code elimination will clean up for us */
    return true;
-}
-
-static void
-bi_record_use(bi_instr **uses, BITSET_WORD *multiple, bi_instr *I, unsigned s)
-{
-   unsigned v = I->src[s].value;
-
-   assert(I->src[s].type == BI_INDEX_NORMAL);
-   if (uses[v] && uses[v] != I)
-      BITSET_SET(multiple, v);
-   else
-      uses[v] = I;
 }
 
 void

@@ -287,7 +287,7 @@ tu_image_view_init(struct tu_device *device,
       args.type = FDL_VIEW_TYPE_3D;
       break;
    default:
-      unreachable("unknown view type");
+      UNREACHABLE("unknown view type");
    }
 
    STATIC_ASSERT((unsigned)VK_CHROMA_LOCATION_COSITED_EVEN == (unsigned)FDL_CHROMA_LOCATION_COSITED_EVEN);
@@ -546,16 +546,23 @@ tu_image_update_layout(struct tu_device *device, struct tu_image *image,
       layout->tile_mode = tile_mode;
       layout->ubwc = image->ubwc_enabled;
 
-      if (!fdl6_layout(layout, &device->physical_device->dev_info, format,
-                       image->vk.samples,
-                       width0, height0,
-                       image->vk.extent.depth,
-                       image->vk.mip_levels,
-                       image->vk.array_layers,
-                       image->vk.image_type == VK_IMAGE_TYPE_3D,
-                       image->is_mutable,
-                       force_ubwc,
-                       plane_layouts ? &plane_layout : NULL)) {
+      struct fdl_image_params params = {
+         .format = format,
+         .nr_samples = image->vk.samples,
+         .width0 = width0,
+         .height0 = height0,
+         .depth0 = image->vk.extent.depth,
+         .mip_levels = image->vk.mip_levels,
+         .array_size = image->vk.array_layers,
+         .tile_mode = tile_mode,
+         .ubwc = image->ubwc_enabled,
+         .force_ubwc = force_ubwc,
+         image->vk.image_type == VK_IMAGE_TYPE_3D,
+         image->is_mutable,
+      };
+
+      if (!fdl6_layout_image(layout, &device->physical_device->dev_info,
+                             &params, plane_layouts ? &plane_layout : NULL)) {
          assert(plane_layouts); /* can only fail with explicit layout */
          return vk_error(device, VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT);
       }
@@ -580,7 +587,24 @@ tu_image_update_layout(struct tu_device *device, struct tu_image *image,
 
    const struct util_format_description *desc = util_format_description(image->layout[0].format);
    if (util_format_has_depth(desc) && device->use_lrz) {
+      /* If FDM offset is enabled, then the LRZ image will be shifted over. We
+       * have to overallocate it, but we have no idea how large the tiles it's
+       * used with will be. Try to calculate the worst-case width and height.
+       */
+      uint32_t extra_width = 0, extra_height = 0;
+      if (image->vk.create_flags &
+          VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_EXT) {
+         uint32_t gmem_pixels =
+            device->physical_device->gmem_size /
+            (desc->block.bits / 8);
+         extra_width = gmem_pixels /
+            device->physical_device->info->tile_align_h;
+         extra_height = gmem_pixels /
+            device->physical_device->info->tile_align_w;
+      }
+
       fdl6_lrz_layout_init<CHIP>(&image->lrz_layout, &image->layout[0],
+                                 extra_width, extra_height,
                                  device->physical_device->info,
                                  image->total_size, image->vk.array_layers);
 
@@ -906,84 +930,70 @@ tu_BindImageMemory2(VkDevice _device,
       VK_FROM_HANDLE(tu_image, image, pBindInfos[i].image);
       VK_FROM_HANDLE(tu_device_memory, mem, pBindInfos[i].memory);
 
-      /* Ignore this struct on Android, we cannot access swapchain structures there. */
-#ifdef TU_USE_WSI_PLATFORM
-      const VkBindImageMemorySwapchainInfoKHR *swapchain_info =
-         vk_find_struct_const(pBindInfos[i].pNext, BIND_IMAGE_MEMORY_SWAPCHAIN_INFO_KHR);
-
-      if (swapchain_info && swapchain_info->swapchain != VK_NULL_HANDLE) {
-         VkImage _wsi_image = wsi_common_get_image(swapchain_info->swapchain,
-                                                   swapchain_info->imageIndex);
-         VK_FROM_HANDLE(tu_image, wsi_img, _wsi_image);
-
-         image->bo = wsi_img->bo;
-         image->map = NULL;
-         image->iova = wsi_img->iova;
-
-         TU_RMV(image_bind, device, image);
-
-         vk_address_binding_report(&instance->vk, &image->vk.base,
-                                   image->iova, image->total_size,
-                                   VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT);
-
-         continue;
-      }
+      if (!mem) {
+#if DETECT_OS_ANDROID
+         /* TODO handle VkNativeBufferANDROID */
+         UNREACHABLE("VkBindImageMemoryInfo with no memory");
+#else
+         const VkBindImageMemorySwapchainInfoKHR *swapchain_info =
+            vk_find_struct_const(pBindInfos[i].pNext,
+                                 BIND_IMAGE_MEMORY_SWAPCHAIN_INFO_KHR);
+         assert(swapchain_info &&
+                swapchain_info->swapchain != VK_NULL_HANDLE);
+         mem = tu_device_memory_from_handle(wsi_common_get_memory(
+            swapchain_info->swapchain, swapchain_info->imageIndex));
 #endif
+      }
 
       const VkBindMemoryStatusKHR *status =
          vk_find_struct_const(pBindInfos[i].pNext, BIND_MEMORY_STATUS_KHR);
       if (status)
          *status->pResult = VK_SUCCESS;
 
-      if (mem) {
-         VkResult result;
-         if (vk_image_is_android_hardware_buffer(&image->vk)) {
-            VkImageDrmFormatModifierExplicitCreateInfoEXT eci;
-            VkSubresourceLayout a_plane_layouts[TU_MAX_PLANE_COUNT];
-            result = vk_android_get_ahb_layout(mem->vk.ahardware_buffer,
-                                            &eci, a_plane_layouts,
-                                            TU_MAX_PLANE_COUNT);
-            if (result != VK_SUCCESS) {
-               if (status)
-                  *status->pResult = result;
-               return result;
-            }
-
-            result = TU_CALLX(device, tu_image_update_layout)(device, image,
-                                                              eci.drmFormatModifier, a_plane_layouts);
-            if (result != VK_SUCCESS) {
-               if (status)
-                  *status->pResult = result;
-               return result;
-            }
+      assert(mem);
+      VkResult result;
+      if (vk_image_is_android_hardware_buffer(&image->vk)) {
+         VkImageDrmFormatModifierExplicitCreateInfoEXT eci;
+         VkSubresourceLayout a_plane_layouts[TU_MAX_PLANE_COUNT];
+         result =
+            vk_android_get_ahb_layout(mem->vk.ahardware_buffer, &eci,
+                                      a_plane_layouts, TU_MAX_PLANE_COUNT);
+         if (result != VK_SUCCESS) {
+            if (status)
+               *status->pResult = result;
+            return result;
          }
-         image->bo = mem->bo;
-         image->bo_offset = pBindInfos[i].memoryOffset;
-         image->iova = mem->bo->iova + pBindInfos[i].memoryOffset;
 
-         if (image->vk.usage & (VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT |
-                                VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT)) {
-            if (!mem->bo->map) {
-               result = tu_bo_map(device, mem->bo, NULL);
-               if (result != VK_SUCCESS) {
-                  if (status)
-                     *status->pResult = result;
-                  return result;
-               }
-            }
-
-            image->map = (char *)mem->bo->map + pBindInfos[i].memoryOffset;
-         } else {
-            image->map = NULL;
+         result = TU_CALLX(device, tu_image_update_layout)(
+            device, image, eci.drmFormatModifier, a_plane_layouts);
+         if (result != VK_SUCCESS) {
+            if (status)
+               *status->pResult = result;
+            return result;
          }
-#ifdef HAVE_PERFETTO
-         tu_perfetto_log_bind_image(device, image);
-#endif
-      } else {
-         image->bo = NULL;
-         image->map = NULL;
-         image->iova = 0;
       }
+      image->bo = mem->bo;
+      image->bo_offset = pBindInfos[i].memoryOffset;
+      image->iova = mem->bo->iova + pBindInfos[i].memoryOffset;
+
+      if (image->vk.usage & (VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT |
+                             VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT)) {
+         if (!mem->bo->map) {
+            result = tu_bo_map(device, mem->bo, NULL);
+            if (result != VK_SUCCESS) {
+               if (status)
+                  *status->pResult = result;
+               return result;
+            }
+         }
+
+         image->map = (char *) mem->bo->map + pBindInfos[i].memoryOffset;
+      } else {
+         image->map = NULL;
+      }
+#ifdef HAVE_PERFETTO
+      tu_perfetto_log_bind_image(device, image);
+#endif
 
       TU_RMV(image_bind, device, image);
 

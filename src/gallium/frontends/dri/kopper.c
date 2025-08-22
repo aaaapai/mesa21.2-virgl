@@ -347,13 +347,12 @@ XXX do this once swapinterval is hooked up
 }
 
 static inline void
-get_drawable_info(struct dri_drawable *drawable, int *x, int *y, int *w, int *h)
+get_drawable_info(struct dri_drawable *drawable, int *w, int *h)
 {
-   const __DRIswrastLoaderExtension *loader = drawable->screen->swrast_loader;
+   const __DRIkopperLoaderExtension *loader = drawable->screen->kopper_loader;
 
    if (loader)
-      loader->getDrawableInfo(drawable, x, y, w, h,
-                              drawable->loaderPrivate);
+      loader->GetDrawableInfo(drawable, w, h, drawable->loaderPrivate);
 }
 
 static void
@@ -361,7 +360,6 @@ kopper_update_drawable_info(struct dri_drawable *drawable)
 {
    struct dri_screen *screen = drawable->screen;
    bool is_window = drawable->info.bos.sType != 0;
-   int x, y;
    struct pipe_resource *ptex = drawable->textures[ST_ATTACHMENT_BACK_LEFT] ?
                                 drawable->textures[ST_ATTACHMENT_BACK_LEFT] :
                                 drawable->textures[ST_ATTACHMENT_FRONT_LEFT];
@@ -370,7 +368,7 @@ kopper_update_drawable_info(struct dri_drawable *drawable)
    if (drawable->info.bos.sType == VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR && do_kopper_update)
       zink_kopper_update(kopper_get_zink_screen(screen->base.screen), ptex, &drawable->w, &drawable->h);
    else
-      get_drawable_info(drawable, &x, &y, &drawable->w, &drawable->h);
+      get_drawable_info(drawable, &drawable->w, &drawable->h);
 }
 
 static inline void
@@ -444,37 +442,6 @@ kopper_flush_frontbuffer(struct dri_context *ctx,
       kopper_copy_to_front(st->pipe, ctx->draw, ptex, 0, NULL);
    }
 
-   return true;
-}
-
-static inline void
-get_image(struct dri_drawable *drawable, int x, int y, int width, int height, void *data)
-{
-   const __DRIswrastLoaderExtension *loader = drawable->screen->swrast_loader;
-
-   loader->getImage(drawable, x, y, width, height,
-                    data, drawable->loaderPrivate);
-}
-
-static inline bool
-get_image_shm(struct dri_drawable *drawable, int x, int y, int width, int height,
-              struct pipe_resource *res)
-{
-   const __DRIswrastLoaderExtension *loader = drawable->screen->swrast_loader;
-   struct winsys_handle whandle;
-
-   whandle.type = WINSYS_HANDLE_TYPE_SHMID;
-
-   if (loader->base.version < 4 || !loader->getImageShm)
-      return false;
-
-   if (!res->screen->resource_get_handle(res->screen, NULL, res, &whandle, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE))
-      return false;
-
-   if (loader->base.version > 5 && loader->getImageShm2)
-      return loader->getImageShm2(drawable, x, y, width, height, whandle.handle, drawable->loaderPrivate);
-
-   loader->getImageShm(drawable, x, y, width, height, whandle.handle, drawable->loaderPrivate);
    return true;
 }
 
@@ -566,15 +533,10 @@ kopperSwapBuffersWithDamage(struct dri_drawable *drawable, uint32_t flush_flags,
    if (flush_flags & __DRI2_FLUSH_INVALIDATE_ANCILLARY)
       _mesa_glthread_invalidate_zsbuf(ctx->st->ctx);
 
-   /* Wait for glthread to finish because we can't use pipe_context from
-    * multiple threads.
-    */
-   _mesa_glthread_finish(ctx->st->ctx);
-
    drawable->texture_stamp = drawable->lastStamp - 1;
 
    dri_flush(ctx, drawable,
-             __DRI2_FLUSH_DRAWABLE | __DRI2_FLUSH_CONTEXT | flush_flags,
+             __DRI2_FLUSH_DRAWABLE | flush_flags,
              __DRI2_THROTTLE_SWAPBUFFER);
 
    struct pipe_box stack_boxes[64];
@@ -629,6 +591,7 @@ kopperSetSwapInterval(struct dri_drawable *drawable, int interval)
                                 drawable->textures[ST_ATTACHMENT_BACK_LEFT] :
                                 drawable->textures[ST_ATTACHMENT_FRONT_LEFT];
 
+   drawable->info.initial_swap_interval = interval;
    /* can't set swap interval on non-windows */
    if (!drawable->window_valid)
       return;
@@ -640,7 +603,6 @@ kopperSetSwapInterval(struct dri_drawable *drawable, int interval)
       struct pipe_screen *pscreen = kopper_get_zink_screen(screen->base.screen);
       zink_kopper_set_swap_interval(pscreen, ptex, interval);
    }
-   drawable->info.initial_swap_interval = interval;
 }
 
 int

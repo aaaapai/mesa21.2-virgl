@@ -47,10 +47,6 @@ struct vn_image_create_deferred_info {
    VkImageFormatListCreateInfo list;
    VkImageStencilUsageCreateInfo stencil;
 
-   /* True if VkImageCreateInfo::format is translated from a non-zero
-    * VkExternalFormatANDROID::externalFormat for the AHB image.
-    */
-   bool from_external_format;
    /* track whether vn_image_init_deferred succeeds */
    bool initialized;
 };
@@ -66,18 +62,9 @@ struct vn_image {
    struct vn_image_create_deferred_info *deferred_info;
 
    struct {
-      /* True if this is a swapchain image and VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-       * is a valid layout.  A swapchain image can be created internally
-       * (wsi_image_create_info) or externally (VkNativeBufferANDROID and
-       * VkImageSwapchainCreateInfoKHR).
-       */
-      bool is_wsi;
       bool is_prime_blit_src;
 
       struct vn_device_memory *memory;
-
-      /* memory backing the prime blit dst buffer */
-      struct vn_device_memory *blit_mem;
 
       /* For VK_ANDROID_native_buffer, the WSI image owns the memory. */
       bool memory_owned;

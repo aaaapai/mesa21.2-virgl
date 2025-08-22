@@ -817,6 +817,12 @@ regbase(const char *name)
    return rnn_regbase(rnn, name);
 }
 
+int
+enumval(const char *enumname, const char *enumval)
+{
+   return rnn_enumval(rnn, enumname, enumval);
+}
+
 static int
 endswith(uint32_t regbase, const char *suffix)
 {
@@ -1203,7 +1209,7 @@ cp_im_loadi(uint32_t *dwords, uint32_t sizedwords, int level)
    uint32_t start = dwords[1] >> 16;
    uint32_t size = dwords[1] & 0xffff;
    const char *type = NULL, *ext = NULL;
-   gl_shader_stage disasm_type;
+   mesa_shader_stage disasm_type;
 
    switch (dwords[0]) {
    case 0:
@@ -1280,13 +1286,13 @@ enum adreno_state_block {
  */
 
 static void
-a3xx_get_state_type(uint32_t *dwords, gl_shader_stage *stage,
+a3xx_get_state_type(uint32_t *dwords, mesa_shader_stage *stage,
                     enum state_t *state, enum state_src_t *src)
 {
    unsigned state_block_id = (dwords[0] >> 19) & 0x7;
    unsigned state_type = dwords[1] & 0x3;
    static const struct {
-      gl_shader_stage stage;
+      mesa_shader_stage stage;
       enum state_t state;
    } lookup[0xf][0x3] = {
       [SB_VERT_TEX][0] = {MESA_SHADER_VERTEX, TEX_SAMP},
@@ -1325,10 +1331,10 @@ _get_state_src(unsigned dword0)
 
 static void
 _get_state_type(unsigned state_block_id, unsigned state_type,
-                gl_shader_stage *stage, enum state_t *state)
+                mesa_shader_stage *stage, enum state_t *state)
 {
    static const struct {
-      gl_shader_stage stage;
+      mesa_shader_stage stage;
       enum state_t state;
    } lookup[0x10][0x4] = {
       // SB4_VS_TEX:
@@ -1401,7 +1407,7 @@ _get_state_type(unsigned state_block_id, unsigned state_type,
 }
 
 static void
-a4xx_get_state_type(uint32_t *dwords, gl_shader_stage *stage,
+a4xx_get_state_type(uint32_t *dwords, mesa_shader_stage *stage,
                     enum state_t *state, enum state_src_t *src)
 {
    unsigned state_block_id = (dwords[0] >> 18) & 0xf;
@@ -1411,7 +1417,7 @@ a4xx_get_state_type(uint32_t *dwords, gl_shader_stage *stage,
 }
 
 static void
-a6xx_get_state_type(uint32_t *dwords, gl_shader_stage *stage,
+a6xx_get_state_type(uint32_t *dwords, mesa_shader_stage *stage,
                     enum state_t *state, enum state_src_t *src)
 {
    unsigned state_block_id = (dwords[0] >> 18) & 0xf;
@@ -1562,7 +1568,7 @@ dump_bindless_descriptors(bool is_compute, int level)
 static void
 cp_load_state(uint32_t *dwords, uint32_t sizedwords, int level)
 {
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
    enum state_t state;
    enum state_src_t src;
    uint32_t num_unit = (dwords[0] >> 22) & 0x1ff;
@@ -2894,28 +2900,8 @@ cp_context_reg_bunch(uint32_t *dwords, uint32_t sizedwords, int level)
    summary = saved_summary;
 }
 
-/* Looks similar to CP_CONTEXT_REG_BUNCH, but not quite the same...
- * discarding first two dwords??
- *
- *   CP_CONTEXT_REG_BUNCH:
- *        0221: 9c1ff606  (rep)(xmov3)mov $usraddr, $data
- *        ; mov $data, $data
- *        ; mov $usraddr, $data
- *        ; mov $data, $data
- *        0222: d8000000  waitin
- *        0223: 981f0806  mov $01, $data
- *
- *   CP_UNK5D:
- *        0224: 981f0006  mov $00, $data
- *        0225: 981f0006  mov $00, $data
- *        0226: 9c1ff206  (rep)(xmov1)mov $usraddr, $data
- *        ; mov $data, $data
- *        0227: d8000000  waitin
- *        0228: 981f0806  mov $01, $data
- *
- */
 static void
-cp_context_reg_bunch2(uint32_t *dwords, uint32_t sizedwords, int level)
+cp_non_context_reg_bunch(uint32_t *dwords, uint32_t sizedwords, int level)
 {
    dwords += 2;
    sizedwords -= 2;
@@ -3027,7 +3013,7 @@ static const struct type3_op {
 
    /* for a7xx */
    CP(THREAD_CONTROL, cp_set_thread_control),
-   CP(CONTEXT_REG_BUNCH2, cp_context_reg_bunch2),
+   CP(NON_CONTEXT_REG_BUNCH, cp_non_context_reg_bunch),
    CP(EVENT_WRITE7, cp_event_write),
 };
 

@@ -16,7 +16,6 @@ use rusticl_proc_macros::cl_info_entrypoint;
 
 use std::cmp;
 use std::ffi::CStr;
-use std::mem;
 use std::os::raw::c_void;
 use std::ptr;
 use std::slice;
@@ -164,7 +163,7 @@ unsafe impl CLInfoObj<cl_kernel_sub_group_info, (cl_device_id, usize, *const c_v
             return Err(CL_INVALID_OPERATION);
         }
 
-        let usize_byte = mem::size_of::<usize>();
+        let usize_byte = size_of::<usize>();
         // first we have to convert the input to a proper thing
         let input: &[usize] = match q {
             CL_KERNEL_MAX_SUB_GROUP_SIZE_FOR_NDRANGE | CL_KERNEL_SUB_GROUP_COUNT_FOR_NDRANGE => {
@@ -382,13 +381,13 @@ fn set_kernel_arg(
             | KernelArgType::Image
             | KernelArgType::RWImage
             | KernelArgType::Texture => {
-                if arg_size != std::mem::size_of::<cl_mem>() {
+                if arg_size != size_of::<cl_mem>() {
                     return Err(CL_INVALID_ARG_SIZE);
                 }
             }
 
             KernelArgType::Sampler => {
-                if arg_size != std::mem::size_of::<cl_sampler>() {
+                if arg_size != size_of::<cl_sampler>() {
                     return Err(CL_INVALID_ARG_SIZE);
                 }
             }
@@ -433,6 +432,14 @@ fn set_kernel_arg(
                 } else {
                     // SAFETY: as above
                     let buffer = Buffer::arc_from_raw(unsafe { *ptr })?;
+                    // We are required to prevent mutable access to immutable memory objects,
+                    // however no explicit error code has been specified yet.
+                    if arg.kind == KernelArgType::MemGlobal
+                        && bit_check(buffer.flags, CL_MEM_IMMUTABLE_EXT)
+                    {
+                        return Err(CL_INVALID_ARG_VALUE);
+                    }
+
                     KernelArgValue::Buffer(Arc::downgrade(&buffer))
                 }
             }
@@ -447,8 +454,13 @@ fn set_kernel_arg(
                 // of CL_MEM_WRITE_ONLY or if the image argument is declared with the write_only
                 // qualifier and arg_value refers to an image object created with cl_mem_flags
                 // of CL_MEM_READ_ONLY.
+                // We are required to prevent mutable access to immutable memory objects, however no
+                // explicit error code has been specified yet.
                 if arg.kind == KernelArgType::Texture && bit_check(img.flags, CL_MEM_WRITE_ONLY)
-                    || arg.kind == KernelArgType::Image && bit_check(img.flags, CL_MEM_READ_ONLY)
+                    || arg.kind == KernelArgType::Image
+                        && bit_check(img.flags, CL_MEM_READ_ONLY | CL_MEM_IMMUTABLE_EXT)
+                    || arg.kind == KernelArgType::RWImage
+                        && bit_check(img.flags, CL_MEM_IMMUTABLE_EXT)
                 {
                     return Err(CL_INVALID_ARG_VALUE);
                 }

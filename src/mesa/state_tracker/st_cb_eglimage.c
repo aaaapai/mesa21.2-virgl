@@ -48,6 +48,13 @@ is_format_supported(struct pipe_screen *screen, enum pipe_format format,
    bool supported = screen->is_format_supported(screen, format, PIPE_TEXTURE_2D,
                                                 nr_samples, nr_storage_samples,
                                                 usage);
+
+   if (!supported && (usage & PIPE_BIND_SAMPLER_VIEW)) {
+      supported = screen->is_format_supported(screen, format, PIPE_TEXTURE_2D,
+                                              nr_samples, nr_storage_samples,
+                                              usage | PIPE_BIND_SAMPLER_VIEW_SUBOPTIMAL);
+   }
+
    *native_supported = supported;
 
    /* for sampling, some formats can be emulated.. it doesn't matter that
@@ -491,7 +498,7 @@ st_bind_egl_image(struct gl_context *ctx,
             texFormat = MESA_FORMAT_R10G10B10X2_UNORM;
             texObj->RequiredTextureImageUnits = 1;
          } else {
-            unreachable("NV15 emulation requires R10_G10B10_420_UNORM support");
+            UNREACHABLE("NV15 emulation requires R10_G10B10_420_UNORM support");
          }
          break;
       case PIPE_FORMAT_NV20:
@@ -499,7 +506,7 @@ st_bind_egl_image(struct gl_context *ctx,
             texFormat = MESA_FORMAT_R10G10B10X2_UNORM;
             texObj->RequiredTextureImageUnits = 1;
          } else {
-            unreachable("NV20 emulation requires R10_G10B10_422_UNORM support");
+            UNREACHABLE("NV20 emulation requires R10_G10B10_422_UNORM support");
          }
          break;
       case PIPE_FORMAT_P010:
@@ -579,7 +586,7 @@ st_bind_egl_image(struct gl_context *ctx,
          texObj->RequiredTextureImageUnits = 1;
          break;
       default:
-         unreachable("unexpected emulated format");
+         UNREACHABLE("unexpected emulated format");
          break;
       }
    } else {

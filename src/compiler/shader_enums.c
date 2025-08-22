@@ -34,7 +34,7 @@
 #define NAME(val) ((((val) < ARRAY_SIZE(names)) && names[(val)]) ? names[(val)] : "UNKNOWN")
 
 const char *
-gl_shader_stage_name(gl_shader_stage stage)
+mesa_shader_stage_name(mesa_shader_stage stage)
 {
    static const char *names[] = {
       ENUM(MESA_SHADER_VERTEX),
@@ -58,7 +58,7 @@ gl_shader_stage_name(gl_shader_stage stage)
 }
 
 /**
- * Translate a gl_shader_stage to a short shader stage name for debug
+ * Translate a mesa_shader_stage to a short shader stage name for debug
  * printouts and error messages.
  */
 const char *
@@ -82,11 +82,11 @@ _mesa_shader_stage_to_string(unsigned stage)
    case MESA_SHADER_CALLABLE:     return "callable";
    }
 
-   unreachable("Unknown shader stage.");
+   UNREACHABLE("Unknown shader stage.");
 }
 
 /**
- * Translate a gl_shader_stage to a shader stage abbreviation (VS, GS, FS)
+ * Translate a mesa_shader_stage to a shader stage abbreviation (VS, GS, FS)
  * for debug printouts and error messages.
  */
 const char *
@@ -110,7 +110,7 @@ _mesa_shader_stage_to_abbrev(unsigned stage)
    case MESA_SHADER_CALLABLE:     return "RCALL";
    }
 
-   unreachable("Unknown shader stage.");
+   UNREACHABLE("Unknown shader stage.");
 }
 
 const char *
@@ -155,7 +155,7 @@ gl_vert_attrib_name(gl_vert_attrib attrib)
 }
 
 const char *
-gl_varying_slot_name_for_stage(gl_varying_slot slot, gl_shader_stage stage)
+gl_varying_slot_name_for_stage(gl_varying_slot slot, mesa_shader_stage stage)
 {
    if (stage != MESA_SHADER_FRAGMENT && slot == VARYING_SLOT_PRIMITIVE_SHADING_RATE)
       return "VARYING_SLOT_PRIMITIVE_SHADING_RATE";
@@ -401,6 +401,11 @@ gl_system_value_name(gl_system_value sysval)
      ENUM(SYSTEM_VALUE_SM_COUNT_NV),
      ENUM(SYSTEM_VALUE_WARP_ID_NV),
      ENUM(SYSTEM_VALUE_SM_ID_NV),
+     ENUM(SYSTEM_VALUE_CORE_ID),
+     ENUM(SYSTEM_VALUE_CORE_COUNT_ARM),
+     ENUM(SYSTEM_VALUE_CORE_MAX_ID_ARM),
+     ENUM(SYSTEM_VALUE_WARP_ID_ARM),
+     ENUM(SYSTEM_VALUE_WARP_MAX_ID_ARM),
    };
    STATIC_ASSERT(ARRAY_SIZE(names) == SYSTEM_VALUE_MAX);
    return NAME(sysval);

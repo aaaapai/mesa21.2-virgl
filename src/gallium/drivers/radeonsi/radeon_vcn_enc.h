@@ -53,7 +53,7 @@
 #define RADEON_ENC_ERR(fmt, args...)                                                             \
    do {                                                                                          \
       enc->error = true;                                                                         \
-      fprintf(stderr, "EE %s:%d %s VCN - " fmt, __FILE__, __LINE__, __func__, ##args);           \
+      mesa_loge("%s:%d %s VCN - " fmt, __FILE__, __LINE__, __func__, ##args);           \
    } while(0)
 
 typedef void (*radeon_enc_get_buffer)(struct pipe_resource *resource, struct pb_buffer_lean **handle,
@@ -231,6 +231,11 @@ struct radeon_encoder {
    struct radeon_surf *luma;
    struct radeon_surf *chroma;
    struct pipe_video_buffer *source;
+   struct pipe_video_buffer *efc_source;
+   unsigned input_color_volume;
+   unsigned input_color_range;
+   unsigned output_color_volume;
+   unsigned output_color_range;
 
    struct pb_buffer_lean *bs_handle;
    unsigned bs_size;

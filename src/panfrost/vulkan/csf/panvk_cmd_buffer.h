@@ -27,6 +27,11 @@
 #include "util/list.h"
 #include "util/perf/u_trace.h"
 
+struct panvk_sync_scope {
+   VkPipelineStageFlags2 stages;
+   VkAccessFlags2 access;
+};
+
 #define MAX_VBS 16
 #define MAX_RTS 8
 #define MAX_LAYERS_PER_TILER_DESC 8
@@ -56,6 +61,19 @@ enum panvk_incremental_rendering_pass {
    PANVK_IR_PASS_COUNT
 };
 
+struct panvk_ir_fbd_info {
+   uint32_t word0;
+   uint32_t word6;
+   uint32_t word7;
+   uint32_t word12;
+};
+
+struct panvk_ir_desc_info {
+   struct panvk_ir_fbd_info fbd;
+   uint32_t crc_zs_word0;
+   uint32_t rtd_word1[MAX_RTS];
+};
+
 static inline uint32_t
 get_tiler_oom_handler_idx(bool has_zs_ext, uint32_t rt_count)
 {
@@ -83,9 +101,6 @@ get_fbd_size(bool has_zs_ext, uint32_t rt_count)
 /* Helper defines to get specific fields in the tiler_oom_ctx. */
 #define TILER_OOM_CTX_FIELD_OFFSET(_name)                                      \
    offsetof(struct panvk_cs_subqueue_context, tiler_oom_ctx._name)
-#define TILER_OOM_CTX_FBDPTR_OFFSET(_pass)                                     \
-   (TILER_OOM_CTX_FIELD_OFFSET(fbds) +                                         \
-    (PANVK_IR_##_pass##_PASS * sizeof(uint64_t)))
 
 struct panvk_cs_timestamp_query {
    struct cs_single_link_list_node node;
@@ -101,9 +116,12 @@ struct panvk_cs_occlusion_query {
 struct panvk_cs_subqueue_context {
    uint64_t syncobjs;
 #if PAN_ARCH == 10
+   /* must follow syncobjs immediately for cs_load_to */
    uint32_t iter_sb;
+#else
    uint32_t pad;
 #endif
+   uint32_t last_error;
    uint64_t reg_dump_addr;
    struct {
       struct panvk_cs_desc_ringbuf desc_ringbuf;
@@ -116,12 +134,16 @@ struct panvk_cs_subqueue_context {
    } render;
    struct {
       uint32_t counter;
-      uint64_t fbds[PANVK_IR_PASS_COUNT];
+      /* Base pointer to regular FBD for layer 0 */
+      uint64_t layer_fbd_ptr;
+      /* Pointer to scratch FBD used in the event of IR */
+      uint64_t ir_scratch_fbd_ptr;
+      /* Partial descriptor data needed in the event of IR */
+      struct panvk_ir_desc_info ir_desc_infos[PANVK_IR_PASS_COUNT];
       uint32_t td_count;
       uint32_t layer_count;
    } tiler_oom_ctx;
    struct {
-      uint64_t syncobjs;
       struct {
          uint64_t cs;
       } tracebuf;
@@ -147,6 +169,7 @@ struct panvk_cs_deps {
       enum mali_cs_condition cond;
       struct cs_index cond_value;
    } dst[PANVK_SUBQUEUE_COUNT];
+   bool needs_layout_transitions;
 };
 
 enum panvk_sb_ids {
@@ -435,6 +458,14 @@ panvk_cmd_get_desc_state(struct panvk_cmd_buffer *cmdbuf,
    }
 }
 
+static bool
+panvk_cache_flush_is_nop(const struct panvk_cache_flush_info *cache_flush)
+{
+   return cache_flush->l2 == MALI_CS_FLUSH_MODE_NONE &&
+          cache_flush->lsc == MALI_CS_FLUSH_MODE_NONE &&
+          cache_flush->others == MALI_CS_OTHER_FLUSH_MODE_NONE;
+}
+
 extern const struct vk_command_buffer_ops panvk_per_arch(cmd_buffer_ops);
 
 void panvk_per_arch(cmd_flush_draws)(struct panvk_cmd_buffer *cmdbuf);
@@ -443,9 +474,16 @@ void panvk_per_arch(cs_next_iter_sb)(struct panvk_cmd_buffer *cmdbuf,
                                      enum panvk_subqueue_id subqueue,
                                      struct cs_index scratch_regs);
 
-void panvk_per_arch(get_cs_deps)(struct panvk_cmd_buffer *cmdbuf,
-                                 const VkDependencyInfo *in,
-                                 struct panvk_cs_deps *out);
+enum panvk_barrier_stage {
+   PANVK_BARRIER_STAGE_FIRST,
+   PANVK_BARRIER_STAGE_AFTER_LAYOUT_TRANSITION,
+};
+
+void panvk_per_arch(add_cs_deps)(
+   struct panvk_cmd_buffer *cmdbuf,
+   enum panvk_barrier_stage barrier_stage,
+   const VkDependencyInfo *in,
+   struct panvk_cs_deps *out);
 
 VkResult panvk_per_arch(cmd_prepare_exec_cmd_for_draws)(
    struct panvk_cmd_buffer *primary, struct panvk_cmd_buffer *secondary);
@@ -455,8 +493,9 @@ void panvk_per_arch(cmd_inherit_render_state)(
 
 static inline void
 panvk_per_arch(calculate_task_axis_and_increment)(
-   const struct panvk_shader *shader, struct panvk_physical_device *phys_dev,
-   unsigned *task_axis, unsigned *task_increment)
+   const struct panvk_shader_variant *shader,
+   struct panvk_physical_device *phys_dev, unsigned *task_axis,
+   unsigned *task_increment)
 {
    /* Pick the task_axis and task_increment to maximize thread
     * utilization. */
@@ -516,7 +555,7 @@ panvk_get_subqueue_stages(enum panvk_subqueue_id subqueue)
       return VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
              VK_PIPELINE_STAGE_2_COPY_BIT;
    default:
-      unreachable("Invalid subqueue id");
+      UNREACHABLE("Invalid subqueue id");
    }
 }
 
@@ -561,4 +600,19 @@ vk_stage_to_subqueue_mask(VkPipelineStageFlagBits2 vk_stage)
 
 void panvk_per_arch(emit_barrier)(struct panvk_cmd_buffer *cmdbuf,
                                   struct panvk_cs_deps deps);
+#if PAN_ARCH >= 10
+
+void panvk_per_arch(cs_patch_ir_state)(
+   struct cs_builder *b, const struct cs_tracing_ctx *tracing_ctx,
+   bool has_zs_ext, uint32_t rt_count, struct cs_index remaining_layers_in_td,
+   struct cs_index current_fbd_ptr_reg, struct cs_index ir_desc_info_ptr,
+   struct cs_index ir_fbd_word_0, struct cs_index scratch_fbd_ptr_reg,
+   struct cs_index scratch_registers_5);
+
+void panvk_per_arch(cs_ir_update_registers_to_next_layer)(
+   struct cs_builder *b, bool has_zs_ext, uint32_t rt_count,
+   struct cs_index current_fbd_ptr_reg, struct cs_index ir_fbd_word_0,
+   struct cs_index remaining_layers_in_td);
+#endif /* PAN_ARCH >= 10 */
+
 #endif /* PANVK_CMD_BUFFER_H */

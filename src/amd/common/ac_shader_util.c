@@ -116,7 +116,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
    if (gfx_level >= GFX11) {
       switch (dfmt) {
       default:
-         unreachable("bad dfmt");
+         UNREACHABLE("bad dfmt");
       case V_008F0C_BUF_DATA_FORMAT_INVALID:
          return V_008F0C_GFX11_FORMAT_INVALID;
 
@@ -131,7 +131,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
          case V_008F0C_BUF_NUM_FORMAT_SSCALED:
             return V_008F0C_GFX11_FORMAT_8_SSCALED;
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_8_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -149,7 +149,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
          case V_008F0C_BUF_NUM_FORMAT_SSCALED:
             return V_008F0C_GFX11_FORMAT_8_8_SSCALED;
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_8_8_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -167,7 +167,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
          case V_008F0C_BUF_NUM_FORMAT_SSCALED:
             return V_008F0C_GFX11_FORMAT_8_8_8_8_SSCALED;
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_8_8_8_8_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -185,7 +185,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
          case V_008F0C_BUF_NUM_FORMAT_SSCALED:
             return V_008F0C_GFX11_FORMAT_16_SSCALED;
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_16_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -205,7 +205,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
          case V_008F0C_BUF_NUM_FORMAT_SSCALED:
             return V_008F0C_GFX11_FORMAT_16_16_SSCALED;
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_16_16_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -225,7 +225,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
          case V_008F0C_BUF_NUM_FORMAT_SSCALED:
             return V_008F0C_GFX11_FORMAT_16_16_16_16_SSCALED;
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_16_16_16_16_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -237,7 +237,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
       case V_008F0C_BUF_DATA_FORMAT_32:
          switch (nfmt) {
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_32_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -249,7 +249,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
       case V_008F0C_BUF_DATA_FORMAT_32_32:
          switch (nfmt) {
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_32_32_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -261,7 +261,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
       case V_008F0C_BUF_DATA_FORMAT_32_32_32:
          switch (nfmt) {
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_32_32_32_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -273,7 +273,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
       case V_008F0C_BUF_DATA_FORMAT_32_32_32_32:
          switch (nfmt) {
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_32_32_32_32_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -293,7 +293,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
          case V_008F0C_BUF_NUM_FORMAT_SSCALED:
             return V_008F0C_GFX11_FORMAT_2_10_10_10_SSCALED;
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_UINT:
             return V_008F0C_GFX11_FORMAT_2_10_10_10_UINT;
          case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -303,7 +303,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
       case V_008F0C_BUF_DATA_FORMAT_10_11_11:
          switch (nfmt) {
          default:
-            unreachable("bad nfmt");
+            UNREACHABLE("bad nfmt");
          case V_008F0C_BUF_NUM_FORMAT_FLOAT:
             return V_008F0C_GFX11_FORMAT_10_11_11_FLOAT;
          }
@@ -312,7 +312,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
       unsigned format;
       switch (dfmt) {
       default:
-         unreachable("bad dfmt");
+         UNREACHABLE("bad dfmt");
       case V_008F0C_BUF_DATA_FORMAT_INVALID:
          format = V_008F0C_GFX10_FORMAT_INVALID;
          break;
@@ -373,7 +373,7 @@ unsigned ac_get_tbuffer_format(enum amd_gfx_level gfx_level, unsigned dfmt, unsi
          format -= 1;
          break;
       default:
-         unreachable("bad nfmt");
+         UNREACHABLE("bad nfmt");
       case V_008F0C_BUF_NUM_FORMAT_UINT:
          break;
       case V_008F0C_BUF_NUM_FORMAT_SINT:
@@ -580,7 +580,7 @@ enum ac_image_dim ac_get_sampler_dim(enum amd_gfx_level gfx_level, enum glsl_sam
    case GLSL_SAMPLER_DIM_SUBPASS_MS:
       return ac_image_2darraymsaa;
    default:
-      unreachable("bad sampler dim");
+      UNREACHABLE("bad sampler dim");
    }
 }
 
@@ -656,7 +656,7 @@ uint16_t ac_get_ps_iter_mask(unsigned ps_iter_samples)
    case 4: return 0x11;
    case 8: return 0x01;
    default:
-      unreachable("invalid sample count");
+      UNREACHABLE("invalid sample count");
    }
 }
 
@@ -865,7 +865,7 @@ unsigned ac_compute_cs_workgroup_size(const uint16_t sizes[3], bool variable, un
    return sizes[0] * sizes[1] * sizes[2];
 }
 
-unsigned ac_compute_lshs_workgroup_size(enum amd_gfx_level gfx_level, gl_shader_stage stage,
+unsigned ac_compute_lshs_workgroup_size(enum amd_gfx_level gfx_level, mesa_shader_stage stage,
                                         unsigned tess_num_patches,
                                         unsigned tess_patch_in_vtx,
                                         unsigned tess_patch_out_vtx)
@@ -885,24 +885,7 @@ unsigned ac_compute_lshs_workgroup_size(enum amd_gfx_level gfx_level, gl_shader_
    else if (stage == MESA_SHADER_TESS_CTRL)
       return hs_workgroup_size;
    else
-      unreachable("invalid LSHS shader stage");
-}
-
-unsigned ac_compute_esgs_workgroup_size(enum amd_gfx_level gfx_level, unsigned wave_size,
-                                        unsigned es_verts, unsigned gs_inst_prims)
-{
-   /* ESGS may operate in workgroups if on-chip GS (LDS rings) are enabled.
-    *
-    * GFX6: Not possible in the HW.
-    * GFX7-8 (unmerged): possible in the HW, but not implemented in Mesa.
-    * GFX9+ (merged): implemented in Mesa.
-    */
-
-   if (gfx_level <= GFX8)
-      return wave_size;
-
-   unsigned workgroup_size = MAX2(es_verts, gs_inst_prims);
-   return CLAMP(workgroup_size, 1, 256);
+      UNREACHABLE("invalid LSHS shader stage");
 }
 
 unsigned ac_compute_ngg_workgroup_size(unsigned es_verts, unsigned gs_inst_prims,
@@ -1097,22 +1080,18 @@ void ac_get_scratch_tmpring_size(const struct radeon_info *info, unsigned num_sc
                    S_0286E8_WAVESIZE(bytes_per_wave >> info->scratch_wavesize_granularity_shift);
 }
 
-/* Convert chip-agnostic memory access flags into hw-specific cache flags.
- *
- * "access" must be a result of ac_nir_get_mem_access_flags() with the appropriate ACCESS_TYPE_*
- * flags set.
- */
+/* Convert chip-agnostic memory access flags into hw-specific cache flags. */
 union ac_hw_cache_flags ac_get_hw_cache_flags(enum amd_gfx_level gfx_level,
-                                              enum gl_access_qualifier access)
+                                              enum gl_access_qualifier access,
+                                              enum ac_access_type type)
 {
    union ac_hw_cache_flags result;
    result.value = 0;
 
-   assert(util_bitcount(access & (ACCESS_TYPE_LOAD | ACCESS_TYPE_STORE |
-                                  ACCESS_TYPE_ATOMIC)) == 1);
-   assert(!(access & ACCESS_TYPE_SMEM) || access & ACCESS_TYPE_LOAD);
-   assert(!(access & ACCESS_IS_SWIZZLED_AMD) || !(access & ACCESS_TYPE_SMEM));
-   assert(!(access & ACCESS_MAY_STORE_SUBDWORD) || access & ACCESS_TYPE_STORE);
+   bool is_store = type == ac_access_type_store || type == ac_access_type_store_subdword;
+
+   assert(!(access & ACCESS_SMEM_AMD) || type == ac_access_type_load);
+   assert(!(access & ACCESS_IS_SWIZZLED_AMD) || !(access & ACCESS_SMEM_AMD));
 
    bool scope_is_device = access & (ACCESS_COHERENT | ACCESS_VOLATILE);
 
@@ -1128,11 +1107,11 @@ union ac_hw_cache_flags ac_get_hw_cache_flags(enum amd_gfx_level gfx_level,
       }
 
       if (access & ACCESS_NON_TEMPORAL) {
-         if (access & ACCESS_TYPE_LOAD) {
+         if (type == ac_access_type_load) {
             /* Don't use non_temporal for SMEM because it can't set regular_temporal for MALL. */
-            if (!(access & ACCESS_TYPE_SMEM))
+            if (!(access & ACCESS_SMEM_AMD))
                result.gfx12.temporal_hint = gfx12_load_near_non_temporal_far_regular_temporal;
-         } else if (access & ACCESS_TYPE_STORE) {
+         } else if (is_store) {
             result.gfx12.temporal_hint = gfx12_store_near_non_temporal_far_regular_temporal;
          } else {
             result.gfx12.temporal_hint = gfx12_atomic_non_temporal;
@@ -1147,10 +1126,10 @@ union ac_hw_cache_flags ac_get_hw_cache_flags(enum amd_gfx_level gfx_level,
        *
        * GL0 doesn't have a non-temporal flag, so you always get LRU caching in CU scope.
        */
-      if (access & ACCESS_TYPE_LOAD && scope_is_device)
+      if (type == ac_access_type_load && scope_is_device)
          result.value |= ac_glc;
 
-      if (access & ACCESS_NON_TEMPORAL && !(access & ACCESS_TYPE_SMEM))
+      if (access & ACCESS_NON_TEMPORAL && !(access & ACCESS_SMEM_AMD))
          result.value |= ac_slc;
    } else if (gfx_level >= GFX10) {
       /* GFX10-10.3:
@@ -1179,10 +1158,10 @@ union ac_hw_cache_flags ac_get_hw_cache_flags(enum amd_gfx_level gfx_level,
        * "stream" allows write combining in GL2. "coherent bypass" doesn't.
        * "non-coherent bypass" doesn't guarantee ordering with any coherent stores.
        */
-      if (scope_is_device && !(access & ACCESS_TYPE_ATOMIC))
-         result.value |= ac_glc | (access & ACCESS_TYPE_LOAD ? ac_dlc : 0);
+      if (scope_is_device && type != ac_access_type_atomic)
+         result.value |= ac_glc | (type == ac_access_type_load ? ac_dlc : 0);
 
-      if (access & ACCESS_NON_TEMPORAL && !(access & ACCESS_TYPE_SMEM))
+      if (access & ACCESS_NON_TEMPORAL && !(access & ACCESS_SMEM_AMD))
          result.value |= ac_slc;
    } else {
       /* GFX6-GFX9:
@@ -1204,19 +1183,19 @@ union ac_hw_cache_flags ac_get_hw_cache_flags(enum amd_gfx_level gfx_level,
        * SMEM loads:
        *  GLC means device scope (available on GFX8+)
        */
-      if (scope_is_device && !(access & ACCESS_TYPE_ATOMIC)) {
+      if (scope_is_device && type != ac_access_type_atomic) {
          /* SMEM doesn't support the device scope on GFX6-7. */
-         assert(gfx_level >= GFX8 || !(access & ACCESS_TYPE_SMEM));
+         assert(gfx_level >= GFX8 || !(access & ACCESS_SMEM_AMD));
          result.value |= ac_glc;
       }
 
-      if (access & ACCESS_NON_TEMPORAL && !(access & ACCESS_TYPE_SMEM))
+      if (access & ACCESS_NON_TEMPORAL && !(access & ACCESS_SMEM_AMD))
          result.value |= ac_slc;
 
       /* GFX6 has a TC L1 bug causing corruption of 8bit/16bit stores. All store opcodes not
        * aligned to a dword are affected.
        */
-      if (gfx_level == GFX6 && access & ACCESS_MAY_STORE_SUBDWORD)
+      if (gfx_level == GFX6 && type == ac_access_type_store_subdword)
          result.value |= ac_glc;
    }
 
@@ -1257,4 +1236,274 @@ ac_shader_io_get_unique_index_patch(unsigned semantic)
       assert(!"invalid semantic");
       return 0;
    }
+}
+
+static void
+clamp_gsprims_to_esverts(unsigned *max_gsprims, unsigned max_esverts, unsigned min_verts_per_prim,
+                         bool use_adjacency)
+{
+   unsigned max_reuse = max_esverts - min_verts_per_prim;
+   if (use_adjacency)
+      max_reuse /= 2;
+   *max_gsprims = MIN2(*max_gsprims, 1 + max_reuse);
+}
+
+void
+ac_legacy_gs_compute_subgroup_info(enum mesa_prim input_prim, unsigned gs_vertices_out, unsigned gs_invocations,
+                                   unsigned esgs_vertex_stride, ac_legacy_gs_subgroup_info *out)
+{
+   unsigned gs_num_invocations = MAX2(gs_invocations, 1);
+   bool uses_adjacency = mesa_prim_has_adjacency((enum mesa_prim)input_prim);
+   const unsigned max_verts_per_prim = mesa_vertices_per_prim(input_prim);
+
+   /* All these are in dwords: */
+   /* We can't allow using the whole LDS, because GS waves compete with
+    * other shader stages for LDS space. */
+   const unsigned max_lds_size = 8 * 1024;
+   const unsigned esgs_itemsize = esgs_vertex_stride / 4;
+   unsigned esgs_lds_size;
+
+   /* All these are per subgroup: */
+   const unsigned max_out_prims = 32 * 1024;
+   const unsigned max_es_verts = 255;
+   const unsigned ideal_gs_prims = 64;
+   unsigned max_gs_prims, gs_prims;
+   unsigned min_es_verts, es_verts, worst_case_es_verts;
+
+   if (uses_adjacency || gs_num_invocations > 1)
+      max_gs_prims = 127 / gs_num_invocations;
+   else
+      max_gs_prims = 255;
+
+   /* MAX_PRIMS_PER_SUBGROUP = gs_prims * max_vert_out * gs_invocations.
+    * Make sure we don't go over the maximum value.
+    */
+   if (gs_vertices_out > 0) {
+      max_gs_prims =
+         MIN2(max_gs_prims, max_out_prims / (gs_vertices_out * gs_num_invocations));
+   }
+   assert(max_gs_prims > 0);
+
+   /* If the primitive has adjacency, halve the number of vertices
+    * that will be reused in multiple primitives.
+    */
+   min_es_verts = max_verts_per_prim / (uses_adjacency ? 2 : 1);
+
+   gs_prims = MIN2(ideal_gs_prims, max_gs_prims);
+   worst_case_es_verts = MIN2(min_es_verts * gs_prims, max_es_verts);
+
+   /* Compute ESGS LDS size based on the worst case number of ES vertices
+    * needed to create the target number of GS prims per subgroup.
+    */
+   esgs_lds_size = esgs_itemsize * worst_case_es_verts;
+
+   /* If total LDS usage is too big, refactor partitions based on ratio
+    * of ESGS item sizes.
+    */
+   if (esgs_lds_size > max_lds_size) {
+      /* Our target GS Prims Per Subgroup was too large. Calculate
+       * the maximum number of GS Prims Per Subgroup that will fit
+       * into LDS, capped by the maximum that the hardware can support.
+       */
+      gs_prims = MIN2((max_lds_size / (esgs_itemsize * min_es_verts)), max_gs_prims);
+      assert(gs_prims > 0);
+      worst_case_es_verts = MIN2(min_es_verts * gs_prims, max_es_verts);
+
+      esgs_lds_size = esgs_itemsize * worst_case_es_verts;
+      assert(esgs_lds_size <= max_lds_size);
+   }
+
+   /* Now calculate remaining ESGS information. */
+   if (esgs_lds_size)
+      es_verts = MIN2(esgs_lds_size / esgs_itemsize, max_es_verts);
+   else
+      es_verts = max_es_verts;
+
+   /* Vertices for adjacency primitives are not always reused, so restore
+    * it for ES_VERTS_PER_SUBGRP.
+    */
+   min_es_verts = max_verts_per_prim;
+
+   /* For normal primitives, the VGT only checks if they are past the ES
+    * verts per subgroup after allocating a full GS primitive and if they
+    * are, kick off a new subgroup.  But if those additional ES verts are
+    * unique (e.g. not reused) we need to make sure there is enough LDS
+    * space to account for those ES verts beyond ES_VERTS_PER_SUBGRP.
+    */
+   es_verts -= min_es_verts - 1;
+
+   out->es_verts_per_subgroup = es_verts;
+   out->gs_prims_per_subgroup = gs_prims;
+   out->gs_inst_prims_in_subgroup = gs_prims * gs_num_invocations;
+   out->max_prims_per_subgroup = out->gs_inst_prims_in_subgroup * gs_vertices_out;
+   out->esgs_lds_size = esgs_lds_size;
+
+   assert(out->max_prims_per_subgroup <= max_out_prims);
+}
+
+/**
+ * Determine subgroup information like maximum number of vertices and prims.
+ *
+ * This happens before the shader is uploaded, since LDS relocations during
+ * upload depend on the subgroup size.
+ */
+bool
+ac_ngg_compute_subgroup_info(enum amd_gfx_level gfx_level, mesa_shader_stage es_stage, bool is_gs,
+                             enum mesa_prim input_prim, unsigned gs_vertices_out, unsigned gs_invocations,
+                             unsigned max_workgroup_size, unsigned wave_size, unsigned esgs_vertex_stride,
+                             unsigned ngg_lds_vertex_size, unsigned ngg_lds_scratch_size, bool tess_turns_off_ngg,
+                             unsigned max_esgs_lds_padding, ac_ngg_subgroup_info *out)
+{
+   const unsigned gs_num_invocations = MAX2(gs_invocations, 1);
+   const bool use_adjacency = mesa_prim_has_adjacency(input_prim);
+   const unsigned max_verts_per_prim = mesa_vertices_per_prim(input_prim);
+   const unsigned min_verts_per_prim = is_gs ? max_verts_per_prim : 1;
+
+   /* All these are in dwords. The maximum is 16K dwords (64KB) of LDS per workgroup. */
+   /* The LDS scratch is at the beginning of LDS space. */
+   const unsigned max_lds_size = 16 * 1024 - ngg_lds_scratch_size / 4 - max_esgs_lds_padding / 4;
+   const unsigned target_lds_size = max_lds_size;
+   unsigned esvert_lds_size = 0;
+   unsigned gsprim_lds_size = 0;
+
+   /* All these are per subgroup: */
+   const unsigned min_esverts =
+      gfx_level >= GFX11 ? max_verts_per_prim : /* gfx11 requires at least 1 primitive per TG */
+      gfx_level >= GFX10_3 ? 29 : (24 - 1 + max_verts_per_prim);
+   bool max_vert_out_per_gs_instance = false;
+   unsigned max_gsprims_base, max_esverts_base;
+
+   max_gsprims_base = max_esverts_base = max_workgroup_size;
+
+   if (is_gs) {
+      bool force_multi_cycling = false;
+      unsigned max_out_verts_per_gsprim = gs_vertices_out * gs_num_invocations;
+
+retry_select_mode:
+      if (max_out_verts_per_gsprim <= 256 && !force_multi_cycling) {
+         if (max_out_verts_per_gsprim) {
+            max_gsprims_base = MIN2(max_gsprims_base, 256 / max_out_verts_per_gsprim);
+         }
+      } else {
+         /* Use special multi-cycling mode in which each GS
+          * instance gets its own subgroup. Does not work with
+          * tessellation. */
+         max_vert_out_per_gs_instance = true;
+         max_gsprims_base = 1;
+         max_out_verts_per_gsprim = gs_vertices_out;
+      }
+
+      esvert_lds_size = esgs_vertex_stride / 4;
+      gsprim_lds_size = (ngg_lds_vertex_size / 4) * max_out_verts_per_gsprim;
+
+      if (gsprim_lds_size > target_lds_size && !force_multi_cycling) {
+         if (tess_turns_off_ngg || es_stage != MESA_SHADER_TESS_EVAL) {
+            force_multi_cycling = true;
+            goto retry_select_mode;
+         }
+      }
+   } else {
+      /* VS and TES. */
+      esvert_lds_size = ngg_lds_vertex_size / 4;
+   }
+
+   unsigned max_gsprims = max_gsprims_base;
+   unsigned max_esverts = max_esverts_base;
+
+   if (esvert_lds_size)
+      max_esverts = MIN2(max_esverts, target_lds_size / esvert_lds_size);
+   if (gsprim_lds_size)
+      max_gsprims = MIN2(max_gsprims, target_lds_size / gsprim_lds_size);
+
+   max_esverts = MIN2(max_esverts, max_gsprims * max_verts_per_prim);
+   clamp_gsprims_to_esverts(&max_gsprims, max_esverts, min_verts_per_prim, use_adjacency);
+   assert(max_esverts >= max_verts_per_prim && max_gsprims >= 1);
+
+   if (esvert_lds_size || gsprim_lds_size) {
+      /* Now that we have a rough proportionality between esverts
+       * and gsprims based on the primitive type, scale both of them
+       * down simultaneously based on required LDS space.
+       *
+       * We could be smarter about this if we knew how much vertex
+       * reuse to expect.
+       */
+      unsigned lds_total = max_esverts * esvert_lds_size + max_gsprims * gsprim_lds_size;
+      if (lds_total > target_lds_size) {
+         max_esverts = max_esverts * target_lds_size / lds_total;
+         max_gsprims = max_gsprims * target_lds_size / lds_total;
+
+         max_esverts = MIN2(max_esverts, max_gsprims * max_verts_per_prim);
+         clamp_gsprims_to_esverts(&max_gsprims, max_esverts, min_verts_per_prim, use_adjacency);
+         assert(max_esverts >= max_verts_per_prim && max_gsprims >= 1);
+      }
+   }
+
+   /* Round up towards full wave sizes for better ALU utilization. */
+   if (!max_vert_out_per_gs_instance) {
+      unsigned orig_max_esverts;
+      unsigned orig_max_gsprims;
+      do {
+         orig_max_esverts = max_esverts;
+         orig_max_gsprims = max_gsprims;
+
+         max_esverts = align(max_esverts, wave_size);
+         max_esverts = MIN2(max_esverts, max_esverts_base);
+         if (esvert_lds_size)
+            max_esverts =
+               MIN2(max_esverts, (max_lds_size - max_gsprims * gsprim_lds_size) / esvert_lds_size);
+         max_esverts = MIN2(max_esverts, max_gsprims * max_verts_per_prim);
+
+         /* Hardware restriction: minimum value of max_esverts */
+         max_esverts = MAX2(max_esverts, min_esverts);
+
+         max_gsprims = align(max_gsprims, wave_size);
+         max_gsprims = MIN2(max_gsprims, max_gsprims_base);
+         if (gsprim_lds_size) {
+            /* Don't count unusable vertices to the LDS size. Those are vertices above
+             * the maximum number of vertices that can occur in the workgroup,
+             * which is e.g. max_gsprims * 3 for triangles.
+             */
+            unsigned usable_esverts = MIN2(max_esverts, max_gsprims * max_verts_per_prim);
+            max_gsprims =
+               MIN2(max_gsprims, (max_lds_size - usable_esverts * esvert_lds_size) / gsprim_lds_size);
+         }
+         clamp_gsprims_to_esverts(&max_gsprims, max_esverts, min_verts_per_prim, use_adjacency);
+         assert(max_esverts >= max_verts_per_prim && max_gsprims >= 1);
+      } while (orig_max_esverts != max_esverts || orig_max_gsprims != max_gsprims);
+
+      /* Verify the restriction. */
+      assert(max_esverts >= min_esverts);
+   } else {
+      max_esverts = MAX2(max_esverts, min_esverts);
+   }
+
+   unsigned max_out_vertices =
+      max_vert_out_per_gs_instance
+         ? gs_vertices_out
+         : is_gs
+              ? max_gsprims * gs_num_invocations * gs_vertices_out
+              : max_esverts;
+   assert(max_out_vertices <= 256);
+
+   out->hw_max_esverts = max_esverts;
+   out->max_gsprims = max_gsprims;
+   out->max_out_verts = max_out_vertices;
+   out->max_vert_out_per_gs_instance = max_vert_out_per_gs_instance;
+
+   /* Don't count unusable vertices. */
+   out->esgs_lds_size = MIN2(max_esverts, max_gsprims * max_verts_per_prim) *
+                         esvert_lds_size;
+   out->ngg_out_lds_size = max_gsprims * gsprim_lds_size;
+
+   if (is_gs)
+      out->ngg_out_lds_size += ngg_lds_scratch_size / 4;
+   else
+      out->esgs_lds_size += ngg_lds_scratch_size / 4;
+
+   assert(out->hw_max_esverts >= min_esverts); /* HW limitation */
+
+   /* If asserts are disabled, we use the same conditions to return false */
+   return max_esverts >= max_verts_per_prim && max_gsprims >= 1 &&
+          max_out_vertices <= 256 &&
+          out->hw_max_esverts >= min_esverts;
 }

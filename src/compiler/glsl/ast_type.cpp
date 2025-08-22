@@ -976,16 +976,16 @@ ast_layout_expression::process_qualifier_constant(struct _mesa_glsl_parse_state 
    if (!can_be_zero)
       min_value = 1;
 
-   for (exec_node *node = layout_const_expressions.get_head_raw();
+   for (ir_exec_node *node = layout_const_expressions.get_head_raw();
         !node->is_tail_sentinel(); node = node->next) {
 
-      exec_list dummy_instructions;
-      ast_node *const_expression = exec_node_data(ast_node, node, link);
+      ir_exec_list dummy_instructions;
+      ast_node *const_expression = ir_exec_node_data(ast_node, node, link);
 
       ir_rvalue *const ir = const_expression->hir(&dummy_instructions, state);
 
       ir_constant *const const_int =
-         ir->constant_expression_value(ralloc_parent(ir));
+         ir->constant_expression_value(state->linalloc);
 
       if (const_int == NULL || !glsl_type_is_integer_32(const_int->type)) {
          YYLTYPE loc = const_expression->get_location();
@@ -1032,7 +1032,7 @@ process_qualifier_constant(struct _mesa_glsl_parse_state *state,
                            ast_expression *const_expression,
                            unsigned *value)
 {
-   exec_list dummy_instructions;
+   ir_exec_list dummy_instructions;
 
    if (const_expression == NULL) {
       *value = 0;
@@ -1042,7 +1042,7 @@ process_qualifier_constant(struct _mesa_glsl_parse_state *state,
    ir_rvalue *const ir = const_expression->hir(&dummy_instructions, state);
 
    ir_constant *const const_int =
-      ir->constant_expression_value(ralloc_parent(ir));
+      ir->constant_expression_value(state->linalloc);
    if (const_int == NULL || !glsl_type_is_integer_32(const_int->type)) {
       _mesa_glsl_error(loc, state, "%s must be an integral constant "
                        "expression", qual_indentifier);

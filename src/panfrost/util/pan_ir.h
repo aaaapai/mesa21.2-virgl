@@ -105,6 +105,8 @@ struct pan_compile_inputs {
    bool no_idvs;
    uint32_t view_mask;
 
+   nir_variable_mode robust2_modes;
+
    /* Mask of UBOs that may be moved to push constants */
    uint32_t pushable_ubos;
 
@@ -192,7 +194,7 @@ struct midgard_shader_info {
 };
 
 struct pan_shader_info {
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
    unsigned work_reg_count;
    unsigned tls_size;
    unsigned wls_size;
@@ -348,8 +350,6 @@ bool pan_nir_lower_image_ms(nir_shader *shader);
 bool pan_nir_lower_frag_coord_zw(nir_shader *shader);
 bool pan_nir_lower_noperspective_vs(nir_shader *shader);
 bool pan_nir_lower_noperspective_fs(nir_shader *shader);
-bool pan_nir_lower_static_noperspective(nir_shader *shader,
-                                        uint32_t noperspective_varyings);
 
 bool pan_lower_helper_invocation(nir_shader *shader);
 bool pan_lower_sample_pos(nir_shader *shader);

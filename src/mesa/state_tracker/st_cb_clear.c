@@ -113,8 +113,7 @@ set_clearcolor_fs(struct st_context *st, union pipe_color_union *color)
       .user_buffer = color->f,
       .buffer_size = 4 * sizeof(float),
    };
-   st->pipe->set_constant_buffer(st->pipe, PIPE_SHADER_FRAGMENT, 0,
-                                false, &cb);
+   pipe_upload_constant_buffer0(st->pipe, MESA_SHADER_FRAGMENT, &cb);
 
    if (!st->clear.fs) {
       st->clear.fs = st_nir_make_clearcolor_shader(st);
@@ -406,12 +405,12 @@ st_Clear(struct gl_context *ctx, GLbitfield mask)
          if (b != BUFFER_NONE && mask & (1 << b)) {
             struct gl_renderbuffer *rb
                = ctx->DrawBuffer->Attachment[b].Renderbuffer;
-            enum pipe_format format = _mesa_renderbuffer_get_format(ctx, rb);
             int colormask_index = ctx->Extensions.EXT_draw_buffers2 ? i : 0;
 
             if (!rb || !rb->texture)
                continue;
 
+            enum pipe_format format = _mesa_renderbuffer_get_format(ctx, rb);
             unsigned colormask =
                GET_COLORMASK(ctx->Color.ColorMask, colormask_index);
 

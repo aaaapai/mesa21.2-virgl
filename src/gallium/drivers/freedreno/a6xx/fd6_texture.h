@@ -49,7 +49,7 @@ struct PACKED fd6_bcolor_entry {
 
 struct fd6_sampler_stateobj {
    struct pipe_sampler_state base;
-   uint32_t texsamp0, texsamp1, texsamp2, texsamp3;
+   uint32_t descriptor[4];
    uint16_t seqno;
 };
 
@@ -61,10 +61,9 @@ fd6_sampler_stateobj(struct pipe_sampler_state *samp)
 
 struct fd6_pipe_sampler_view {
    struct pipe_sampler_view base;
-   struct fd_resource *ptr1, *ptr2;
    uint16_t seqno;
 
-   /* TEX_CONST descriptor, with just offsets from the BOs in the iova dwords. */
+   /* TEX_CONST descriptor */
    uint32_t descriptor[FDL6_TEX_CONST_DWORDS];
 
    /* For detecting when a resource has transitioned from UBWC compressed
@@ -110,7 +109,7 @@ struct fd6_texture_state {
 };
 
 struct fd6_texture_state *
-fd6_texture_state(struct fd_context *ctx, enum pipe_shader_type type) assert_dt;
+fd6_texture_state(struct fd_context *ctx, mesa_shader_stage type) assert_dt;
 
 
 static inline void
@@ -126,17 +125,23 @@ fd6_layout_tex2d_from_buf(struct fdl_layout *layout,
       .pitch = tex2d_from_buf->row_stride * block_size,
    };
 
+   struct fdl_image_params params = {
+      .format = format,
+      .nr_samples = 1,
+      .width0 = tex2d_from_buf->width,
+      .height0 = tex2d_from_buf->height,
+      .depth0 = 1,
+      .mip_levels = 1,
+      .array_size = 1,
+   };
+
    *layout = (struct fdl_layout) {
       .ubwc = false,
       .tile_all = false,
       .tile_mode = TILE6_LINEAR,
    };
 
-   ASSERTED bool ret = fdl6_layout(layout, info, format, 1,
-                                   tex2d_from_buf->width,
-                                   tex2d_from_buf->height,
-                                   1, 1, 1, false, false,
-                                   false, &explicit_layout);
+   ASSERTED bool ret = fdl6_layout_image(layout, info, &params, &explicit_layout);
    assert(ret);
 }
 

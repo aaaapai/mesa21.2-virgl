@@ -148,7 +148,7 @@ print_def(nir_def *def, print_state *state)
            def->bit_size, sizes[def->num_components],
            padding, "", state->def_prefix, def->index);
 
-   if (state->shader->has_debug_info) {
+   if (def->parent_instr->has_debug_info) {
       nir_instr_debug_info *debug_info = nir_instr_get_debug_info(def->parent_instr);
       if (debug_info->variable_name)
          fprintf(fp, ".%s", debug_info->variable_name);
@@ -192,7 +192,7 @@ print_hex_padded_const_value(const nir_const_value *value, unsigned bit_size, FI
       fprintf(fp, "0x%02x", value->u8);
       break;
    default:
-      unreachable("unhandled bit size");
+      UNREACHABLE("unhandled bit size");
    }
 }
 
@@ -213,7 +213,7 @@ print_hex_terse_const_value(const nir_const_value *value, unsigned bit_size, FIL
       fprintf(fp, "0x%x", value->u8);
       break;
    default:
-      unreachable("unhandled bit size");
+      UNREACHABLE("unhandled bit size");
    }
 }
 
@@ -245,7 +245,7 @@ print_int_const_value(const nir_const_value *value, unsigned bit_size, FILE *fp)
       fprintf(fp, "%+d", value->i8);
       break;
    default:
-      unreachable("unhandled bit size");
+      UNREACHABLE("unhandled bit size");
    }
 }
 
@@ -266,7 +266,7 @@ print_uint_const_value(const nir_const_value *value, unsigned bit_size, FILE *fp
       fprintf(fp, "%u", value->u8);
       break;
    default:
-      unreachable("unhandled bit size");
+      UNREACHABLE("unhandled bit size");
    }
 }
 
@@ -309,7 +309,7 @@ print_const_from_load(nir_load_const_instr *instr, print_state *state, nir_alu_t
             break;
 
          default:
-            unreachable("invalid nir alu base type");
+            UNREACHABLE("invalid nir alu base type");
          }
       }
    } else {
@@ -351,7 +351,7 @@ print_const_from_load(nir_load_const_instr *instr, print_state *state, nir_alu_t
             needs_decimal |= v->u8 >= 10;
             break;
          default:
-            unreachable("invalid bit size");
+            UNREACHABLE("invalid bit size");
          }
       }
 
@@ -409,7 +409,7 @@ print_src(const nir_src *src, print_state *state, nir_alu_type src_type)
    fprintf(fp, "%s%u", state->def_prefix, src->ssa->index);
    nir_instr *instr = src->ssa->parent_instr;
 
-   if (state->shader->has_debug_info) {
+   if (instr->has_debug_info) {
       nir_instr_debug_info *debug_info = nir_instr_get_debug_info(instr);
       if (debug_info->variable_name)
          fprintf(fp, ".%s", debug_info->variable_name);
@@ -567,7 +567,7 @@ get_constant_sampler_addressing_mode(enum cl_sampler_addressing_mode mode)
    case SAMPLER_ADDRESSING_MODE_REPEAT_MIRRORED:
       return "repeat_mirrored";
    default:
-      unreachable("Invalid addressing mode");
+      UNREACHABLE("Invalid addressing mode");
    }
 }
 
@@ -580,7 +580,7 @@ get_constant_sampler_filter_mode(enum cl_sampler_filter_mode mode)
    case SAMPLER_FILTER_MODE_LINEAR:
       return "linear";
    default:
-      unreachable("Invalid filter mode");
+      UNREACHABLE("Invalid filter mode");
    }
 }
 
@@ -676,7 +676,7 @@ print_constant(nir_constant *c, const struct glsl_type *type, print_state *state
             break;
 
          default:
-            unreachable("Cannot get here from the first level switch");
+            UNREACHABLE("Cannot get here from the first level switch");
          }
       }
       break;
@@ -714,8 +714,17 @@ print_constant(nir_constant *c, const struct glsl_type *type, print_state *state
       }
       break;
 
+   case GLSL_TYPE_COOPERATIVE_MATRIX:
+      // This occurs as the constant initializer for a cmat variable.
+      // In this case it's a scalar constant, and its word value is
+      // c->values[0], but we have to interpet it via the component type.
+      fprintf(fp, "%s(", glsl_get_type_name(type));
+      print_constant(c, glsl_get_cmat_element(type), state);
+      fprintf(fp, ")");
+      break;
+
    default:
-      unreachable("not reached");
+      UNREACHABLE("not reached");
    }
 }
 
@@ -767,7 +776,7 @@ get_variable_mode_str(nir_variable_mode mode, bool want_local_global_mode)
 }
 
 static const char *
-get_location_str(unsigned location, gl_shader_stage stage,
+get_location_str(unsigned location, mesa_shader_stage stage,
                  nir_variable_mode mode, char *buf)
 {
    switch (stage) {
@@ -841,6 +850,7 @@ print_access(enum gl_access_qualifier access, print_state *state, const char *se
       { ACCESS_IN_BOUNDS, "in-bounds" },
       { ACCESS_KEEP_SCALAR, "keep-scalar" },
       { ACCESS_SMEM_AMD, "smem-amd" },
+      { ACCESS_SKIP_HELPERS, "skip-helpers" },
    };
 
    bool first = true;
@@ -1003,7 +1013,7 @@ print_deref_link(const nir_deref_instr *instr, bool whole_chain, print_state *st
    }
 
    nir_deref_instr *parent =
-      nir_instr_as_deref(instr->parent.ssa->parent_instr);
+      nir_def_as_deref(instr->parent.ssa);
 
    /* Is the parent we're going to print a bare cast? */
    const bool is_parent_cast =
@@ -1061,7 +1071,7 @@ print_deref_link(const nir_deref_instr *instr, bool whole_chain, print_state *st
       break;
 
    default:
-      unreachable("Invalid deref instruction type");
+      UNREACHABLE("Invalid deref instruction type");
    }
 }
 
@@ -1090,7 +1100,7 @@ print_deref_instr(nir_deref_instr *instr, print_state *state)
       fprintf(fp, " = deref_ptr_as_array ");
       break;
    default:
-      unreachable("Invalid deref instruction type");
+      UNREACHABLE("Invalid deref instruction type");
    }
 
    /* Only casts naturally return a pointer type */
@@ -1106,6 +1116,13 @@ print_deref_instr(nir_deref_instr *instr, print_state *state)
       fprintf(fp, "%s%s", get_variable_mode_str(1 << m, true),
               modes ? "|" : "");
    }
+
+   nir_variable *var = nir_deref_instr_get_variable(instr);
+   if (var) {
+      static const char *precision_str[] = {"", " highp", " mediump", " lowp"};
+      fprintf(fp, "%s", precision_str[var->data.precision]);
+   }
+
    fprintf(fp, " %s)", get_type_name(instr->type, state));
 
    if (instr->deref_type == nir_deref_type_cast) {
@@ -1216,6 +1233,12 @@ print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
 
    for (unsigned i = 0; i < info->num_indices; i++) {
       unsigned idx = info->indices[i];
+
+      /* Skip "general" to denoise since it is the unremarkable default case */
+      if (idx == NIR_INTRINSIC_PREAMBLE_CLASS &&
+          nir_intrinsic_preamble_class(instr) == nir_preamble_class_general)
+         continue;
+
       if (i == 0)
          fprintf(fp, " (");
       else
@@ -1684,6 +1707,19 @@ print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
                  glsl_interp_mode_name(nir_intrinsic_interp_mode(instr)));
          break;
 
+      case NIR_INTRINSIC_PREAMBLE_CLASS: {
+         /* "General" handled above */
+         nir_preamble_class cls = nir_intrinsic_preamble_class(instr);
+         if (cls == nir_preamble_class_image)
+            fprintf(fp, "class=image");
+         else if (cls == nir_preamble_class_sampler)
+            fprintf(fp, "class=sampler");
+         else
+            UNREACHABLE("invalid class");
+
+         break;
+      }
+
       default: {
          unsigned off = info->index_map[idx] - 1;
          fprintf(fp, "%s=%d", nir_intrinsic_index_names[idx], instr->const_index[off]);
@@ -1830,8 +1866,11 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
    case nir_texop_tex_type_nv:
       fprintf(fp, "tex_type_nv ");
       break;
+   case nir_texop_sample_pos_nv:
+      fprintf(fp, "sample_pos_nv ");
+      break;
    default:
-      unreachable("Invalid texture operation");
+      UNREACHABLE("Invalid texture operation");
       break;
    }
 
@@ -1920,7 +1959,7 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
          break;
 
       default:
-         unreachable("Invalid texture source type");
+         UNREACHABLE("Invalid texture source type");
          break;
       }
    }
@@ -1958,6 +1997,10 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
 
    if (instr->is_sparse) {
       fprintf(fp, ", sparse");
+   }
+
+   if (instr->skip_helpers) {
+      fprintf(fp, ", skip_helpers");
    }
 }
 
@@ -2044,7 +2087,7 @@ print_phi_instr(nir_phi_instr *instr, print_state *state)
    nir_block **preds =
       state->preds ? state->preds : nir_block_get_predecessors_sorted(instr->instr.block, NULL);
 
-   for (unsigned i = 0; i < instr->instr.block->predecessors->entries; i++) {
+   for (unsigned i = 0; i < instr->instr.block->predecessors.entries; i++) {
       nir_phi_src *src = nir_phi_get_src_from_block(instr, preds[i]);
       if (i != 0)
          fprintf(fp, ", ");
@@ -2089,7 +2132,7 @@ print_instr(const nir_instr *instr, print_state *state, unsigned tabs)
       debug_info->nir_line = (uint32_t)ftell(fp);
    }
 
-   if (state->shader->has_debug_info && !state->gather_debug_info) {
+   if (instr->has_debug_info && !state->gather_debug_info) {
       nir_instr_debug_info *debug_info = nir_instr_get_debug_info((nir_instr *)instr);
 
       bool changed = state->last_debug_info.spirv_offset != debug_info->spirv_offset;
@@ -2156,7 +2199,7 @@ print_instr(const nir_instr *instr, print_state *state, unsigned tabs)
       break;
 
    default:
-      unreachable("Invalid instruction type");
+      UNREACHABLE("Invalid instruction type");
       break;
    }
 
@@ -2205,7 +2248,7 @@ static void
 print_block_preds(nir_block *block, print_state *state)
 {
    FILE *fp = state->fp;
-   for (unsigned i = 0; i < block->predecessors->entries; i++) {
+   for (unsigned i = 0; i < block->predecessors.entries; i++) {
       fprintf(fp, " b%u", state->preds[i]->index);
    }
 }
@@ -2343,7 +2386,7 @@ print_cf_node(nir_cf_node *node, print_state *state, unsigned int tabs)
       break;
 
    default:
-      unreachable("Invalid CFG node type");
+      UNREACHABLE("Invalid CFG node type");
    }
 }
 
@@ -2599,7 +2642,7 @@ print_nz_bool(FILE *fp, const char *label, bool value)
 static void
 print_shader_info(const struct shader_info *info, FILE *fp)
 {
-   fprintf(fp, "shader: %s\n", gl_shader_stage_name(info->stage));
+   fprintf(fp, "shader: %s\n", mesa_shader_stage_name(info->stage));
 
    if (memcmp(info->source_blake3, &(blake3_hash){ 0 }, sizeof(info->source_blake3))) {
       fprintf(fp, "source_blake3: {");
@@ -2615,7 +2658,7 @@ print_shader_info(const struct shader_info *info, FILE *fp)
 
    print_nz_bool(fp, "internal", info->internal);
 
-   if (gl_shader_stage_uses_workgroup(info->stage)) {
+   if (mesa_shader_stage_uses_workgroup(info->stage)) {
       fprintf(fp, "workgroup_size: %u, %u, %u%s\n",
               info->workgroup_size[0],
               info->workgroup_size[1],
@@ -2624,9 +2667,9 @@ print_shader_info(const struct shader_info *info, FILE *fp)
    }
 
    if (info->prev_stage != MESA_SHADER_NONE)
-      fprintf(fp, "prev_stage: %s\n", gl_shader_stage_name(info->prev_stage));
+      fprintf(fp, "prev_stage: %s\n", mesa_shader_stage_name(info->prev_stage));
    if (info->next_stage != MESA_SHADER_NONE)
-      fprintf(fp, "next_stage: %s\n", gl_shader_stage_name(info->next_stage));
+      fprintf(fp, "next_stage: %s\n", mesa_shader_stage_name(info->next_stage));
 
    print_nz_unsigned(fp, "num_textures", info->num_textures);
    print_nz_unsigned(fp, "num_ubos", info->num_ubos);
@@ -2638,6 +2681,8 @@ print_shader_info(const struct shader_info *info, FILE *fp)
    print_nz_x64(fp, "dual_slot_inputs", info->dual_slot_inputs);
    print_nz_x64(fp, "outputs_written", info->outputs_written);
    print_nz_x64(fp, "outputs_read", info->outputs_read);
+   print_nz_x64(fp, "perspective_varyings", info->perspective_varyings);
+   print_nz_x64(fp, "linear_varyings", info->linear_varyings);
 
    print_nz_bitset(fp, "system_values_read", info->system_values_read, ARRAY_SIZE(info->system_values_read));
 
@@ -2712,6 +2757,7 @@ print_shader_info(const struct shader_info *info, FILE *fp)
 
    print_nz_bool(fp, "first_ubo_is_default_ubo", info->first_ubo_is_default_ubo);
    print_nz_bool(fp, "separate_shader", info->separate_shader);
+   print_nz_bool(fp, "known_interpolation_qualifiers", info->known_interpolation_qualifiers);
    print_nz_bool(fp, "has_transform_feedback_varyings", info->has_transform_feedback_varyings);
    print_nz_bool(fp, "flrp_lowered", info->flrp_lowered);
    print_nz_bool(fp, "io_lowered", info->io_lowered);

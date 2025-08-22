@@ -26,7 +26,7 @@
 #include "compiler/brw_nir.h"
 #include "util/mesa-sha1.h"
 
-void
+bool
 anv_nir_compute_push_layout(nir_shader *nir,
                             const struct anv_physical_device *pdevice,
                             enum brw_robustness_flags robust_flags,
@@ -35,7 +35,6 @@ anv_nir_compute_push_layout(nir_shader *nir,
                             struct brw_stage_prog_data *prog_data,
                             struct anv_pipeline_bind_map *map,
                             const struct anv_pipeline_push_map *push_map,
-                            enum anv_descriptor_set_layout_type desc_type,
                             void *mem_ctx)
 {
    const struct brw_compiler *compiler = pdevice->compiler;
@@ -274,9 +273,8 @@ anv_nir_compute_push_layout(nir_shader *nir,
       }
 
       const unsigned max_push_buffers = needs_padding_per_primitive ? 3 : 4;
-      unsigned range_start_reg = push_constant_range.length;
 
-      for (int i = 0; i < 4; i++) {
+      for (unsigned i = 0; i < 4; i++) {
          struct brw_ubo_range *ubo_range = &prog_data->ubo_ranges[i];
          if (ubo_range->length == 0)
             continue;
@@ -301,11 +299,8 @@ anv_nir_compute_push_layout(nir_shader *nir,
          /* We only bother to shader-zero pushed client UBOs */
          if (binding->set < MAX_SETS &&
              (robust_flags & BRW_ROBUSTNESS_UBO)) {
-            prog_data->zero_push_reg |= BITFIELD64_RANGE(range_start_reg,
-                                                         ubo_range->length);
+            prog_data->robust_ubo_ranges |= (uint8_t) (1 << i);
          }
-
-         range_start_reg += ubo_range->length;
       }
    } else if (push_constant_range.length > 0) {
       /* For Ivy Bridge, the push constants packets have a different
@@ -371,7 +366,7 @@ anv_nir_compute_push_layout(nir_shader *nir,
    }
 
 #if 0
-   fprintf(stderr, "stage=%s push ranges:\n", gl_shader_stage_name(nir->info.stage));
+   fprintf(stderr, "stage=%s push ranges:\n", mesa_shader_stage_name(nir->info.stage));
    for (unsigned i = 0; i < ARRAY_SIZE(map->push_ranges); i++)
       fprintf(stderr, "   range%i: %03u-%03u set=%u index=%u\n", i,
               map->push_ranges[i].start,
@@ -387,6 +382,7 @@ anv_nir_compute_push_layout(nir_shader *nir,
    _mesa_sha1_compute(map->push_ranges,
                       sizeof(map->push_ranges),
                       map->push_sha1);
+   return false;
 }
 
 void

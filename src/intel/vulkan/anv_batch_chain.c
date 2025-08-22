@@ -1200,7 +1200,7 @@ anv_cmd_buffer_add_secondary(struct anv_cmd_buffer *primary,
       break;
    }
    default:
-      unreachable("Invalid execution mode");
+      UNREACHABLE("Invalid execution mode");
    }
 
    anv_reloc_list_append(&primary->surface_relocs, &secondary->surface_relocs);
@@ -1489,24 +1489,6 @@ anv_queue_submit_cmd_buffers_locked(struct anv_queue *queue,
 {
    VkResult result;
 
-   /* It's not safe to access submit->signals[] elements after submit because
-    * the elements might signal through the kernel before this function
-    * returns and another thread could wake up and destroy any of those
-    * elements.
-    *
-    * Build a list of anv_bo_sync elements here and put them in the signal
-    * state after without looking at any other element.
-    */
-   STACK_ARRAY(struct anv_bo_sync *, bo_signals, submit->signal_count);
-   uint32_t bo_signal_count = 0;
-   for (uint32_t i = 0; i < submit->signal_count; i++) {
-      if (!vk_sync_is_anv_bo_sync(submit->signals[i].sync))
-         continue;
-
-      bo_signals[bo_signal_count++] =
-         container_of(submit->signals[i].sync, struct anv_bo_sync, sync);
-   }
-
    if (submit->command_buffer_count == 0) {
       result = anv_queue_exec_locked(queue, submit->wait_count, submit->waits,
                                      0 /* cmd_buffer_count */,
@@ -1563,27 +1545,8 @@ anv_queue_submit_cmd_buffers_locked(struct anv_queue *queue,
          }
       }
    }
-   for (uint32_t i = 0; i < bo_signal_count; i++) {
-      struct anv_bo_sync *bo_sync = bo_signals[i];
-
-      /* Once the execbuf has returned, we need to set the fence state to
-       * SUBMITTED.  We can't do this before calling execbuf because
-       * anv_GetFenceStatus does take the global device lock before checking
-       * fence->state.
-       *
-       * We set the fence state to SUBMITTED regardless of whether or not the
-       * execbuf succeeds because we need to ensure that vkWaitForFences() and
-       * vkGetFenceStatus() return a valid result (VK_ERROR_DEVICE_LOST or
-       * VK_SUCCESS) in a finite amount of time even if execbuf fails.
-       */
-      assert(bo_sync->state == ANV_BO_SYNC_STATE_RESET);
-      bo_sync->state = ANV_BO_SYNC_STATE_SUBMITTED;
-   }
-
-   pthread_cond_broadcast(&queue->device->queue_submit);
 
  fail:
-   STACK_ARRAY_FINISH(bo_signals);
    return result;
 }
 
@@ -1844,4 +1807,38 @@ anv_async_submit_wait(struct anv_async_submit *submit)
                        submit->signal.signal_value,
                        VK_SYNC_WAIT_COMPLETE,
                        os_time_get_absolute_timeout(OS_TIMEOUT_INFINITE)) == VK_SUCCESS;
+}
+
+void
+anv_async_submit_print_batch(struct anv_async_submit *submit)
+{
+   if ((INTEL_DEBUG(DEBUG_BATCH) | INTEL_DEBUG(DEBUG_BATCH_STATS)) == 0)
+      return;
+
+   struct anv_bo *batch_bo =
+      *util_dynarray_element(&submit->batch_bos, struct anv_bo *, 0);
+   struct intel_batch_decode_ctx *ctx = submit->queue->decoder;
+
+   if (submit->use_companion_rcs) {
+      struct anv_device *device = submit->queue->device;
+
+      ctx = NULL;
+      for (unsigned i = 0; i < device->physical->queue.family_count; i++) {
+         struct intel_batch_decode_ctx *decoder = &device->decoder[i];
+
+         if (decoder->engine == INTEL_ENGINE_CLASS_RENDER) {
+            ctx = decoder;
+            break;
+         }
+      }
+   }
+
+   assert(ctx);
+   submit->queue->device->cmd_buffer_being_decoded = NULL;
+
+   if (INTEL_DEBUG(DEBUG_BATCH))
+      intel_print_batch(ctx, batch_bo->map, batch_bo->size, batch_bo->offset, false);
+
+   if (INTEL_DEBUG(DEBUG_BATCH_STATS))
+      intel_batch_stats(ctx, batch_bo->map, batch_bo->size, batch_bo->offset, false);
 }

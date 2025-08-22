@@ -120,25 +120,31 @@ gather_constant_initializers(nir_constant *src,
                              nir_variable *var,
                              const struct glsl_type *type,
                              struct field *field,
-                             struct split_var_state *state)
+                             void *mem_ctx)
 {
    if (!src)
       return NULL;
    if (glsl_type_is_array(type)) {
       const struct glsl_type *element = glsl_get_array_element(type);
       assert(src->num_elements == glsl_get_length(type));
-      nir_constant *dst = rzalloc(var, nir_constant);
+      nir_constant *dst = rzalloc(mem_ctx, nir_constant);
       dst->num_elements = src->num_elements;
-      dst->elements = rzalloc_array(var, nir_constant *, src->num_elements);
-      for (unsigned i = 0; i < src->num_elements; ++i) {
-         dst->elements[i] = gather_constant_initializers(src->elements[i], var, element, field, state);
+      if (dst->num_elements) {
+         dst->elements = rzalloc_array(dst, nir_constant *, src->num_elements);
+         for (unsigned i = 0; i < src->num_elements; ++i) {
+            dst->elements[i] = gather_constant_initializers(src->elements[i], var,
+                                                            element, field, dst);
+         }
       }
       return dst;
    } else if (glsl_type_is_struct(type)) {
       const struct glsl_type *element = glsl_get_struct_field(type, field->current_index);
-      return gather_constant_initializers(src->elements[field->current_index], var, element, &field->fields[field->current_index], state);
+      return gather_constant_initializers(src->elements[field->current_index],
+                                          var, element,
+                                          &field->fields[field->current_index],
+                                          mem_ctx);
    } else {
-      return nir_constant_clone(src, var);
+      return nir_constant_clone(src, mem_ctx);
    }
 }
 
@@ -190,7 +196,7 @@ init_field_for_type(struct field *field, struct field *parent,
       field->var->data.ray_query = state->base_var->data.ray_query;
       field->var->constant_initializer = gather_constant_initializers(state->base_var->constant_initializer,
                                                                       field->var, state->base_var->type,
-                                                                      root, state);
+                                                                      root, state->shader);
    }
 }
 
@@ -326,7 +332,7 @@ split_struct_derefs_impl(nir_function_impl *impl,
                break;
 
             default:
-               unreachable("Invalid deref type in path");
+               UNREACHABLE("Invalid deref type in path");
             }
          }
 
@@ -348,8 +354,8 @@ bool
 nir_split_struct_vars(nir_shader *shader, nir_variable_mode modes)
 {
    void *mem_ctx = ralloc_context(NULL);
-   struct hash_table *var_field_map =
-      _mesa_pointer_hash_table_create(mem_ctx);
+   struct hash_table var_field_map;
+   _mesa_pointer_hash_table_init(&var_field_map, mem_ctx);
    struct set *complex_vars = NULL;
 
    bool has_global_splits = false;
@@ -358,7 +364,7 @@ nir_split_struct_vars(nir_shader *shader, nir_variable_mode modes)
       has_global_splits = split_var_list_structs(shader, NULL,
                                                  &shader->variables,
                                                  global_modes,
-                                                 var_field_map,
+                                                 &var_field_map,
                                                  &complex_vars,
                                                  mem_ctx);
    }
@@ -370,13 +376,13 @@ nir_split_struct_vars(nir_shader *shader, nir_variable_mode modes)
          has_local_splits = split_var_list_structs(shader, impl,
                                                    &impl->locals,
                                                    nir_var_function_temp,
-                                                   var_field_map,
+                                                   &var_field_map,
                                                    &complex_vars,
                                                    mem_ctx);
       }
 
       if (has_global_splits || has_local_splits) {
-         split_struct_derefs_impl(impl, var_field_map,
+         split_struct_derefs_impl(impl, &var_field_map,
                                   modes, mem_ctx);
 
          progress = nir_progress(true, impl, nir_metadata_control_flow);
@@ -909,15 +915,17 @@ bool
 nir_split_array_vars(nir_shader *shader, nir_variable_mode modes)
 {
    void *mem_ctx = ralloc_context(NULL);
-   struct hash_table *var_info_map = _mesa_pointer_hash_table_create(mem_ctx);
+   struct hash_table var_info_map;
    struct set *complex_vars = NULL;
+
+   _mesa_pointer_hash_table_init(&var_info_map, mem_ctx);
 
    bool has_global_array = false;
    if (modes & (~nir_var_function_temp)) {
       has_global_array = init_var_list_array_infos(shader,
                                                    &shader->variables,
                                                    modes,
-                                                   var_info_map,
+                                                   &var_info_map,
                                                    &complex_vars,
                                                    mem_ctx);
    }
@@ -929,14 +937,14 @@ nir_split_array_vars(nir_shader *shader, nir_variable_mode modes)
          has_local_array = init_var_list_array_infos(shader,
                                                      &impl->locals,
                                                      nir_var_function_temp,
-                                                     var_info_map,
+                                                     &var_info_map,
                                                      &complex_vars,
                                                      mem_ctx);
       }
 
       if (has_global_array || has_local_array) {
          has_any_array = true;
-         mark_array_usage_impl(impl, var_info_map, modes, mem_ctx);
+         mark_array_usage_impl(impl, &var_info_map, modes, mem_ctx);
       }
    }
 
@@ -952,7 +960,7 @@ nir_split_array_vars(nir_shader *shader, nir_variable_mode modes)
       has_global_splits = split_var_list_arrays(shader, NULL,
                                                 &shader->variables,
                                                 modes,
-                                                var_info_map, mem_ctx);
+                                                &var_info_map, mem_ctx);
    }
 
    bool progress = false;
@@ -962,12 +970,12 @@ nir_split_array_vars(nir_shader *shader, nir_variable_mode modes)
          has_local_splits = split_var_list_arrays(shader, impl,
                                                   &impl->locals,
                                                   nir_var_function_temp,
-                                                  var_info_map, mem_ctx);
+                                                  &var_info_map, mem_ctx);
       }
 
       if (has_global_splits || has_local_splits) {
-         split_array_copies_impl(impl, var_info_map, modes, mem_ctx);
-         split_array_access_impl(impl, var_info_map, modes, mem_ctx);
+         split_array_copies_impl(impl, &var_info_map, modes, mem_ctx);
+         split_array_access_impl(impl, &var_info_map, modes, mem_ctx);
 
          progress = nir_progress(true, impl, nir_metadata_control_flow);
       } else {
@@ -1607,9 +1615,7 @@ shrink_vec_var_access_impl(nir_function_impl *impl,
                }
                nir_def *vec = nir_vec(&b, vec_srcs, intrin->num_components);
 
-               nir_def_rewrite_uses_after(&intrin->def,
-                                          vec,
-                                          vec->parent_instr);
+               nir_def_rewrite_uses_after(&intrin->def, vec);
 
                /* The SSA def is now only used by the swizzle.  It's safe to
                 * shrink the number of components.
@@ -1687,8 +1693,8 @@ nir_shrink_vec_array_vars(nir_shader *shader, nir_variable_mode modes)
 
    void *mem_ctx = ralloc_context(NULL);
 
-   struct hash_table *var_usage_map =
-      _mesa_pointer_hash_table_create(mem_ctx);
+   struct hash_table var_usage_map;
+   _mesa_pointer_hash_table_init(&var_usage_map, mem_ctx);
 
    bool has_vars_to_shrink = false;
    nir_foreach_function_impl(impl, shader) {
@@ -1698,7 +1704,7 @@ nir_shrink_vec_array_vars(nir_shader *shader, nir_variable_mode modes)
        */
       if (function_impl_has_vars_with_modes(impl, modes)) {
          has_vars_to_shrink = true;
-         find_used_components_impl(impl, var_usage_map,
+         find_used_components_impl(impl, &var_usage_map,
                                    modes, mem_ctx);
       }
    }
@@ -1712,7 +1718,7 @@ nir_shrink_vec_array_vars(nir_shader *shader, nir_variable_mode modes)
    if (modes & nir_var_shader_temp) {
       globals_shrunk = shrink_vec_var_list(&shader->variables,
                                            nir_var_shader_temp,
-                                           var_usage_map);
+                                           &var_usage_map);
    }
 
    bool progress = false;
@@ -1721,11 +1727,11 @@ nir_shrink_vec_array_vars(nir_shader *shader, nir_variable_mode modes)
       if (modes & nir_var_function_temp) {
          locals_shrunk = shrink_vec_var_list(&impl->locals,
                                              nir_var_function_temp,
-                                             var_usage_map);
+                                             &var_usage_map);
       }
 
       if (globals_shrunk || locals_shrunk) {
-         shrink_vec_var_access_impl(impl, var_usage_map, modes);
+         shrink_vec_var_access_impl(impl, &var_usage_map, modes);
 
          progress = nir_progress(true, impl, nir_metadata_control_flow);
       } else {

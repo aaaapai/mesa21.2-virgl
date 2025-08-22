@@ -22,11 +22,6 @@
 #include "util/disk_cache.h"
 #include "util/mesa-sha1.h"
 
-#if DETECT_OS_ANDROID
-#include <vulkan/vk_android_native_buffer.h>
-#include "util/u_gralloc/u_gralloc.h"
-#endif
-
 #include "vk_android.h"
 #include "vk_device.h"
 #include "vk_drm_syncobj.h"
@@ -54,7 +49,10 @@
 #include "clc597.h"
 #include "clc5c0.h"
 #include "clc797.h"
+#include "clc6c0.h"
 #include "clc997.h"
+#include "clcdc0.h"
+#include "clce97.h"
 
 static uint32_t
 nvk_get_vk_version(const struct nv_device_info *info)
@@ -81,6 +79,24 @@ nvk_get_vk_version(const struct nv_device_info *info)
    return VK_MAKE_VERSION(1, 4, VK_HEADER_VERSION);
 }
 
+static bool
+nvk_is_conformant(const struct nv_device_info *info)
+{
+   /* Tegra is not currently supported */
+   if (info->type != NV_DEVICE_TYPE_DIS)
+      return false;
+
+   /* Everything Kepler through Ada is conformant */
+   if (info->cls_eng3d >= KEPLER_A && info->cls_eng3d <= ADA_A)
+      return true;
+
+   /* And also Blackwell B */
+   if (info->cls_eng3d == BLACKWELL_B)
+      return true;
+
+   return false;
+}
+
 static void
 nvk_get_device_extensions(const struct nvk_instance *instance,
                           const struct nv_device_info *info,
@@ -94,6 +110,7 @@ nvk_get_device_extensions(const struct nvk_instance *instance,
       .KHR_buffer_device_address = true,
       .KHR_calibrated_timestamps = true,
       .KHR_compute_shader_derivatives = info->cls_eng3d >= TURING_A,
+      .KHR_cooperative_matrix = info->cls_eng3d >= TURING_A,
       .KHR_copy_commands2 = true,
       .KHR_create_renderpass2 = true,
       .KHR_dedicated_allocation = true,
@@ -135,18 +152,9 @@ nvk_get_device_extensions(const struct nvk_instance *instance,
       .KHR_pipeline_executable_properties = true,
       .KHR_pipeline_library = true,
 #ifdef NVK_USE_WSI_PLATFORM
-      /* Hide these behind dri configs for now since we cannot implement it
-       * reliably on all surfaces yet. There is no surface capability query
-       * for present wait/id, but the feature is useful enough to hide behind
-       * an opt-in mechanism for now.  If the instance only enables surface
-       * extensions that unconditionally support present wait, we can also
-       * expose the extension that way.
-       */
-      .KHR_present_id = driQueryOptionb(&instance->dri_options, "vk_khr_present_wait") ||
-                        wsi_common_vk_instance_supports_present_wait(&instance->vk),
-      .KHR_present_wait = driQueryOptionb(&instance->dri_options, "vk_khr_present_wait") ||
-                          wsi_common_vk_instance_supports_present_wait(&instance->vk),
+      .KHR_present_id = true,
       .KHR_present_id2 = true,
+      .KHR_present_wait = true,
       .KHR_present_wait2 = true,
 #endif
       .KHR_push_descriptor = true,
@@ -170,14 +178,16 @@ nvk_get_device_extensions(const struct nvk_instance *instance,
       .KHR_shader_subgroup_rotate = true,
       .KHR_shader_subgroup_uniform_control_flow = true,
       .KHR_shader_terminate_invocation = true,
+      .KHR_shader_untyped_pointers = true,
       .KHR_spirv_1_4 = true,
       .KHR_storage_buffer_storage_class = true,
-      .KHR_timeline_semaphore = true,
 #ifdef NVK_USE_WSI_PLATFORM
       .KHR_swapchain = true,
       .KHR_swapchain_mutable_format = true,
 #endif
       .KHR_synchronization2 = true,
+      .KHR_timeline_semaphore = true,
+      .KHR_unified_image_layouts = true,
       .KHR_uniform_buffer_standard_layout = true,
       .KHR_variable_pointers = true,
       .KHR_vertex_attribute_divisor = true,
@@ -269,8 +279,7 @@ nvk_get_device_extensions(const struct nvk_instance *instance,
       .EXT_ycbcr_image_arrays = true,
       .EXT_zero_initialize_device_memory = true,
 #if DETECT_OS_ANDROID
-      .ANDROID_native_buffer = vk_android_get_ugralloc() &&
-         u_gralloc_get_type(vk_android_get_ugralloc()) != U_GRALLOC_TYPE_FALLBACK,
+      .ANDROID_native_buffer = vk_android_get_ugralloc() != NULL,
 #endif
       .GOOGLE_decorate_string = true,
       .GOOGLE_hlsl_functionality1 = true,
@@ -287,6 +296,9 @@ nvk_get_device_features(const struct nv_device_info *info,
                         const struct vk_device_extension_table *supported_extensions,
                         struct vk_features *features)
 {
+   /* TU11x uses the same shader model as other Turing but don't support the same features. */
+   bool is_tu11x = info->chipset == 0x167 || info->chipset == 0x168;
+
    *features = (struct vk_features) {
       /* Vulkan 1.0 */
       .robustBufferAccess = true,
@@ -443,6 +455,11 @@ nvk_get_device_features(const struct nv_device_info *info,
       .hostImageCopy = info->cls_eng3d >= TURING_A,
       .pushDescriptor = true,
 
+      /* VK_KHR_cooperative_matrix */
+      /* TU11X can run coop matrix but the performances are abysal */
+      .cooperativeMatrix = info->cls_eng3d >= TURING_A && !is_tu11x,
+      .cooperativeMatrixRobustBufferAccess = false,
+
       /* VK_KHR_compute_shader_derivatives */
       .computeDerivativeGroupQuads = info->cls_eng3d >= TURING_A,
       .computeDerivativeGroupLinear = info->cls_eng3d >= TURING_A,
@@ -461,11 +478,13 @@ nvk_get_device_features(const struct nv_device_info *info,
       /* VK_KHR_pipeline_executable_properties */
       .pipelineExecutableInfo = true,
 
+#ifdef NVK_USE_WSI_PLATFORM
       /* VK_KHR_present_id */
-      .presentId = supported_extensions->KHR_present_id,
+      .presentId = true,
 
       /* VK_KHR_present_wait */
-      .presentWait = supported_extensions->KHR_present_wait,
+      .presentWait = true,
+#endif
 
       /* VK_KHR_shader_quad_control */
       .shaderQuadControl = true,
@@ -482,6 +501,13 @@ nvk_get_device_features(const struct nv_device_info *info,
 
       /* VK_KHR_shader_subgroup_uniform_control_flow */
       .shaderSubgroupUniformControlFlow = true,
+
+      /* KHR_shader_untyped_pointers */
+      .shaderUntypedPointers = true,
+
+      /* VK_KHR_unified_image_layouts */
+      .unifiedImageLayouts = true,
+      .unifiedImageLayoutsVideo = true,
 
       /* VK_KHR_workgroup_memory_explicit_layout */
       .workgroupMemoryExplicitLayout = true,
@@ -688,13 +714,20 @@ nvk_get_device_features(const struct nv_device_info *info,
 
       /* VK_NV_shader_sm_builtins */
       .shaderSMBuiltins = true,
+
+#ifdef NVK_USE_WSI_PLATFORM
+      /* VK_KHR_present_id2 */
+      .presentId2 = true,
+
+      /* VK_KHR_present_wait2 */
+      .presentWait2 = true,
+#endif
    };
 }
 
 static void
 nvk_get_device_properties(const struct nvk_instance *instance,
                           const struct nv_device_info *info,
-                          bool conformant,
                           struct vk_properties *properties)
 {
    const VkSampleCountFlagBits sample_counts = VK_SAMPLE_COUNT_1_BIT |
@@ -870,8 +903,8 @@ nvk_get_device_properties(const struct nvk_instance *instance,
       .independentResolve = true,
       .driverID = VK_DRIVER_ID_MESA_NVK,
       .conformanceVersion =
-         conformant ? (VkConformanceVersion) { 1, 4, 1, 3 }
-                    : (VkConformanceVersion) { 0, 0, 0, 0 },
+         nvk_is_conformant(info) ? (VkConformanceVersion) { 1, 4, 3, 0 }
+                                 : (VkConformanceVersion) { 0, 0, 0, 0 },
       .denormBehaviorIndependence = VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL,
       .roundingModeIndependence = VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL,
       .shaderSignedZeroInfNanPreserveFloat16 = true,
@@ -964,6 +997,9 @@ nvk_get_device_properties(const struct nvk_instance *instance,
          VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2_EXT,
       .defaultRobustnessImages =
          VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_ROBUST_IMAGE_ACCESS_2_EXT,
+
+      /* VK_KHR_cooperative_matrix */
+      .cooperativeMatrixSupportedStages = VK_SHADER_STAGE_COMPUTE_BIT,
 
       /* VK_KHR_compute_shader_derivatives */
       .meshAndTaskShaderDerivatives = false,
@@ -1300,12 +1336,7 @@ nvk_create_drm_physical_device(struct vk_instance *_instance,
       goto fail_nvkmd;
    }
 
-   bool conformant =
-      nvkmd->dev_info.type == NV_DEVICE_TYPE_DIS &&
-      nvkmd->dev_info.cls_eng3d >= MAXWELL_A &&
-      nvkmd->dev_info.cls_eng3d <= ADA_A;
-
-   if (!conformant &&
+   if (!nvk_is_conformant(&nvkmd->dev_info) &&
        !debug_get_bool_option("NVK_I_WANT_A_BROKEN_VULKAN_DRIVER", false)) {
 #ifdef NDEBUG
       result = VK_ERROR_INCOMPATIBLE_DRIVER;
@@ -1319,7 +1350,7 @@ nvk_create_drm_physical_device(struct vk_instance *_instance,
       goto fail_nvkmd;
    }
 
-   if (!conformant)
+   if (!nvk_is_conformant(&nvkmd->dev_info))
       vk_warn_non_conformant_implementation("NVK");
 
    struct nvk_physical_device *pdev =
@@ -1347,8 +1378,7 @@ nvk_create_drm_physical_device(struct vk_instance *_instance,
                            &supported_features);
 
    struct vk_properties properties;
-   nvk_get_device_properties(instance, &nvkmd->dev_info, conformant,
-                             &properties);
+   nvk_get_device_properties(instance, &nvkmd->dev_info, &properties);
 
    if (nvkmd->drm.render_dev) {
       properties.drmHasRender = true;
@@ -1603,7 +1633,12 @@ nvk_GetPhysicalDeviceQueueFamilyProperties2(
       vk_outarray_append_typed(VkQueueFamilyProperties2, &out, p) {
          p->queueFamilyProperties.queueFlags = queue_family->queue_flags;
          p->queueFamilyProperties.queueCount = queue_family->queue_count;
-         p->queueFamilyProperties.timestampValidBits = 64;
+         if (queue_family->queue_flags & VK_QUEUE_GRAPHICS_BIT) {
+            p->queueFamilyProperties.timestampValidBits = 64;
+         } else {
+            /* TODO: Timestamps on non-graphics queues */
+            p->queueFamilyProperties.timestampValidBits = 0;
+         }
          p->queueFamilyProperties.minImageTransferGranularity =
             (VkExtent3D){1, 1, 1};
 
@@ -1701,6 +1736,155 @@ nvk_GetPhysicalDeviceFragmentShadingRatesKHR(
                   break;
 
                p->sampleCounts |= samples;
+            }
+         }
+      }
+   }
+
+   return vk_outarray_status(&out);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+nvk_GetPhysicalDeviceCooperativeMatrixPropertiesKHR(VkPhysicalDevice physicalDevice, uint32_t *pPropertyCount,
+                                                    VkCooperativeMatrixPropertiesKHR *pProperties)
+{
+   VK_FROM_HANDLE(nvk_physical_device, pdev, physicalDevice);
+   VK_OUTARRAY_MAKE_TYPED(VkCooperativeMatrixPropertiesKHR, out, pProperties, pPropertyCount);
+
+   if (pdev->info.cls_compute < VOLTA_COMPUTE_A)
+      return VK_SUCCESS;
+
+   if (pdev->info.cls_compute >= TURING_COMPUTE_A) {
+      for (int use_result_f32 = 0; use_result_f32 < 2; use_result_f32++) {
+         const VkComponentTypeKHR input_type_cd = use_result_f32 ? VK_COMPONENT_TYPE_FLOAT32_KHR : VK_COMPONENT_TYPE_FLOAT16_KHR;
+
+         vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, &out, p)
+         {
+            *p = (struct VkCooperativeMatrixPropertiesKHR){
+               .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+               .MSize = 16,
+               .NSize = 8,
+               .KSize = 8,
+               .AType = VK_COMPONENT_TYPE_FLOAT16_KHR,
+               .BType = VK_COMPONENT_TYPE_FLOAT16_KHR,
+               .CType = input_type_cd,
+               .ResultType = input_type_cd,
+               .saturatingAccumulation = false,
+               .scope = VK_SCOPE_SUBGROUP_KHR
+            };
+         }
+
+         vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, &out, p)
+         {
+            *p = (struct VkCooperativeMatrixPropertiesKHR){
+               .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+               .MSize = 16,
+               .NSize = 8,
+               .KSize = 16,
+               .AType = VK_COMPONENT_TYPE_FLOAT16_KHR,
+               .BType = VK_COMPONENT_TYPE_FLOAT16_KHR,
+               .CType = input_type_cd,
+               .ResultType = input_type_cd,
+               .saturatingAccumulation = false,
+               .scope = VK_SCOPE_SUBGROUP_KHR
+            };
+         }
+
+         vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, &out, p)
+         {
+            *p = (struct VkCooperativeMatrixPropertiesKHR){
+               .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+               .MSize = 16,
+               .NSize = 16,
+               .KSize = 16,
+               .AType = VK_COMPONENT_TYPE_FLOAT16_KHR,
+               .BType = VK_COMPONENT_TYPE_FLOAT16_KHR,
+               .CType = input_type_cd,
+               .ResultType = input_type_cd,
+               .saturatingAccumulation = false,
+               .scope = VK_SCOPE_SUBGROUP_KHR
+            };
+         }
+      }
+   }
+
+   /* IMMA got added with Turing */
+   if (pdev->info.cls_compute >= TURING_COMPUTE_A) {
+      for (int sat = 0; sat < 2; sat++) {
+         for (unsigned is_signed = 0; is_signed < 2; is_signed++) {
+            const VkComponentTypeKHR input_type_ab = is_signed ? VK_COMPONENT_TYPE_SINT8_KHR  : VK_COMPONENT_TYPE_UINT8_KHR;
+            const VkComponentTypeKHR result_type   = is_signed ? VK_COMPONENT_TYPE_SINT32_KHR : VK_COMPONENT_TYPE_UINT32_KHR;
+
+            /* we don't have hw support for uint32, so we can't saturate on C or D */
+            if (result_type == VK_COMPONENT_TYPE_UINT32_KHR && sat)
+               continue;
+
+            if (pdev->info.cls_compute < BLACKWELL_COMPUTE_A) {
+               vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, &out, p)
+               {
+                  *p = (struct VkCooperativeMatrixPropertiesKHR){
+                     .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+                     .MSize = 8,
+                     .NSize = 8,
+                     .KSize = 16,
+                     .AType = input_type_ab,
+                     .BType = input_type_ab,
+                     .CType = result_type,
+                     .ResultType = result_type,
+                     .saturatingAccumulation = sat,
+                  .scope = VK_SCOPE_SUBGROUP_KHR
+                  };
+               }
+            }
+
+            if (pdev->info.cls_compute >= AMPERE_COMPUTE_A) {
+               vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, &out, p)
+               {
+                  *p = (struct VkCooperativeMatrixPropertiesKHR){
+                     .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+                     .MSize = 16,
+                     .NSize = 8,
+                     .KSize = 16,
+                     .AType = input_type_ab,
+                     .BType = input_type_ab,
+                     .CType = result_type,
+                     .ResultType = result_type,
+                     .saturatingAccumulation = sat,
+                     .scope = VK_SCOPE_SUBGROUP_KHR
+                  };
+               }
+            }
+
+            vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, &out, p)
+            {
+               *p = (struct VkCooperativeMatrixPropertiesKHR){
+                  .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+                  .MSize = 16,
+                  .NSize = 8,
+                  .KSize = 32,
+                  .AType = input_type_ab,
+                  .BType = input_type_ab,
+                  .CType = result_type,
+                  .ResultType = result_type,
+                  .saturatingAccumulation = sat,
+                  .scope = VK_SCOPE_SUBGROUP_KHR
+               };
+            }
+
+            vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, &out, p)
+            {
+               *p = (struct VkCooperativeMatrixPropertiesKHR){
+                  .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+                  .MSize = 16,
+                  .NSize = 16,
+                  .KSize = 32,
+                  .AType = input_type_ab,
+                  .BType = input_type_ab,
+                  .CType = result_type,
+                  .ResultType = result_type,
+                  .saturatingAccumulation = sat,
+                  .scope = VK_SCOPE_SUBGROUP_KHR
+               };
             }
          }
       }

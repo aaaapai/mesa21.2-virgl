@@ -113,7 +113,7 @@ iris_delete_shader_variant(struct iris_compiled_shader *shader)
 struct iris_compiled_shader *
 iris_create_shader_variant(const struct iris_screen *screen,
                            void *mem_ctx,
-                           gl_shader_stage stage,
+                           mesa_shader_stage stage,
                            enum iris_program_cache_id cache_id,
                            uint32_t key_size,
                            const void *key)
@@ -205,7 +205,7 @@ iris_upload_shader(struct iris_screen *screen,
                               shader->elk_prog_data, reloc_values,
                               ARRAY_SIZE(reloc_values));
 #else
-      unreachable("no elk support");
+      UNREACHABLE("no elk support");
 #endif
    }
 
@@ -294,7 +294,7 @@ iris_blorp_upload_shader(struct blorp_batch *blorp_batch, uint32_t stage,
       assert(screen->elk);
       iris_apply_elk_prog_data(shader, prog_data);
 #else
-      unreachable("no elk support");
+      UNREACHABLE("no elk support");
 #endif
    }
 
@@ -388,19 +388,19 @@ iris_ensure_indirect_generation_shader(struct iris_batch *batch)
 
    nir_shader *nir = b.shader;
 
-   NIR_PASS_V(nir, nir_lower_vars_to_ssa);
-   NIR_PASS_V(nir, nir_opt_cse);
-   NIR_PASS_V(nir, nir_opt_gcm, true);
+   NIR_PASS(_, nir, nir_lower_vars_to_ssa);
+   NIR_PASS(_, nir, nir_opt_cse);
+   NIR_PASS(_, nir, nir_opt_gcm, true);
 
    nir_opt_peephole_select_options peephole_select_options = {
       .limit = 1,
    };
-   NIR_PASS_V(nir, nir_opt_peephole_select, &peephole_select_options);
+   NIR_PASS(_, nir, nir_opt_peephole_select, &peephole_select_options);
 
-   NIR_PASS_V(nir, nir_lower_variable_initializers, ~0);
+   NIR_PASS(_, nir, nir_lower_variable_initializers, ~0);
 
-   NIR_PASS_V(nir, nir_split_var_copies);
-   NIR_PASS_V(nir, nir_split_per_member_structs);
+   NIR_PASS(_, nir, nir_split_var_copies);
+   NIR_PASS(_, nir, nir_split_per_member_structs);
 
    if (screen->brw) {
       struct brw_nir_compiler_opts opts = {};
@@ -411,13 +411,13 @@ iris_ensure_indirect_generation_shader(struct iris_batch *batch)
       struct elk_nir_compiler_opts opts = {};
       elk_preprocess_nir(screen->elk, nir, &opts);
 #else
-      unreachable("no elk support");
+      UNREACHABLE("no elk support");
 #endif
    }
 
-   NIR_PASS_V(nir, nir_propagate_invariant, false);
+   NIR_PASS(_, nir, nir_propagate_invariant, false);
 
-   NIR_PASS_V(nir, nir_lower_input_attachments,
+   NIR_PASS(_, nir, nir_lower_input_attachments,
               &(nir_input_attachment_options) {
                  .use_fragcoord_sysval = true,
                  .use_layer_id_sysval = true,
@@ -429,9 +429,9 @@ iris_ensure_indirect_generation_shader(struct iris_batch *batch)
    nir->info.shared_size = 0;
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
-   NIR_PASS_V(nir, nir_copy_prop);
-   NIR_PASS_V(nir, nir_opt_constant_folding);
-   NIR_PASS_V(nir, nir_opt_dce);
+   NIR_PASS(_, nir, nir_copy_prop);
+   NIR_PASS(_, nir, nir_opt_constant_folding);
+   NIR_PASS(_, nir, nir_opt_dce);
 
    /* Do vectorizing here. For some reason when trying to do it in the back
     * this just isn't working.
@@ -441,7 +441,7 @@ iris_ensure_indirect_generation_shader(struct iris_batch *batch)
       .callback = brw_nir_should_vectorize_mem,
       .robust_modes = (nir_variable_mode)0,
    };
-   NIR_PASS_V(nir, nir_opt_load_store_vectorize, &options);
+   NIR_PASS(_, nir, nir_opt_load_store_vectorize, &options);
 
    nir->num_uniforms = uniform_size;
 
@@ -504,7 +504,7 @@ iris_ensure_indirect_generation_shader(struct iris_batch *batch)
       assert(program);
       iris_apply_elk_prog_data(shader, &prog_data->base);
 #else
-      unreachable("no elk support");
+      UNREACHABLE("no elk support");
 #endif
    }
 

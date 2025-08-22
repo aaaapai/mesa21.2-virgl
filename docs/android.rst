@@ -15,6 +15,29 @@ When building llvmpipe or lavapipe for Android the ndk-build workflow
 is also used, but there are additional steps required to add the driver
 to the Android OS image.
 
+Preparing offline compilers
+---------------------------
+
+For cross-compiling the nvk driver, mesa_clc compiler binary needs to be
+prepared first:
+
+.. code-block:: sh
+
+    meson setup build-compiler \
+        -Dprefix=/tmp/mesa-compiler \
+        -Dbuildtype=release \
+        -Dstrip=true \
+        -Dplatforms= \
+        -Dgallium-drivers= \
+        -Dvulkan-drivers= \
+        -Dmesa-clc=enabled \
+        -Dinstall-mesa-clc=true
+    meson install -C build-compiler
+    export PATH=/tmp/mesa-compiler/bin:$PATH
+
+For panvk, ``-Dtools=panfrost -Dinstall-precomp-compiler=true`` is
+additionally needed.
+
 Building using the Android NDK
 ------------------------------
 
@@ -24,23 +47,36 @@ Then, create your Meson cross file to use it, something like this
 
 .. code-block:: ini
 
+    [constants]
+    ndk_path = <absolute path to NDK>
+
     [binaries]
-    ar = 'NDKDIR/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android-ar'
-    c = ['ccache', 'NDKDIR/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang']
-    cpp = ['ccache', 'NDKDIR/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '--start-no-unused-arguments', '-static-libstdc++', '--end-no-unused-arguments']
+    ar = ndk_path / 'toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android-ar'
+    c = ['ccache', ndk_path / 'toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang']
+    cpp = ['ccache', ndk_path / 'toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '--start-no-unused-arguments', '-static-libstdc++', '--end-no-unused-arguments']
     c_ld = 'lld'
     cpp_ld = 'lld'
-    strip = 'NDKDIR/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android-strip'
-    # Android doesn't come with a pkg-config, but we need one for Meson to be happy not
-    # finding all the optional deps it looks for.  Use system pkg-config pointing at a
-    # directory we get to populate with any .pc files we want to add for Android
-    pkg-config = ['env', 'PKG_CONFIG_LIBDIR=NDKDIR/pkgconfig', '/usr/bin/pkg-config']
+    strip = ndk_path / 'toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android-strip'
 
     [host_machine]
     system = 'android'
     cpu_family = 'aarch64'
     cpu = 'armv8'
     endian = 'little'
+
+For nvk, below rust toolchain preparation and cross file additions are needed:
+
+.. code-block:: sh
+
+    rustup target add aarch64-linux-android
+
+.. code-block:: ini
+
+    [properties]
+    bindgen_clang_arguments = ['-target', 'aarch64-linux-android', '--sysroot', ndk_path / 'toolchains/llvm/prebuilt/linux-x86_64/sysroot']
+
+    [binaries]
+    rust = ['rustc', '--target', 'aarch64-linux-android']
 
 Now, use that cross file for your Android build directory (as in this
 one cross-compiling the turnip driver for a stock Pixel phone)
@@ -49,13 +85,18 @@ one cross-compiling the turnip driver for a stock Pixel phone)
 
     meson setup build-android-aarch64 \
         --cross-file android-aarch64 \
-	-Dplatforms=android \
-	-Dplatform-sdk-version=34 \
-	-Dandroid-stub=true \
-	-Dgallium-drivers= \
-	-Dvulkan-drivers=freedreno \
-	-Dfreedreno-kmds=kgsl
+        -Dplatforms=android \
+        -Dplatform-sdk-version=34 \
+        -Dandroid-stub=true \
+        -Degl=disabled \
+        -Dgallium-drivers= \
+        -Dvulkan-drivers=freedreno \
+        -Dfreedreno-kmds=kgsl
     meson compile -C build-android-aarch64
+
+For drm drivers, ``-Dallow-fallback-for=libdrm`` is needed. Besides,
+``-Dallow-fallback-for=libdrm -Dmesa-clc=system`` is needed by nvk, and
+``-Dprecomp-compiler=system`` is additionally needed by panvk.
 
 Replacing Android drivers on stock Android
 ------------------------------------------

@@ -236,7 +236,7 @@ static void pco_print_ref_color(pco_print_state *state, pco_ref ref)
       break;
    }
 
-   unreachable();
+   UNREACHABLE("");
 }
 
 /**
@@ -288,7 +288,7 @@ static void _pco_print_ref(pco_print_state *state, pco_ref ref)
          break;
 
       default:
-         unreachable();
+         UNREACHABLE("");
       }
       pco_printf(state, "%s", pco_dtype_str(ref.dtype));
       break;
@@ -309,7 +309,7 @@ static void _pco_print_ref(pco_print_state *state, pco_ref ref)
       break;
 
    default:
-      unreachable();
+      UNREACHABLE("");
    }
 
    unsigned chans = pco_ref_get_chans(ref);
@@ -410,7 +410,7 @@ static void pco_print_instr_mods(pco_print_state *state,
          break;
 
       default:
-         unreachable();
+         UNREACHABLE("");
       }
    }
 }
@@ -474,7 +474,7 @@ static void _pco_print_instr(pco_print_state *state, pco_instr *instr)
       }
 
       default:
-         unreachable();
+         UNREACHABLE("");
       }
       printed = true;
    } else if (!list_is_empty(&instr->phi_srcs)) {
@@ -528,9 +528,9 @@ static void _pco_print_instr(pco_print_state *state, pco_instr *instr)
  * \param[in] alutype ALU type.
  * \param[in] phase Phase.
  */
-static void pco_print_phase(pco_print_state *state,
-                            enum pco_alutype alutype,
-                            enum pco_op_phase phase)
+static void _pco_print_phase(pco_print_state *state,
+                             enum pco_alutype alutype,
+                             enum pco_op_phase phase)
 {
    switch (alutype) {
    case PCO_ALUTYPE_MAIN:
@@ -548,7 +548,7 @@ static void pco_print_phase(pco_print_state *state,
    default:
       break;
    }
-   unreachable();
+   UNREACHABLE("");
 }
 
 /**
@@ -567,7 +567,7 @@ static void pco_print_igrp_phases(pco_print_state *state, pco_igrp *igrp)
       if (printed)
          pco_printf(state, ",");
 
-      pco_print_phase(state, igrp->hdr.alutype, phase);
+      _pco_print_phase(state, igrp->hdr.alutype, phase);
 
       printed = true;
    }
@@ -772,13 +772,13 @@ static void _pco_print_igrp(pco_print_state *state, pco_igrp *igrp)
       else if (printed)
          pco_printf(state, " ");
 
-      pco_print_phase(state, igrp->hdr.alutype, phase);
+      _pco_print_phase(state, igrp->hdr.alutype, phase);
       pco_printf(state, ": ");
       _pco_print_instr(state, igrp->instrs[phase]);
 
       if (state->verbose) {
          pco_printf(state, " /* ");
-         pco_print_phase(state, igrp->hdr.alutype, phase);
+         _pco_print_phase(state, igrp->hdr.alutype, phase);
          pco_printf(state, " bytes: %u */\n", igrp->enc.len.instrs[phase]);
       }
 
@@ -977,7 +977,7 @@ pco_print_func_sig(pco_print_state *state, pco_func *func, bool call)
          break;
 
       default:
-         unreachable();
+         UNREACHABLE("");
       }
    }
 
@@ -1046,7 +1046,7 @@ static void _pco_print_cf_node(pco_print_state *state, pco_cf_node *cf_node)
       break;
    }
 
-   unreachable();
+   UNREACHABLE("");
 }
 
 /**
@@ -1059,7 +1059,7 @@ static void _pco_print_shader_info(pco_print_state *state, pco_shader *shader)
 {
    if (shader->name)
       pco_printfi(state, "name: \"%s\"\n", shader->name);
-   pco_printfi(state, "stage: %s\n", gl_shader_stage_name(shader->stage));
+   pco_printfi(state, "stage: %s\n", mesa_shader_stage_name(shader->stage));
    pco_printfi(state, "internal: %s\n", true_false_str(shader->is_internal));
    /* TODO: more info/stats, e.g. temps/other regs used, etc.? */
 }
@@ -1214,7 +1214,7 @@ void pco_print_cf_node_name(pco_shader *shader, pco_cf_node *cf_node)
       break;
    }
 
-   unreachable();
+   UNREACHABLE("");
 }
 
 /**
@@ -1232,4 +1232,26 @@ void pco_print_shader_info(pco_shader *shader)
       .verbose = false,
    };
    return _pco_print_shader_info(&state, shader);
+}
+
+/**
+ * \brief Print the name of a phase(wrapper).
+ *
+ * \param[in] shader PCO shader.
+ * \param[in] alutype ALU type.
+ * \param[in] phase Phase.
+ */
+void pco_print_phase(pco_shader *shader,
+                     enum pco_alutype alutype,
+                     enum pco_op_phase phase)
+{
+   pco_print_state state = {
+      .fp = stdout,
+      .shader = shader,
+      .indent = 0,
+      .is_grouped = shader->is_grouped,
+      .verbose = false,
+   };
+
+   return _pco_print_phase(&state, alutype, phase);
 }

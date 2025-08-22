@@ -66,12 +66,12 @@ using namespace ir_builder;
 
 static void
 detect_conflicting_assignments(struct _mesa_glsl_parse_state *state,
-                               exec_list *instructions);
+                               ir_exec_list *instructions);
 static void
 verify_subroutine_associated_funcs(struct _mesa_glsl_parse_state *state);
 
 static void
-remove_per_vertex_blocks(exec_list *instructions,
+remove_per_vertex_blocks(ir_exec_list *instructions,
                          _mesa_glsl_parse_state *state, ir_variable_mode mode);
 
 /**
@@ -127,7 +127,7 @@ private:
 };
 
 void
-_mesa_ast_to_hir(exec_list *instructions, struct _mesa_glsl_parse_state *state)
+_mesa_ast_to_hir(ir_exec_list *instructions, struct _mesa_glsl_parse_state *state)
 {
    _mesa_glsl_initialize_variables(instructions, state);
 
@@ -156,7 +156,7 @@ _mesa_ast_to_hir(exec_list *instructions, struct _mesa_glsl_parse_state *state)
     */
    state->symbols->push_scope();
 
-   foreach_list_typed (ast_node, ast, link, & state->translation_unit)
+   ir_foreach_list_typed (ast_node, ast, link, & state->translation_unit)
       ast->hir(instructions, state);
 
    verify_subroutine_associated_funcs(state);
@@ -173,7 +173,7 @@ _mesa_ast_to_hir(exec_list *instructions, struct _mesa_glsl_parse_state *state)
     * applications depend on this behavior, and it matches what nearly all
     * other drivers do.
     */
-   foreach_in_list_safe(ir_instruction, node, instructions) {
+   ir_foreach_in_list_safe(ir_instruction, node, instructions) {
       ir_variable *const var = node->as_variable();
 
       if (var == NULL)
@@ -319,7 +319,6 @@ static bool
 apply_implicit_conversion(const glsl_type *to, ir_rvalue * &from,
                           struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
    if (to->base_type == from->type->base_type)
       return true;
 
@@ -345,7 +344,7 @@ apply_implicit_conversion(const glsl_type *to, ir_rvalue * &from,
 
    ir_expression_operation op = get_implicit_conversion_operation(to, from->type, state);
    if (op) {
-      from = new(ctx) ir_expression(op, to, from, NULL);
+      from = new(state->linalloc) ir_expression(op, to, from, NULL);
       return true;
    } else {
       return false;
@@ -937,14 +936,13 @@ mark_whole_array_access(ir_rvalue *access)
 }
 
 static bool
-do_assignment(exec_list *instructions, struct _mesa_glsl_parse_state *state,
+do_assignment(ir_exec_list *instructions, struct _mesa_glsl_parse_state *state,
               const char *non_lvalue_description,
               ir_rvalue *lhs, ir_rvalue *rhs,
               ir_rvalue **out_rvalue, bool needs_rvalue,
               bool is_initializer,
               YYLTYPE lhs_loc)
 {
-   void *ctx = state;
    bool error_emitted = (glsl_type_is_error(lhs->type) || glsl_type_is_error(rhs->type));
 
    ir_variable *lhs_var = lhs->variable_referenced();
@@ -1035,7 +1033,7 @@ do_assignment(exec_list *instructions, struct _mesa_glsl_parse_state *state,
    }
 
    if (omit_assignment) {
-      *out_rvalue = needs_rvalue ? ir_rvalue::error_value(ctx) : NULL;
+      *out_rvalue = needs_rvalue ? ir_rvalue::error_value(state->linalloc) : NULL;
       return error_emitted;
    }
 
@@ -1048,22 +1046,22 @@ do_assignment(exec_list *instructions, struct _mesa_glsl_parse_state *state,
    if (needs_rvalue) {
       ir_rvalue *rvalue;
       if (!error_emitted) {
-         ir_variable *var = new(ctx) ir_variable(rhs->type, "assignment_tmp",
+         ir_variable *var = new(state->linalloc) ir_variable(rhs->type, "assignment_tmp",
                                                  ir_var_temporary);
          instructions->push_tail(var);
          instructions->push_tail(assign(var, rhs));
 
          ir_dereference_variable *deref_var =
-            new(ctx) ir_dereference_variable(var);
-         instructions->push_tail(new(ctx) ir_assignment(lhs, deref_var));
-         rvalue = new(ctx) ir_dereference_variable(var);
+            new(state->linalloc) ir_dereference_variable(var);
+         instructions->push_tail(new(state->linalloc) ir_assignment(lhs, deref_var));
+         rvalue = new(state->linalloc) ir_dereference_variable(var);
       } else {
-         rvalue = ir_rvalue::error_value(ctx);
+         rvalue = ir_rvalue::error_value(state->linalloc);
       }
       *out_rvalue = rvalue;
    } else {
       if (!error_emitted)
-         instructions->push_tail(new(ctx) ir_assignment(lhs, rhs));
+         instructions->push_tail(new(state->linalloc) ir_assignment(lhs, rhs));
       *out_rvalue = NULL;
    }
 
@@ -1071,24 +1069,24 @@ do_assignment(exec_list *instructions, struct _mesa_glsl_parse_state *state,
 }
 
 static ir_rvalue *
-get_lvalue_copy(exec_list *instructions, ir_rvalue *lvalue)
+get_lvalue_copy(ir_exec_list *instructions, ir_rvalue *lvalue)
 {
-   void *ctx = ralloc_parent(lvalue);
+   linear_ctx *linalloc = lvalue->node_linalloc;
    ir_variable *var;
 
-   var = new(ctx) ir_variable(lvalue->type, "_post_incdec_tmp",
+   var = new(linalloc) ir_variable(lvalue->type, "_post_incdec_tmp",
                               ir_var_temporary);
    instructions->push_tail(var);
 
-   instructions->push_tail(new(ctx) ir_assignment(new(ctx) ir_dereference_variable(var),
+   instructions->push_tail(new(linalloc) ir_assignment(new(linalloc) ir_dereference_variable(var),
                                                   lvalue));
 
-   return new(ctx) ir_dereference_variable(var);
+   return new(linalloc) ir_dereference_variable(var);
 }
 
 
 ir_rvalue *
-ast_node::hir(exec_list *instructions, struct _mesa_glsl_parse_state *state)
+ast_node::hir(ir_exec_list *instructions, struct _mesa_glsl_parse_state *state)
 {
    (void) instructions;
    (void) state;
@@ -1108,21 +1106,21 @@ ast_node::set_is_lhs(bool /* new_value */)
 }
 
 void
-ast_function_expression::hir_no_rvalue(exec_list *instructions,
+ast_function_expression::hir_no_rvalue(ir_exec_list *instructions,
                                        struct _mesa_glsl_parse_state *state)
 {
    (void)hir(instructions, state);
 }
 
 void
-ast_aggregate_initializer::hir_no_rvalue(exec_list *instructions,
+ast_aggregate_initializer::hir_no_rvalue(ir_exec_list *instructions,
                                          struct _mesa_glsl_parse_state *state)
 {
    (void)hir(instructions, state);
 }
 
 static ir_rvalue *
-do_comparison(void *mem_ctx, int operation, ir_rvalue *op0, ir_rvalue *op1)
+do_comparison(linear_ctx *linalloc, int operation, ir_rvalue *op0, ir_rvalue *op1)
 {
    int join_op;
    ir_rvalue *cmp = NULL;
@@ -1148,20 +1146,20 @@ do_comparison(void *mem_ctx, int operation, ir_rvalue *op0, ir_rvalue *op1)
    case GLSL_TYPE_INT16:
    case GLSL_TYPE_UINT8:
    case GLSL_TYPE_INT8:
-      return new(mem_ctx) ir_expression(operation, op0, op1);
+      return new(linalloc) ir_expression(operation, op0, op1);
 
    case GLSL_TYPE_ARRAY: {
       for (unsigned int i = 0; i < op0->type->length; i++) {
          ir_rvalue *e0, *e1, *result;
 
-         e0 = new(mem_ctx) ir_dereference_array(op0->clone(mem_ctx, NULL),
-                                                new(mem_ctx) ir_constant(i));
-         e1 = new(mem_ctx) ir_dereference_array(op1->clone(mem_ctx, NULL),
-                                                new(mem_ctx) ir_constant(i));
-         result = do_comparison(mem_ctx, operation, e0, e1);
+         e0 = new(linalloc) ir_dereference_array(op0->clone(linalloc, NULL),
+                                                new(linalloc) ir_constant(i));
+         e1 = new(linalloc) ir_dereference_array(op1->clone(linalloc, NULL),
+                                                new(linalloc) ir_constant(i));
+         result = do_comparison(linalloc, operation, e0, e1);
 
          if (cmp) {
-            cmp = new(mem_ctx) ir_expression(join_op, cmp, result);
+            cmp = new(linalloc) ir_expression(join_op, cmp, result);
          } else {
             cmp = result;
          }
@@ -1177,14 +1175,14 @@ do_comparison(void *mem_ctx, int operation, ir_rvalue *op0, ir_rvalue *op1)
          ir_rvalue *e0, *e1, *result;
          const char *field_name = op0->type->fields.structure[i].name;
 
-         e0 = new(mem_ctx) ir_dereference_record(op0->clone(mem_ctx, NULL),
+         e0 = new(linalloc) ir_dereference_record(op0->clone(linalloc, NULL),
                                                  field_name);
-         e1 = new(mem_ctx) ir_dereference_record(op1->clone(mem_ctx, NULL),
+         e1 = new(linalloc) ir_dereference_record(op1->clone(linalloc, NULL),
                                                  field_name);
-         result = do_comparison(mem_ctx, operation, e0, e1);
+         result = do_comparison(linalloc, operation, e0, e1);
 
          if (cmp) {
-            cmp = new(mem_ctx) ir_expression(join_op, cmp, result);
+            cmp = new(linalloc) ir_expression(join_op, cmp, result);
          } else {
             cmp = result;
          }
@@ -1206,11 +1204,11 @@ do_comparison(void *mem_ctx, int operation, ir_rvalue *op0, ir_rvalue *op1)
       break;
 
    case GLSL_TYPE_COOPERATIVE_MATRIX:
-      unreachable("unsupported base type cooperative matrix");
+      UNREACHABLE("unsupported base type cooperative matrix");
    }
 
    if (cmp == NULL)
-      cmp = new(mem_ctx) ir_constant(true);
+      cmp = new(linalloc) ir_constant(true);
 
    return cmp;
 }
@@ -1220,7 +1218,7 @@ do_comparison(void *mem_ctx, int operation, ir_rvalue *op0, ir_rvalue *op1)
  * boolean to avoid triggering cascading error messages.
  */
 static ir_rvalue *
-get_scalar_boolean_operand(exec_list *instructions,
+get_scalar_boolean_operand(ir_exec_list *instructions,
                            struct _mesa_glsl_parse_state *state,
                            ast_expression *parent_expr,
                            int operand,
@@ -1228,7 +1226,7 @@ get_scalar_boolean_operand(exec_list *instructions,
                            bool *error_emitted)
 {
    ast_expression *expr = parent_expr->subexpressions[operand];
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
    ir_rvalue *val = expr->hir(instructions, state);
 
    if (glsl_type_is_boolean(val->type) && glsl_type_is_scalar(val->type))
@@ -1242,7 +1240,7 @@ get_scalar_boolean_operand(exec_list *instructions,
       *error_emitted = true;
    }
 
-   return new(ctx) ir_constant(true);
+   return new(linalloc) ir_constant(true);
 }
 
 /**
@@ -1322,32 +1320,32 @@ check_builtin_array_max_size(const char *name, unsigned size,
  * a floating point 1--the error will be detected later.
  */
 static ir_rvalue *
-constant_one_for_inc_dec(void *ctx, const glsl_type *type)
+constant_one_for_inc_dec(linear_ctx *linalloc, const glsl_type *type)
 {
    switch (type->base_type) {
    case GLSL_TYPE_UINT:
-      return new(ctx) ir_constant((unsigned) 1);
+      return new(linalloc) ir_constant((unsigned) 1);
    case GLSL_TYPE_INT:
-      return new(ctx) ir_constant(1);
+      return new(linalloc) ir_constant(1);
    case GLSL_TYPE_UINT64:
-      return new(ctx) ir_constant((uint64_t) 1);
+      return new(linalloc) ir_constant((uint64_t) 1);
    case GLSL_TYPE_INT64:
-      return new(ctx) ir_constant((int64_t) 1);
+      return new(linalloc) ir_constant((int64_t) 1);
    default:
    case GLSL_TYPE_FLOAT:
-      return new(ctx) ir_constant(1.0f);
+      return new(linalloc) ir_constant(1.0f);
    }
 }
 
 ir_rvalue *
-ast_expression::hir(exec_list *instructions,
+ast_expression::hir(ir_exec_list *instructions,
                     struct _mesa_glsl_parse_state *state)
 {
    return do_hir(instructions, state, true);
 }
 
 void
-ast_expression::hir_no_rvalue(exec_list *instructions,
+ast_expression::hir_no_rvalue(ir_exec_list *instructions,
                               struct _mesa_glsl_parse_state *state)
 {
    do_hir(instructions, state, false);
@@ -1372,11 +1370,11 @@ ast_expression::set_is_lhs(bool new_value)
 }
 
 ir_rvalue *
-ast_expression::do_hir(exec_list *instructions,
+ast_expression::do_hir(ir_exec_list *instructions,
                        struct _mesa_glsl_parse_state *state,
                        bool needs_rvalue)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
    static const int operations[AST_NUM_OPERATORS] = {
       -1,               /* ast_assign doesn't convert to ir_expression. */
       -1,               /* ast_plus doesn't convert to ir_expression. */
@@ -1443,7 +1441,7 @@ ast_expression::do_hir(exec_list *instructions,
 
    switch (this->oper) {
    case ast_aggregate:
-      unreachable("ast_aggregate: Should never get here.");
+      UNREACHABLE("ast_aggregate: Should never get here.");
 
    case ast_assign: {
       this->subexpressions[0]->set_is_lhs(true);
@@ -1475,7 +1473,7 @@ ast_expression::do_hir(exec_list *instructions,
 
       error_emitted = glsl_type_is_error(type);
 
-      result = new(ctx) ir_expression(operations[this->oper], type,
+      result = new(linalloc) ir_expression(operations[this->oper], type,
                                       op[0], NULL);
       break;
 
@@ -1491,7 +1489,7 @@ ast_expression::do_hir(exec_list *instructions,
                                     state, & loc);
       error_emitted = glsl_type_is_error(type);
 
-      result = new(ctx) ir_expression(operations[this->oper], type,
+      result = new(linalloc) ir_expression(operations[this->oper], type,
                                       op[0], op[1]);
       break;
 
@@ -1503,7 +1501,7 @@ ast_expression::do_hir(exec_list *instructions,
 
       assert(operations[this->oper] == ir_binop_mod);
 
-      result = new(ctx) ir_expression(operations[this->oper], type,
+      result = new(linalloc) ir_expression(operations[this->oper], type,
                                       op[0], op[1]);
       error_emitted = glsl_type_is_error(type);
       break;
@@ -1518,7 +1516,7 @@ ast_expression::do_hir(exec_list *instructions,
        op[1] = this->subexpressions[1]->hir(instructions, state);
        type = shift_result_type(op[0]->type, op[1]->type, this->oper, state,
                                 &loc);
-       result = new(ctx) ir_expression(operations[this->oper], type,
+       result = new(linalloc) ir_expression(operations[this->oper], type,
                                        op[0], op[1]);
        error_emitted = glsl_type_is_error(op[0]->type) || glsl_type_is_error(op[1]->type);
        break;
@@ -1547,7 +1545,7 @@ ast_expression::do_hir(exec_list *instructions,
          op[1] = tmp;
       }
 
-      result = new(ctx) ir_expression(operations[this->oper], type,
+      result = new(linalloc) ir_expression(operations[this->oper], type,
                                       op[0], op[1]);
       error_emitted = glsl_type_is_error(type);
       break;
@@ -1594,9 +1592,9 @@ ast_expression::do_hir(exec_list *instructions,
       }
 
       if (error_emitted) {
-         result = new(ctx) ir_constant(false);
+         result = new(linalloc) ir_constant(false);
       } else {
-         result = do_comparison(ctx, operations[this->oper], op[0], op[1]);
+         result = do_comparison(state->linalloc, operations[this->oper], op[0], op[1]);
          assert(result->type == &glsl_type_builtin_bool);
       }
       break;
@@ -1607,7 +1605,7 @@ ast_expression::do_hir(exec_list *instructions,
       op[0] = this->subexpressions[0]->hir(instructions, state);
       op[1] = this->subexpressions[1]->hir(instructions, state);
       type = bit_logic_result_type(op[0], op[1], this->oper, state, &loc);
-      result = new(ctx) ir_expression(operations[this->oper], type,
+      result = new(linalloc) ir_expression(operations[this->oper], type,
                                       op[0], op[1]);
       error_emitted = glsl_type_is_error(op[0]->type) || glsl_type_is_error(op[1]->type);
       break;
@@ -1625,73 +1623,73 @@ ast_expression::do_hir(exec_list *instructions,
       }
 
       type = error_emitted ? &glsl_type_builtin_error : op[0]->type;
-      result = new(ctx) ir_expression(ir_unop_bit_not, type, op[0], NULL);
+      result = new(linalloc) ir_expression(ir_unop_bit_not, type, op[0], NULL);
       break;
 
    case ast_logic_and: {
-      exec_list rhs_instructions;
+      ir_exec_list rhs_instructions;
       op[0] = get_scalar_boolean_operand(instructions, state, this, 0,
                                          "LHS", &error_emitted);
       op[1] = get_scalar_boolean_operand(&rhs_instructions, state, this, 1,
                                          "RHS", &error_emitted);
 
       if (rhs_instructions.is_empty()) {
-         result = new(ctx) ir_expression(ir_binop_logic_and, op[0], op[1]);
+         result = new(linalloc) ir_expression(ir_binop_logic_and, op[0], op[1]);
       } else {
-         ir_variable *const tmp = new(ctx) ir_variable(&glsl_type_builtin_bool,
+         ir_variable *const tmp = new(linalloc) ir_variable(&glsl_type_builtin_bool,
                                                        "and_tmp",
                                                        ir_var_temporary);
          instructions->push_tail(tmp);
 
-         ir_if *const stmt = new(ctx) ir_if(op[0]);
+         ir_if *const stmt = new(linalloc) ir_if(op[0]);
          instructions->push_tail(stmt);
 
          stmt->then_instructions.append_list(&rhs_instructions);
-         ir_dereference *const then_deref = new(ctx) ir_dereference_variable(tmp);
+         ir_dereference *const then_deref = new(linalloc) ir_dereference_variable(tmp);
          ir_assignment *const then_assign =
-            new(ctx) ir_assignment(then_deref, op[1]);
+            new(linalloc) ir_assignment(then_deref, op[1]);
          stmt->then_instructions.push_tail(then_assign);
 
-         ir_dereference *const else_deref = new(ctx) ir_dereference_variable(tmp);
+         ir_dereference *const else_deref = new(linalloc) ir_dereference_variable(tmp);
          ir_assignment *const else_assign =
-            new(ctx) ir_assignment(else_deref, new(ctx) ir_constant(false));
+            new(linalloc) ir_assignment(else_deref, new(linalloc) ir_constant(false));
          stmt->else_instructions.push_tail(else_assign);
 
-         result = new(ctx) ir_dereference_variable(tmp);
+         result = new(linalloc) ir_dereference_variable(tmp);
       }
       break;
    }
 
    case ast_logic_or: {
-      exec_list rhs_instructions;
+      ir_exec_list rhs_instructions;
       op[0] = get_scalar_boolean_operand(instructions, state, this, 0,
                                          "LHS", &error_emitted);
       op[1] = get_scalar_boolean_operand(&rhs_instructions, state, this, 1,
                                          "RHS", &error_emitted);
 
       if (rhs_instructions.is_empty()) {
-         result = new(ctx) ir_expression(ir_binop_logic_or, op[0], op[1]);
+         result = new(linalloc) ir_expression(ir_binop_logic_or, op[0], op[1]);
       } else {
-         ir_variable *const tmp = new(ctx) ir_variable(&glsl_type_builtin_bool,
+         ir_variable *const tmp = new(linalloc) ir_variable(&glsl_type_builtin_bool,
                                                        "or_tmp",
                                                        ir_var_temporary);
          instructions->push_tail(tmp);
 
-         ir_if *const stmt = new(ctx) ir_if(op[0]);
+         ir_if *const stmt = new(linalloc) ir_if(op[0]);
          instructions->push_tail(stmt);
 
-         ir_dereference *const then_deref = new(ctx) ir_dereference_variable(tmp);
+         ir_dereference *const then_deref = new(linalloc) ir_dereference_variable(tmp);
          ir_assignment *const then_assign =
-            new(ctx) ir_assignment(then_deref, new(ctx) ir_constant(true));
+            new(linalloc) ir_assignment(then_deref, new(linalloc) ir_constant(true));
          stmt->then_instructions.push_tail(then_assign);
 
          stmt->else_instructions.append_list(&rhs_instructions);
-         ir_dereference *const else_deref = new(ctx) ir_dereference_variable(tmp);
+         ir_dereference *const else_deref = new(linalloc) ir_dereference_variable(tmp);
          ir_assignment *const else_assign =
-            new(ctx) ir_assignment(else_deref, op[1]);
+            new(linalloc) ir_assignment(else_deref, op[1]);
          stmt->else_instructions.push_tail(else_assign);
 
-         result = new(ctx) ir_dereference_variable(tmp);
+         result = new(linalloc) ir_dereference_variable(tmp);
       }
       break;
    }
@@ -1708,7 +1706,7 @@ ast_expression::do_hir(exec_list *instructions,
       op[1] = get_scalar_boolean_operand(instructions, state, this, 1, "RHS",
                                          &error_emitted);
 
-      result = new(ctx) ir_expression(operations[this->oper], &glsl_type_builtin_bool,
+      result = new(linalloc) ir_expression(operations[this->oper], &glsl_type_builtin_bool,
                                       op[0], op[1]);
       break;
 
@@ -1716,7 +1714,7 @@ ast_expression::do_hir(exec_list *instructions,
       op[0] = get_scalar_boolean_operand(instructions, state, this, 0,
                                          "operand", &error_emitted);
 
-      result = new(ctx) ir_expression(operations[this->oper], &glsl_type_builtin_bool,
+      result = new(linalloc) ir_expression(operations[this->oper], &glsl_type_builtin_bool,
                                       op[0], NULL);
       break;
 
@@ -1734,7 +1732,7 @@ ast_expression::do_hir(exec_list *instructions,
       if ((op[0]->type == &glsl_type_builtin_error ||
            op[1]->type == &glsl_type_builtin_error)) {
          error_emitted = true;
-         result = ir_rvalue::error_value(ctx);
+         result = ir_rvalue::error_value(linalloc);
          break;
       }
 
@@ -1749,13 +1747,13 @@ ast_expression::do_hir(exec_list *instructions,
          type = &glsl_type_builtin_error;
       }
 
-      ir_rvalue *temp_rhs = new(ctx) ir_expression(operations[this->oper], type,
+      ir_rvalue *temp_rhs = new(linalloc) ir_expression(operations[this->oper], type,
                                                    op[0], op[1]);
 
       error_emitted =
          do_assignment(instructions, state,
                        this->subexpressions[0]->non_lvalue_description,
-                       op[0]->clone(ctx, NULL), temp_rhs,
+                       op[0]->clone(linalloc, NULL), temp_rhs,
                        &result, needs_rvalue, false,
                        this->subexpressions[0]->get_location());
 
@@ -1776,7 +1774,7 @@ ast_expression::do_hir(exec_list *instructions,
       if ((op[0]->type == &glsl_type_builtin_error ||
            op[1]->type == &glsl_type_builtin_error)) {
          error_emitted = true;
-         result = ir_rvalue::error_value(ctx);
+         result = ir_rvalue::error_value(linalloc);
          break;
       }
 
@@ -1793,13 +1791,13 @@ ast_expression::do_hir(exec_list *instructions,
       assert(operations[this->oper] == ir_binop_mod);
 
       ir_rvalue *temp_rhs;
-      temp_rhs = new(ctx) ir_expression(operations[this->oper], type,
+      temp_rhs = new(linalloc) ir_expression(operations[this->oper], type,
                                         op[0], op[1]);
 
       error_emitted =
          do_assignment(instructions, state,
                        this->subexpressions[0]->non_lvalue_description,
-                       op[0]->clone(ctx, NULL), temp_rhs,
+                       op[0]->clone(linalloc, NULL), temp_rhs,
                        &result, needs_rvalue, false,
                        this->subexpressions[0]->get_location());
       break;
@@ -1815,18 +1813,18 @@ ast_expression::do_hir(exec_list *instructions,
       if ((op[0]->type == &glsl_type_builtin_error ||
            op[1]->type == &glsl_type_builtin_error)) {
          error_emitted = true;
-         result = ir_rvalue::error_value(ctx);
+         result = ir_rvalue::error_value(linalloc);
          break;
       }
 
       type = shift_result_type(op[0]->type, op[1]->type, this->oper, state,
                                &loc);
-      ir_rvalue *temp_rhs = new(ctx) ir_expression(operations[this->oper],
+      ir_rvalue *temp_rhs = new(linalloc) ir_expression(operations[this->oper],
                                                    type, op[0], op[1]);
       error_emitted =
          do_assignment(instructions, state,
                        this->subexpressions[0]->non_lvalue_description,
-                       op[0]->clone(ctx, NULL), temp_rhs,
+                       op[0]->clone(linalloc, NULL), temp_rhs,
                        &result, needs_rvalue, false,
                        this->subexpressions[0]->get_location());
       break;
@@ -1843,7 +1841,7 @@ ast_expression::do_hir(exec_list *instructions,
       if ((op[0]->type == &glsl_type_builtin_error ||
            op[1]->type == &glsl_type_builtin_error)) {
          error_emitted = true;
-         result = ir_rvalue::error_value(ctx);
+         result = ir_rvalue::error_value(linalloc);
          break;
       }
 
@@ -1857,12 +1855,12 @@ ast_expression::do_hir(exec_list *instructions,
          type = &glsl_type_builtin_error;
       }
 
-      ir_rvalue *temp_rhs = new(ctx) ir_expression(operations[this->oper],
+      ir_rvalue *temp_rhs = new(linalloc) ir_expression(operations[this->oper],
                                                    type, op[0], op[1]);
       error_emitted =
          do_assignment(instructions, state,
                        this->subexpressions[0]->non_lvalue_description,
-                       op[0]->clone(ctx, NULL), temp_rhs,
+                       op[0]->clone(linalloc, NULL), temp_rhs,
                        &result, needs_rvalue, false,
                        this->subexpressions[0]->get_location());
       break;
@@ -1883,8 +1881,8 @@ ast_expression::do_hir(exec_list *instructions,
        * the if-statement assigns a value to the anonymous temporary.  This
        * temporary is the r-value of the expression.
        */
-      exec_list then_instructions;
-      exec_list else_instructions;
+      ir_exec_list then_instructions;
+      ir_exec_list else_instructions;
 
       op[1] = this->subexpressions[1]->hir(&then_instructions, state);
       op[2] = this->subexpressions[2]->hir(&else_instructions, state);
@@ -1937,7 +1935,7 @@ ast_expression::do_hir(exec_list *instructions,
          }
       }
 
-      ir_constant *cond_val = op[0]->constant_expression_value(ctx);
+      ir_constant *cond_val = op[0]->constant_expression_value(linalloc);
 
       if (then_instructions.is_empty()
           && else_instructions.is_empty()
@@ -1951,27 +1949,27 @@ ast_expression::do_hir(exec_list *instructions,
          }
 
          ir_variable *const tmp =
-            new(ctx) ir_variable(type, "conditional_tmp", ir_var_temporary);
+            new(linalloc) ir_variable(type, "conditional_tmp", ir_var_temporary);
          instructions->push_tail(tmp);
 
-         ir_if *const stmt = new(ctx) ir_if(op[0]);
+         ir_if *const stmt = new(linalloc) ir_if(op[0]);
          instructions->push_tail(stmt);
 
          then_instructions.move_nodes_to(& stmt->then_instructions);
          ir_dereference *const then_deref =
-            new(ctx) ir_dereference_variable(tmp);
+            new(linalloc) ir_dereference_variable(tmp);
          ir_assignment *const then_assign =
-            new(ctx) ir_assignment(then_deref, op[1]);
+            new(linalloc) ir_assignment(then_deref, op[1]);
          stmt->then_instructions.push_tail(then_assign);
 
          else_instructions.move_nodes_to(& stmt->else_instructions);
          ir_dereference *const else_deref =
-            new(ctx) ir_dereference_variable(tmp);
+            new(linalloc) ir_dereference_variable(tmp);
          ir_assignment *const else_assign =
-            new(ctx) ir_assignment(else_deref, op[2]);
+            new(linalloc) ir_assignment(else_deref, op[2]);
          stmt->else_instructions.push_tail(else_assign);
 
-         result = new(ctx) ir_dereference_variable(tmp);
+         result = new(linalloc) ir_dereference_variable(tmp);
       }
       break;
    }
@@ -1982,18 +1980,18 @@ ast_expression::do_hir(exec_list *instructions,
          ? "pre-increment operation" : "pre-decrement operation";
 
       op[0] = this->subexpressions[0]->hir(instructions, state);
-      op[1] = constant_one_for_inc_dec(ctx, op[0]->type);
+      op[1] = constant_one_for_inc_dec(linalloc, op[0]->type);
 
       type = arithmetic_result_type(op[0], op[1], false, state, & loc);
 
       ir_rvalue *temp_rhs;
-      temp_rhs = new(ctx) ir_expression(operations[this->oper], type,
+      temp_rhs = new(linalloc) ir_expression(operations[this->oper], type,
                                         op[0], op[1]);
 
       error_emitted =
          do_assignment(instructions, state,
                        this->subexpressions[0]->non_lvalue_description,
-                       op[0]->clone(ctx, NULL), temp_rhs,
+                       op[0]->clone(linalloc, NULL), temp_rhs,
                        &result, needs_rvalue, false,
                        this->subexpressions[0]->get_location());
       break;
@@ -2004,31 +2002,31 @@ ast_expression::do_hir(exec_list *instructions,
       this->non_lvalue_description = (this->oper == ast_post_inc)
          ? "post-increment operation" : "post-decrement operation";
       op[0] = this->subexpressions[0]->hir(instructions, state);
-      op[1] = constant_one_for_inc_dec(ctx, op[0]->type);
+      op[1] = constant_one_for_inc_dec(linalloc, op[0]->type);
 
       error_emitted = glsl_type_is_error(op[0]->type) || glsl_type_is_error(op[1]->type);
 
       if (error_emitted) {
-         result = ir_rvalue::error_value(ctx);
+         result = ir_rvalue::error_value(linalloc);
          break;
       }
 
       type = arithmetic_result_type(op[0], op[1], false, state, & loc);
 
       ir_rvalue *temp_rhs;
-      temp_rhs = new(ctx) ir_expression(operations[this->oper], type,
+      temp_rhs = new(linalloc) ir_expression(operations[this->oper], type,
                                         op[0], op[1]);
 
       /* Get a temporary of a copy of the lvalue before it's modified.
        * This may get thrown away later.
        */
-      result = get_lvalue_copy(instructions, op[0]->clone(ctx, NULL));
+      result = get_lvalue_copy(instructions, op[0]->clone(linalloc, NULL));
 
       ir_rvalue *junk_rvalue;
       error_emitted =
          do_assignment(instructions, state,
                        this->subexpressions[0]->non_lvalue_description,
-                       op[0]->clone(ctx, NULL), temp_rhs,
+                       op[0]->clone(linalloc, NULL), temp_rhs,
                        &junk_rvalue, false, false,
                        this->subexpressions[0]->get_location());
 
@@ -2050,7 +2048,7 @@ ast_expression::do_hir(exec_list *instructions,
       op[0] = subexpressions[0]->hir(instructions, state);
       op[1] = subexpressions[1]->hir(instructions, state);
 
-      result = _mesa_ast_array_index_to_hir(ctx, state, op[0], op[1],
+      result = _mesa_ast_array_index_to_hir(state, op[0], op[1],
                                             loc, index_loc);
 
       if (glsl_type_is_error(result->type))
@@ -2060,13 +2058,13 @@ ast_expression::do_hir(exec_list *instructions,
    }
 
    case ast_unsized_array_dim:
-      unreachable("ast_unsized_array_dim: Should never get here.");
+      UNREACHABLE("ast_unsized_array_dim: Should never get here.");
 
    case ast_function_call:
       /* Should *NEVER* get here.  ast_function_call should always be handled
        * by ast_function_expression::hir.
        */
-      unreachable("ast_function_call: handled elsewhere ");
+      UNREACHABLE("ast_function_call: handled elsewhere ");
 
    case ast_identifier: {
       /* ast_identifier can appear several places in a full abstract syntax
@@ -2079,14 +2077,14 @@ ast_expression::do_hir(exec_list *instructions,
       if (var == NULL) {
          /* the identifier might be a subroutine name */
          char *sub_name;
-         sub_name = ralloc_asprintf(ctx, "%s_%s", _mesa_shader_stage_to_subroutine_prefix(state->stage), this->primary_expression.identifier);
+         sub_name = ralloc_asprintf(state, "%s_%s", _mesa_shader_stage_to_subroutine_prefix(state->stage), this->primary_expression.identifier);
          var = state->symbols->get_variable(sub_name);
          ralloc_free(sub_name);
       }
 
       if (var != NULL) {
          var->data.used = true;
-         result = new(ctx) ir_dereference_variable(var);
+         result = new(linalloc) ir_dereference_variable(var);
 
          if ((var->data.mode == ir_var_auto || var->data.mode == ir_var_shader_out)
              && !this->is_lhs
@@ -2126,42 +2124,42 @@ ast_expression::do_hir(exec_list *instructions,
          _mesa_glsl_error(& loc, state, "`%s' undeclared",
                           this->primary_expression.identifier);
 
-         result = ir_rvalue::error_value(ctx);
+         result = ir_rvalue::error_value(linalloc);
          error_emitted = true;
       }
       break;
    }
 
    case ast_int_constant:
-      result = new(ctx) ir_constant(this->primary_expression.int_constant);
+      result = new(linalloc) ir_constant(this->primary_expression.int_constant);
       break;
 
    case ast_uint_constant:
-      result = new(ctx) ir_constant(this->primary_expression.uint_constant);
+      result = new(linalloc) ir_constant(this->primary_expression.uint_constant);
       break;
 
    case ast_float16_constant:
-      result = new(ctx) ir_constant(float16_t(this->primary_expression.float16_constant));
+      result = new(linalloc) ir_constant(float16_t(this->primary_expression.float16_constant));
       break;
 
    case ast_float_constant:
-      result = new(ctx) ir_constant(this->primary_expression.float_constant);
+      result = new(linalloc) ir_constant(this->primary_expression.float_constant);
       break;
 
    case ast_bool_constant:
-      result = new(ctx) ir_constant(bool(this->primary_expression.bool_constant));
+      result = new(linalloc) ir_constant(bool(this->primary_expression.bool_constant));
       break;
 
    case ast_double_constant:
-      result = new(ctx) ir_constant(this->primary_expression.double_constant);
+      result = new(linalloc) ir_constant(this->primary_expression.double_constant);
       break;
 
    case ast_uint64_constant:
-      result = new(ctx) ir_constant(this->primary_expression.uint64_constant);
+      result = new(linalloc) ir_constant(this->primary_expression.uint64_constant);
       break;
 
    case ast_int64_constant:
-      result = new(ctx) ir_constant(this->primary_expression.int64_constant);
+      result = new(linalloc) ir_constant(this->primary_expression.int64_constant);
       break;
 
    case ast_sequence: {
@@ -2175,10 +2173,10 @@ ast_expression::do_hir(exec_list *instructions,
        * therefore add instructions to the instruction list), they get dropped
        * on the floor.
        */
-      exec_node *previous_tail = NULL;
+      ir_exec_node *previous_tail = NULL;
       YYLTYPE previous_operand_loc = loc;
 
-      foreach_list_typed (ast_node, ast, link, &this->expressions) {
+      ir_foreach_list_typed (ast_node, ast, link, &this->expressions) {
          /* If one of the operands of comma operator does not generate any
           * code, we want to emit a warning.  At each pass through the loop
           * previous_tail will point to the last instruction in the stream
@@ -2299,17 +2297,17 @@ ast_expression::has_sequence_subexpression() const
       return false;
 
    case ast_function_call:
-      unreachable("should be handled by ast_function_expression::hir");
+      UNREACHABLE("should be handled by ast_function_expression::hir");
 
    case ast_unsized_array_dim:
-      unreachable("ast_unsized_array_dim: Should never get here.");
+      UNREACHABLE("ast_unsized_array_dim: Should never get here.");
    }
 
    return false;
 }
 
 ir_rvalue *
-ast_expression_statement::hir(exec_list *instructions,
+ast_expression_statement::hir(ir_exec_list *instructions,
                               struct _mesa_glsl_parse_state *state)
 {
    /* It is possible to have expression statements that don't have an
@@ -2331,13 +2329,13 @@ ast_expression_statement::hir(exec_list *instructions,
 
 
 ir_rvalue *
-ast_compound_statement::hir(exec_list *instructions,
+ast_compound_statement::hir(ir_exec_list *instructions,
                             struct _mesa_glsl_parse_state *state)
 {
    if (new_scope)
       state->symbols->push_scope();
 
-   foreach_list_typed (ast_node, ast, link, &this->statements)
+   ir_foreach_list_typed (ast_node, ast, link, &this->statements)
       ast->hir(instructions, state);
 
    if (new_scope)
@@ -2349,18 +2347,16 @@ ast_compound_statement::hir(exec_list *instructions,
 }
 
 /**
- * Evaluate the given exec_node (which should be an ast_node representing
+ * Evaluate the given ir_exec_node (which should be an ast_node representing
  * a single array dimension) and return its integer value.
  */
 static unsigned
-process_array_size(exec_node *node,
+process_array_size(ir_exec_node *node,
                    struct _mesa_glsl_parse_state *state)
 {
-   void *mem_ctx = state;
+   ir_exec_list dummy_instructions;
 
-   exec_list dummy_instructions;
-
-   ast_node *array_size = exec_node_data(ast_node, node, link);
+   ast_node *array_size = ir_exec_node_data(ast_node, node, link);
 
    /**
     * Dimensions other than the outermost dimension can by unsized if they
@@ -2390,7 +2386,7 @@ process_array_size(exec_node *node,
       return 0;
    }
 
-   ir_constant *const size = ir->constant_expression_value(mem_ctx);
+   ir_constant *const size = ir->constant_expression_value(state->linalloc);
    if (size == NULL ||
        (state->is_version(120, 300) &&
         array_size->has_sequence_subexpression())) {
@@ -2436,7 +2432,7 @@ process_array_type(YYLTYPE *loc, const glsl_type *base,
          }
       }
 
-      for (exec_node *node = array_specifier->array_dimensions.get_tail_raw();
+      for (ir_exec_node *node = array_specifier->array_dimensions.get_tail_raw();
            !node->is_head_sentinel(); node = node->prev) {
          unsigned array_size = process_array_size(node, state);
          array_type = glsl_array_type(array_type, array_size, 0);
@@ -2603,7 +2599,7 @@ get_type_name_for_precision_qualifier(const glsl_type *type)
             return names[type_idx];
          }
          default:
-            unreachable("Unsupported sampler/image dimensionality");
+            UNREACHABLE("Unsupported sampler/image dimensionality");
          } /* sampler/image float dimensionality */
          break;
       case GLSL_TYPE_INT:
@@ -2658,7 +2654,7 @@ get_type_name_for_precision_qualifier(const glsl_type *type)
             return names[offset + type_idx];
          }
          default:
-            unreachable("Unsupported isampler/iimage dimensionality");
+            UNREACHABLE("Unsupported isampler/iimage dimensionality");
          } /* sampler/image int dimensionality */
          break;
       case GLSL_TYPE_UINT:
@@ -2713,17 +2709,17 @@ get_type_name_for_precision_qualifier(const glsl_type *type)
             return names[offset + type_idx];
          }
          default:
-            unreachable("Unsupported usampler/uimage dimensionality");
+            UNREACHABLE("Unsupported usampler/uimage dimensionality");
          } /* sampler/image uint dimensionality */
          break;
       default:
-         unreachable("Unsupported sampler/image type");
+         UNREACHABLE("Unsupported sampler/image type");
       } /* sampler/image type */
       break;
    } /* GLSL_TYPE_SAMPLER/GLSL_TYPE_IMAGE */
    break;
    default:
-      unreachable("Unsupported type");
+      UNREACHABLE("Unsupported type");
    } /* base type */
 
    return NULL;
@@ -2791,7 +2787,7 @@ ast_fully_specified_type::glsl_type(const char **name,
  * this function will produce undefined results.
  */
 static bool
-is_varying_var(ir_variable *var, gl_shader_stage target)
+is_varying_var(ir_variable *var, mesa_shader_stage target)
 {
    switch (target) {
    case MESA_SHADER_VERTEX:
@@ -4489,7 +4485,6 @@ get_variable_being_redeclared(ir_variable **var_ptr, YYLTYPE loc,
       }
 
       earlier->type = var->type;
-      delete var;
       var = NULL;
       *var_ptr = NULL;
    } else if (earlier->type != var->type) {
@@ -4617,10 +4612,9 @@ get_variable_being_redeclared(ir_variable **var_ptr, YYLTYPE loc,
 static ir_rvalue *
 process_initializer(ir_variable *var, ast_declaration *decl,
                     ast_fully_specified_type *type,
-                    exec_list *initializer_instructions,
+                    ir_exec_list *initializer_instructions,
                     struct _mesa_glsl_parse_state *state)
 {
-   void *mem_ctx = state;
    ir_rvalue *result = NULL;
 
    YYLTYPE initializer_loc = decl->initializer->get_location();
@@ -4693,7 +4687,7 @@ process_initializer(ir_variable *var, ast_declaration *decl,
    if (decl->initializer->oper == ast_aggregate)
       _mesa_ast_set_aggregate_type(var->type, decl->initializer);
 
-   ir_dereference *const lhs = new(state) ir_dereference_variable(var);
+   ir_dereference *const lhs = new(state->linalloc) ir_dereference_variable(var);
    ir_rvalue *rhs = decl->initializer->hir(initializer_instructions, state);
 
    /* Calculate the constant value if this is a const or uniform
@@ -4756,7 +4750,7 @@ process_initializer(ir_variable *var, ast_declaration *decl,
           * versions.
           */
          ir_constant *constant_value =
-            rhs->constant_expression_value(mem_ctx);
+            rhs->constant_expression_value(state->linalloc);
 
          if (!constant_value ||
              (state->is_version(430, 300) &&
@@ -4781,7 +4775,7 @@ process_initializer(ir_variable *var, ast_declaration *decl,
                if (glsl_type_is_numeric(var->type)) {
                   /* Reduce cascading errors. */
                   var->constant_value = type->qualifier.flags.q.constant
-                     ? ir_constant::zero(state, var->type) : NULL;
+                     ? ir_constant::zero(state->linalloc, var->type) : NULL;
                }
             }
          } else {
@@ -4793,7 +4787,7 @@ process_initializer(ir_variable *var, ast_declaration *decl,
          if (glsl_type_is_numeric(var->type)) {
             /* Reduce cascading errors. */
             rhs = var->constant_value = type->qualifier.flags.q.constant
-               ? ir_constant::zero(state, var->type) : NULL;
+               ? ir_constant::zero(state->linalloc, var->type) : NULL;
          }
       }
    }
@@ -4818,7 +4812,7 @@ process_initializer(ir_variable *var, ast_declaration *decl,
          initializer_type = rhs->type;
 
       if (!error_emitted) {
-         var->constant_initializer = rhs->constant_expression_value(mem_ctx);
+         var->constant_initializer = rhs->constant_expression_value(state->linalloc);
          var->data.has_initializer = true;
          var->data.is_implicit_initializer = false;
 
@@ -5051,10 +5045,10 @@ validate_identifier(const char *identifier, YYLTYPE loc,
 }
 
 ir_rvalue *
-ast_declarator_list::hir(exec_list *instructions,
+ast_declarator_list::hir(ir_exec_list *instructions,
                          struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
    const struct glsl_type *decl_type;
    const char *type_name = NULL;
    ir_rvalue *result = NULL;
@@ -5080,7 +5074,7 @@ ast_declarator_list::hir(exec_list *instructions,
                           "scope");
       }
 
-      foreach_list_typed (ast_declaration, decl, link, &this->declarations) {
+      ir_foreach_list_typed (ast_declaration, decl, link, &this->declarations) {
          assert(decl->array_specifier == NULL);
          assert(decl->initializer == NULL);
 
@@ -5113,7 +5107,7 @@ ast_declarator_list::hir(exec_list *instructions,
    if (this->precise) {
       assert(this->type == NULL);
 
-      foreach_list_typed (ast_declaration, decl, link, &this->declarations) {
+      ir_foreach_list_typed (ast_declaration, decl, link, &this->declarations) {
          assert(decl->array_specifier == NULL);
          assert(decl->initializer == NULL);
 
@@ -5194,7 +5188,7 @@ ast_declarator_list::hir(exec_list *instructions,
             this->type->qualifier.image_format = PIPE_FORMAT_R32G32B32A32_FLOAT;
             break;
          default:
-            unreachable("Unknown image format");
+            UNREACHABLE("Unknown image format");
          }
          this->type->qualifier.image_base_type = GLSL_TYPE_FLOAT;
       } else if (strncmp(this->type->specifier->type_name, "uimage", strlen("uimage")) == 0) {
@@ -5215,7 +5209,7 @@ ast_declarator_list::hir(exec_list *instructions,
             this->type->qualifier.image_format = PIPE_FORMAT_R32G32B32A32_UINT;
             break;
          default:
-            unreachable("Unknown image format");
+            UNREACHABLE("Unknown image format");
          }
          this->type->qualifier.image_base_type = GLSL_TYPE_UINT;
       } else if (strncmp(this->type->specifier->type_name, "iimage", strlen("iimage")) == 0) {
@@ -5359,7 +5353,7 @@ ast_declarator_list::hir(exec_list *instructions,
       }
    }
 
-   foreach_list_typed (ast_declaration, decl, link, &this->declarations) {
+   ir_foreach_list_typed (ast_declaration, decl, link, &this->declarations) {
       const struct glsl_type *var_type;
       ir_variable *var;
       const char *identifier = decl->identifier;
@@ -5389,7 +5383,7 @@ ast_declarator_list::hir(exec_list *instructions,
             _mesa_glsl_error(& loc, state,
                              "invalid type in declaration of `%s'",
                              decl->identifier);
-         name = ralloc_asprintf(ctx, "%s_%s", _mesa_shader_stage_to_subroutine_prefix(state->stage), decl->identifier);
+         name = ralloc_asprintf(state, "%s_%s", _mesa_shader_stage_to_subroutine_prefix(state->stage), decl->identifier);
 
          identifier = name;
 
@@ -5397,7 +5391,7 @@ ast_declarator_list::hir(exec_list *instructions,
       var_type = process_array_type(&loc, decl_type, decl->array_specifier,
                                     state);
 
-      var = new(ctx) ir_variable(var_type, identifier, ir_var_auto);
+      var = new(linalloc) ir_variable(var_type, identifier, ir_var_auto);
 
       /* The 'varying in' and 'varying out' qualifiers can only be used with
        * ARB_geometry_shader4 and EXT_geometry_shader4, which we don't support
@@ -5464,7 +5458,7 @@ ast_declarator_list::hir(exec_list *instructions,
          const ir_constant_data data = { { 0 } };
          var->data.has_initializer = true;
          var->data.is_implicit_initializer = true;
-         var->constant_initializer = new(var) ir_constant(var->type, &data);
+         var->constant_initializer = new(state->linalloc) ir_constant(var->type, &data);
       }
 
       if (this->type->qualifier.flags.q.invariant) {
@@ -5825,7 +5819,7 @@ ast_declarator_list::hir(exec_list *instructions,
        * redeclarations) the declaration may not actually be added to the
        * instruction stream.
        */
-      exec_list initializer_instructions;
+      ir_exec_list initializer_instructions;
 
       /* Examine var name here since var may get deleted in the next call */
       bool var_is_gl_id = is_gl_identifier(var->name);
@@ -5980,10 +5974,10 @@ ast_declarator_list::hir(exec_list *instructions,
 
 
 ir_rvalue *
-ast_parameter_declarator::hir(exec_list *instructions,
+ast_parameter_declarator::hir(ir_exec_list *instructions,
                               struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
    const struct glsl_type *type;
    const char *name = NULL;
    YYLTYPE loc = this->get_location();
@@ -6042,7 +6036,7 @@ ast_parameter_declarator::hir(exec_list *instructions,
    }
 
    is_void = false;
-   ir_variable *var = new(ctx)
+   ir_variable *var = new(linalloc)
       ir_variable(type, this->identifier, ir_var_function_in);
 
    /* Apply any specified qualifiers to the parameter declaration.  Note that
@@ -6056,7 +6050,7 @@ ast_parameter_declarator::hir(exec_list *instructions,
          const ir_constant_data data = { { 0 } };
          var->data.has_initializer = true;
          var->data.is_implicit_initializer = true;
-         var->constant_initializer = new(var) ir_constant(var->type, &data);
+         var->constant_initializer = new(state->linalloc) ir_constant(var->type, &data);
    }
 
    /* From section 4.1.7 of the GLSL 4.40 spec:
@@ -6114,15 +6108,15 @@ ast_parameter_declarator::hir(exec_list *instructions,
 
 
 void
-ast_parameter_declarator::parameters_to_hir(exec_list *ast_parameters,
+ast_parameter_declarator::parameters_to_hir(ir_exec_list *ast_parameters,
                                             bool formal,
-                                            exec_list *ir_parameters,
+                                            ir_exec_list *ir_parameters,
                                             _mesa_glsl_parse_state *state)
 {
    ast_parameter_declarator *void_param = NULL;
    unsigned count = 0;
 
-   foreach_list_typed (ast_parameter_declarator, param, link, ast_parameters) {
+   ir_foreach_list_typed (ast_parameter_declarator, param, link, ast_parameters) {
       param->formal_parameter = formal;
       param->hir(ir_parameters, state);
 
@@ -6156,13 +6150,13 @@ emit_function(_mesa_glsl_parse_state *state, ir_function *f)
 
 
 ir_rvalue *
-ast_function::hir(exec_list *instructions,
+ast_function::hir(ir_exec_list *instructions,
                   struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
    ir_function *f = NULL;
    ir_function_signature *sig = NULL;
-   exec_list hir_parameters;
+   ir_exec_list hir_parameters;
    YYLTYPE loc = this->get_location();
 
    const char *const name = identifier;
@@ -6301,7 +6295,7 @@ ast_function::hir(exec_list *instructions,
    /* Create an ir_function if one doesn't already exist. */
    f = state->symbols->get_function(name);
    if (f == NULL) {
-      f = new(ctx) ir_function(name);
+      f = new(linalloc) ir_function(name);
       if (!this->return_type->qualifier.is_subroutine_decl()) {
          if (!state->symbols->add_function(f)) {
             /* This function name shadows a non-function use of the same name. */
@@ -6417,7 +6411,7 @@ ast_function::hir(exec_list *instructions,
    /* Finish storing the information about this new function in its signature.
     */
    if (sig == NULL) {
-      sig = new(ctx) ir_function_signature(return_type);
+      sig = new(linalloc) ir_function_signature(return_type);
       sig->return_precision = return_precision;
       f->add_signature(sig);
    }
@@ -6453,7 +6447,7 @@ ast_function::hir(exec_list *instructions,
       f->subroutine_types = ralloc_array(state, const struct glsl_type *,
                                          f->num_subroutine_types);
       idx = 0;
-      foreach_list_typed(ast_declaration, decl, link, &this->return_type->qualifier.subroutine_list->declarations) {
+      ir_foreach_list_typed(ast_declaration, decl, link, &this->return_type->qualifier.subroutine_list->declarations) {
          const struct glsl_type *type;
          /* the subroutine type must be already declared */
          type = state->symbols->get_type(decl->identifier);
@@ -6511,7 +6505,7 @@ ast_function::hir(exec_list *instructions,
 
 
 ir_rvalue *
-ast_function_definition::hir(exec_list *instructions,
+ast_function_definition::hir(ir_exec_list *instructions,
                              struct _mesa_glsl_parse_state *state)
 {
    prototype->is_definition = true;
@@ -6531,7 +6525,7 @@ ast_function_definition::hir(exec_list *instructions,
     * Add these to the symbol table.
     */
    state->symbols->push_scope();
-   foreach_in_list(ir_variable, var, &signature->parameters) {
+   ir_foreach_in_list(ir_variable, var, &signature->parameters) {
       assert(var->as_variable() != NULL);
 
       /* The only way a parameter would "exist" is if two parameters have
@@ -6570,10 +6564,10 @@ ast_function_definition::hir(exec_list *instructions,
 
 
 ir_rvalue *
-ast_jump_statement::hir(exec_list *instructions,
+ast_jump_statement::hir(ir_exec_list *instructions,
                         struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
 
    switch (mode) {
    case ast_return: {
@@ -6635,7 +6629,7 @@ ast_jump_statement::hir(exec_list *instructions,
                              "return argument");
          }
 
-         inst = new(ctx) ir_return(ret);
+         inst = new(linalloc) ir_return(ret);
       } else {
          if (state->current_function->return_type->base_type !=
              GLSL_TYPE_VOID) {
@@ -6646,7 +6640,7 @@ ast_jump_statement::hir(exec_list *instructions,
                              "non-void",
             state->current_function->function_name());
          }
-         inst = new(ctx) ir_return;
+         inst = new(linalloc) ir_return;
       }
 
       state->found_return = true;
@@ -6661,7 +6655,7 @@ ast_jump_statement::hir(exec_list *instructions,
          _mesa_glsl_error(& loc, state,
                           "`discard' may only appear in a fragment shader");
       }
-      instructions->push_tail(new(ctx) ir_discard);
+      instructions->push_tail(new(linalloc) ir_discard);
       break;
 
    case ast_break:
@@ -6687,7 +6681,7 @@ ast_jump_statement::hir(exec_list *instructions,
          if (state->loop_nesting_ast != NULL &&
              mode == ast_continue && !state->switch_state.is_switch_innermost) {
             if (state->loop_nesting_ast->rest_expression) {
-               clone_ir_list(ctx, instructions,
+               clone_ir_list(linalloc, instructions,
                              &state->loop_nesting_ast->rest_instructions);
             }
             if (state->loop_nesting_ast->mode ==
@@ -6699,27 +6693,27 @@ ast_jump_statement::hir(exec_list *instructions,
          if (state->switch_state.is_switch_innermost &&
              mode == ast_continue) {
             /* Set 'continue_inside' to true. */
-            ir_rvalue *const true_val = new (ctx) ir_constant(true);
+            ir_rvalue *const true_val = new (linalloc) ir_constant(true);
             ir_dereference_variable *deref_continue_inside_var =
-               new(ctx) ir_dereference_variable(state->switch_state.continue_inside);
-            instructions->push_tail(new(ctx) ir_assignment(deref_continue_inside_var,
+               new(linalloc) ir_dereference_variable(state->switch_state.continue_inside);
+            instructions->push_tail(new(linalloc) ir_assignment(deref_continue_inside_var,
                                                            true_val));
 
             /* Break out from the switch, continue for the loop will
              * be called right after switch. */
             ir_loop_jump *const jump =
-               new(ctx) ir_loop_jump(ir_loop_jump::jump_break);
+               new(linalloc) ir_loop_jump(ir_loop_jump::jump_break);
             instructions->push_tail(jump);
 
          } else if (state->switch_state.is_switch_innermost &&
              mode == ast_break) {
             /* Force break out of switch by inserting a break. */
             ir_loop_jump *const jump =
-               new(ctx) ir_loop_jump(ir_loop_jump::jump_break);
+               new(linalloc) ir_loop_jump(ir_loop_jump::jump_break);
             instructions->push_tail(jump);
          } else {
             ir_loop_jump *const jump =
-               new(ctx) ir_loop_jump((mode == ast_break)
+               new(linalloc) ir_loop_jump((mode == ast_break)
                   ? ir_loop_jump::jump_break
                   : ir_loop_jump::jump_continue);
             instructions->push_tail(jump);
@@ -6736,10 +6730,10 @@ ast_jump_statement::hir(exec_list *instructions,
 
 
 ir_rvalue *
-ast_demote_statement::hir(exec_list *instructions,
+ast_demote_statement::hir(ir_exec_list *instructions,
                           struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
 
    if (state->stage != MESA_SHADER_FRAGMENT) {
       YYLTYPE loc = this->get_location();
@@ -6748,17 +6742,17 @@ ast_demote_statement::hir(exec_list *instructions,
                        "`demote' may only appear in a fragment shader");
    }
 
-   instructions->push_tail(new(ctx) ir_demote);
+   instructions->push_tail(new(linalloc) ir_demote);
 
    return NULL;
 }
 
 
 ir_rvalue *
-ast_selection_statement::hir(exec_list *instructions,
+ast_selection_statement::hir(ir_exec_list *instructions,
                              struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
 
    ir_rvalue *const condition = this->condition->hir(instructions, state);
 
@@ -6778,7 +6772,7 @@ ast_selection_statement::hir(exec_list *instructions,
                        "boolean");
    }
 
-   ir_if *const stmt = new(ctx) ir_if(condition);
+   ir_if *const stmt = new(linalloc) ir_if(condition);
 
    if (then_statement != NULL) {
       state->symbols->push_scope();
@@ -6835,7 +6829,7 @@ key_contents(const void *key)
 }
 
 void
-ast_switch_statement::eval_test_expression(exec_list *instructions,
+ast_switch_statement::eval_test_expression(ir_exec_list *instructions,
                                            struct _mesa_glsl_parse_state *state)
 {
    if (test_val == NULL)
@@ -6843,10 +6837,10 @@ ast_switch_statement::eval_test_expression(exec_list *instructions,
 }
 
 ir_rvalue *
-ast_switch_statement::hir(exec_list *instructions,
+ast_switch_statement::hir(ir_exec_list *instructions,
                           struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
 
    this->eval_test_expression(instructions, state);
 
@@ -6879,40 +6873,40 @@ ast_switch_statement::hir(exec_list *instructions,
 
    /* Initalize is_fallthru state to false.
     */
-   ir_rvalue *const is_fallthru_val = new (ctx) ir_constant(false);
+   ir_rvalue *const is_fallthru_val = new (linalloc) ir_constant(false);
    state->switch_state.is_fallthru_var =
-      new(ctx) ir_variable(&glsl_type_builtin_bool,
+      new(linalloc) ir_variable(&glsl_type_builtin_bool,
                            "switch_is_fallthru_tmp",
                            ir_var_temporary);
    instructions->push_tail(state->switch_state.is_fallthru_var);
 
    ir_dereference_variable *deref_is_fallthru_var =
-      new(ctx) ir_dereference_variable(state->switch_state.is_fallthru_var);
-   instructions->push_tail(new(ctx) ir_assignment(deref_is_fallthru_var,
+      new(linalloc) ir_dereference_variable(state->switch_state.is_fallthru_var);
+   instructions->push_tail(new(linalloc) ir_assignment(deref_is_fallthru_var,
                                                   is_fallthru_val));
 
    /* Initialize continue_inside state to false.
     */
    state->switch_state.continue_inside =
-      new(ctx) ir_variable(&glsl_type_builtin_bool,
+      new(linalloc) ir_variable(&glsl_type_builtin_bool,
                            "continue_inside_tmp",
                            ir_var_temporary);
    instructions->push_tail(state->switch_state.continue_inside);
 
-   ir_rvalue *const false_val = new (ctx) ir_constant(false);
+   ir_rvalue *const false_val = new (linalloc) ir_constant(false);
    ir_dereference_variable *deref_continue_inside_var =
-      new(ctx) ir_dereference_variable(state->switch_state.continue_inside);
-   instructions->push_tail(new(ctx) ir_assignment(deref_continue_inside_var,
+      new(linalloc) ir_dereference_variable(state->switch_state.continue_inside);
+   instructions->push_tail(new(linalloc) ir_assignment(deref_continue_inside_var,
                                                   false_val));
 
    state->switch_state.run_default =
-      new(ctx) ir_variable(&glsl_type_builtin_bool,
+      new(linalloc) ir_variable(&glsl_type_builtin_bool,
                              "run_default_tmp",
                              ir_var_temporary);
    instructions->push_tail(state->switch_state.run_default);
 
    /* Loop around the switch is used for flow control. */
-   ir_loop * loop = new(ctx) ir_loop();
+   ir_loop * loop = new(linalloc) ir_loop();
    instructions->push_tail(loop);
 
    /* Cache test expression.
@@ -6924,19 +6918,19 @@ ast_switch_statement::hir(exec_list *instructions,
    body->hir(&loop->body_instructions, state);
 
    /* Insert a break at the end to exit loop. */
-   ir_loop_jump *jump = new(ctx) ir_loop_jump(ir_loop_jump::jump_break);
+   ir_loop_jump *jump = new(linalloc) ir_loop_jump(ir_loop_jump::jump_break);
    loop->body_instructions.push_tail(jump);
 
    /* If we are inside loop, check if continue got called inside switch. */
    if (state->loop_nesting_ast != NULL) {
       ir_dereference_variable *deref_continue_inside =
-         new(ctx) ir_dereference_variable(state->switch_state.continue_inside);
-      ir_if *irif = new(ctx) ir_if(deref_continue_inside);
-      ir_loop_jump *jump = new(ctx) ir_loop_jump(ir_loop_jump::jump_continue);
+         new(linalloc) ir_dereference_variable(state->switch_state.continue_inside);
+      ir_if *irif = new(linalloc) ir_if(deref_continue_inside);
+      ir_loop_jump *jump = new(linalloc) ir_loop_jump(ir_loop_jump::jump_continue);
 
       if (state->loop_nesting_ast != NULL) {
          if (state->loop_nesting_ast->rest_expression) {
-            clone_ir_list(ctx, &irif->then_instructions,
+            clone_ir_list(linalloc, &irif->then_instructions,
                           &state->loop_nesting_ast->rest_instructions);
          }
          if (state->loop_nesting_ast->mode ==
@@ -6958,10 +6952,10 @@ ast_switch_statement::hir(exec_list *instructions,
 
 
 void
-ast_switch_statement::test_to_hir(exec_list *instructions,
+ast_switch_statement::test_to_hir(ir_exec_list *instructions,
                                   struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
 
    /* set to true to avoid a duplicate "use of uninitialized variable" warning
     * on the switch test case. The first one would be already raised when
@@ -6971,19 +6965,19 @@ ast_switch_statement::test_to_hir(exec_list *instructions,
    /* Cache value of test expression. */
    this->eval_test_expression(instructions, state);
 
-   state->switch_state.test_var = new(ctx) ir_variable(test_val->type,
+   state->switch_state.test_var = new(linalloc) ir_variable(test_val->type,
                                                        "switch_test_tmp",
                                                        ir_var_temporary);
    ir_dereference_variable *deref_test_var =
-      new(ctx) ir_dereference_variable(state->switch_state.test_var);
+      new(linalloc) ir_dereference_variable(state->switch_state.test_var);
 
    instructions->push_tail(state->switch_state.test_var);
-   instructions->push_tail(new(ctx) ir_assignment(deref_test_var, test_val));
+   instructions->push_tail(new(linalloc) ir_assignment(deref_test_var, test_val));
 }
 
 
 ir_rvalue *
-ast_switch_body::hir(exec_list *instructions,
+ast_switch_body::hir(ir_exec_list *instructions,
                      struct _mesa_glsl_parse_state *state)
 {
    if (stmts != NULL) {
@@ -6997,12 +6991,12 @@ ast_switch_body::hir(exec_list *instructions,
 }
 
 ir_rvalue *
-ast_case_statement_list::hir(exec_list *instructions,
+ast_case_statement_list::hir(ir_exec_list *instructions,
                              struct _mesa_glsl_parse_state *state)
 {
-   exec_list default_case, after_default, tmp;
+   ir_exec_list default_case, after_default, tmp;
 
-   foreach_list_typed (ast_case_statement, case_stmt, link, & this->cases) {
+   ir_foreach_list_typed (ast_case_statement, case_stmt, link, & this->cases) {
       case_stmt->hir(&tmp, state);
 
       /* Default case. */
@@ -7023,7 +7017,7 @@ ast_case_statement_list::hir(exec_list *instructions,
     * if default should be chosen or not.
     */
    if (!default_case.is_empty()) {
-      ir_factory body(instructions, state);
+      ir_factory body(instructions, state->linalloc);
 
       ir_expression *cmp = NULL;
 
@@ -7061,17 +7055,17 @@ ast_case_statement_list::hir(exec_list *instructions,
 }
 
 ir_rvalue *
-ast_case_statement::hir(exec_list *instructions,
+ast_case_statement::hir(ir_exec_list *instructions,
                         struct _mesa_glsl_parse_state *state)
 {
    labels->hir(instructions, state);
 
    /* Guard case statements depending on fallthru state. */
    ir_dereference_variable *const deref_fallthru_guard =
-      new(state) ir_dereference_variable(state->switch_state.is_fallthru_var);
-   ir_if *const test_fallthru = new(state) ir_if(deref_fallthru_guard);
+      new(state->linalloc) ir_dereference_variable(state->switch_state.is_fallthru_var);
+   ir_if *const test_fallthru = new(state->linalloc) ir_if(deref_fallthru_guard);
 
-   foreach_list_typed (ast_node, stmt, link, & this->stmts)
+   ir_foreach_list_typed (ast_node, stmt, link, & this->stmts)
       stmt->hir(& test_fallthru->then_instructions, state);
 
    instructions->push_tail(test_fallthru);
@@ -7082,10 +7076,10 @@ ast_case_statement::hir(exec_list *instructions,
 
 
 ir_rvalue *
-ast_case_label_list::hir(exec_list *instructions,
+ast_case_label_list::hir(ir_exec_list *instructions,
                          struct _mesa_glsl_parse_state *state)
 {
-   foreach_list_typed (ast_case_label, label, link, & this->labels)
+   ir_foreach_list_typed (ast_case_label, label, link, & this->labels)
       label->hir(instructions, state);
 
    /* Case labels do not have r-values. */
@@ -7093,10 +7087,10 @@ ast_case_label_list::hir(exec_list *instructions,
 }
 
 ir_rvalue *
-ast_case_label::hir(exec_list *instructions,
+ast_case_label::hir(ir_exec_list *instructions,
                     struct _mesa_glsl_parse_state *state)
 {
-   ir_factory body(instructions, state);
+   ir_factory body(instructions, state->linalloc);
 
    ir_variable *const fallthru_var = state->switch_state.is_fallthru_var;
 
@@ -7107,7 +7101,7 @@ ast_case_label::hir(exec_list *instructions,
        */
       ir_rvalue *const label_rval = this->test_value->hir(instructions, state);
       ir_constant *label_const =
-         label_rval->constant_expression_value(body.mem_ctx);
+         label_rval->constant_expression_value(state->linalloc);
 
       if (!label_const) {
          YYLTYPE loc = this->test_value->get_location();
@@ -7154,7 +7148,7 @@ ast_case_label::hir(exec_list *instructions,
       ir_rvalue *label = label_const;
 
       ir_rvalue *deref_test_var =
-         new(body.mem_ctx) ir_dereference_variable(state->switch_state.test_var);
+         new(state->linalloc) ir_dereference_variable(state->switch_state.test_var);
 
       /*
        * From GLSL 4.40 specification section 6.2 ("Selection"):
@@ -7230,10 +7224,10 @@ ast_case_label::hir(exec_list *instructions,
 }
 
 void
-ast_iteration_statement::condition_to_hir(exec_list *instructions,
+ast_iteration_statement::condition_to_hir(ir_exec_list *instructions,
                                           struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
 
    if (condition != NULL) {
       ir_rvalue *const cond =
@@ -7250,12 +7244,12 @@ ast_iteration_statement::condition_to_hir(exec_list *instructions,
           * like 'if (!condition) break;' as the loop termination condition.
           */
          ir_rvalue *const not_cond =
-            new(ctx) ir_expression(ir_unop_logic_not, cond);
+            new(linalloc) ir_expression(ir_unop_logic_not, cond);
 
-         ir_if *const if_stmt = new(ctx) ir_if(not_cond);
+         ir_if *const if_stmt = new(linalloc) ir_if(not_cond);
 
          ir_jump *const break_stmt =
-            new(ctx) ir_loop_jump(ir_loop_jump::jump_break);
+            new(linalloc) ir_loop_jump(ir_loop_jump::jump_break);
 
          if_stmt->then_instructions.push_tail(break_stmt);
          instructions->push_tail(if_stmt);
@@ -7265,10 +7259,10 @@ ast_iteration_statement::condition_to_hir(exec_list *instructions,
 
 
 ir_rvalue *
-ast_iteration_statement::hir(exec_list *instructions,
+ast_iteration_statement::hir(ir_exec_list *instructions,
                              struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *linalloc = state->linalloc;
 
    /* For-loops and while-loops start a new scope, but do-while loops do not.
     */
@@ -7278,7 +7272,7 @@ ast_iteration_statement::hir(exec_list *instructions,
    if (init_statement != NULL)
       init_statement->hir(instructions, state);
 
-   ir_loop *const stmt = new(ctx) ir_loop();
+   ir_loop *const stmt = new(linalloc) ir_loop();
    instructions->push_tail(stmt);
 
    /* Track the current loop nesting. */
@@ -7370,7 +7364,7 @@ is_valid_default_precision_type(const struct glsl_type *const type)
 
 
 ir_rvalue *
-ast_type_specifier::hir(exec_list *instructions,
+ast_type_specifier::hir(ir_exec_list *instructions,
                         struct _mesa_glsl_parse_state *state)
 {
    if (this->default_precision == ast_precision_none && this->structure == NULL)
@@ -7480,9 +7474,9 @@ ast_type_specifier::hir(exec_list *instructions,
  * stored in \c *fields_ret.
  */
 static unsigned
-ast_process_struct_or_iface_block_members(exec_list *instructions,
+ast_process_struct_or_iface_block_members(ir_exec_list *instructions,
                                           struct _mesa_glsl_parse_state *state,
-                                          exec_list *declarations,
+                                          ir_exec_list *declarations,
                                           glsl_struct_field **fields_ret,
                                           bool is_interface,
                                           enum glsl_matrix_layout matrix_layout,
@@ -7503,7 +7497,7 @@ ast_process_struct_or_iface_block_members(exec_list *instructions,
     * This means that we actually need to count the number of elements in the
     * 'declarations' list in each of the elements.
     */
-   foreach_list_typed (ast_declarator_list, decl_list, link, declarations) {
+   ir_foreach_list_typed (ast_declarator_list, decl_list, link, declarations) {
       decl_count += decl_list->declarations.length();
    }
 
@@ -7519,7 +7513,7 @@ ast_process_struct_or_iface_block_members(exec_list *instructions,
    bool first_member_has_explicit_location = false;
 
    unsigned i = 0;
-   foreach_list_typed (ast_declarator_list, decl_list, link, declarations) {
+   ir_foreach_list_typed (ast_declarator_list, decl_list, link, declarations) {
       const char *type_name;
       YYLTYPE loc = decl_list->get_location();
 
@@ -7711,7 +7705,7 @@ ast_process_struct_or_iface_block_members(exec_list *instructions,
             validate_matrix_layout_for_type(state, &loc, decl_type, NULL);
       }
 
-      foreach_list_typed (ast_declaration, decl, link,
+      ir_foreach_list_typed (ast_declaration, decl, link,
                           &decl_list->declarations) {
          YYLTYPE loc = decl->get_location();
 
@@ -7970,7 +7964,7 @@ is_anonymous(const glsl_type *t)
 }
 
 ir_rvalue *
-ast_struct_specifier::hir(exec_list *instructions,
+ast_struct_specifier::hir(ir_exec_list *instructions,
                           struct _mesa_glsl_parse_state *state)
 {
    YYLTYPE loc = this->get_location();
@@ -8086,7 +8080,7 @@ apply_memory_qualifiers(ir_variable *var, glsl_struct_field field)
 }
 
 ir_rvalue *
-ast_interface_block::hir(exec_list *instructions,
+ast_interface_block::hir(ir_exec_list *instructions,
                          struct _mesa_glsl_parse_state *state)
 {
    YYLTYPE loc = this->get_location();
@@ -8214,7 +8208,7 @@ ast_interface_block::hir(exec_list *instructions,
       matrix_layout = GLSL_MATRIX_LAYOUT_COLUMN_MAJOR;
 
    bool redeclaring_per_vertex = strcmp(this->block_name, "gl_PerVertex") == 0;
-   exec_list declared_variables;
+   ir_exec_list declared_variables;
    glsl_struct_field *fields;
 
    /* For blocks that accept memory qualifiers (i.e. shader storage), verify
@@ -8641,11 +8635,11 @@ ast_interface_block::hir(exec_list *instructions,
                              "not allowed");
          }
 
-         var = new(state) ir_variable(block_array_type,
+         var = new(state->linalloc) ir_variable(block_array_type,
                                       this->instance_name,
                                       var_mode);
       } else {
-         var = new(state) ir_variable(block_type,
+         var = new(state->linalloc) ir_variable(block_type,
                                       this->instance_name,
                                       var_mode);
       }
@@ -8680,7 +8674,6 @@ ast_interface_block::hir(exec_list *instructions,
          earlier->data.how_declared = ir_var_declared_normally;
          earlier->type = var->type;
          earlier->reinit_interface_type(block_type);
-         delete var;
       } else {
          if (this->layout.flags.q.explicit_binding) {
             apply_explicit_binding(state, &loc, var, var->type,
@@ -8704,8 +8697,8 @@ ast_interface_block::hir(exec_list *instructions,
 
       for (unsigned i = 0; i < num_variables; i++) {
          ir_variable *var =
-            new(state) ir_variable(fields[i].type,
-                                   ralloc_strdup(state, fields[i].name),
+            new(state->linalloc) ir_variable(fields[i].type,
+                                   linear_strdup(state->linalloc, fields[i].name),
                                    var_mode);
          var->data.interpolation = fields[i].interpolation;
          var->data.centroid = fields[i].centroid;
@@ -8833,7 +8826,7 @@ ast_interface_block::hir(exec_list *instructions,
           * thinking there are conflicting definitions of gl_PerVertex in the
           * shader.
           */
-         foreach_in_list_safe(ir_instruction, node, instructions) {
+         ir_foreach_in_list_safe(ir_instruction, node, instructions) {
             ir_variable *const var = node->as_variable();
             if (var != NULL &&
                 var->get_interface_type() == earlier_per_vertex &&
@@ -8856,7 +8849,7 @@ ast_interface_block::hir(exec_list *instructions,
 
 
 ir_rvalue *
-ast_tcs_output_layout::hir(exec_list *instructions,
+ast_tcs_output_layout::hir(ir_exec_list *instructions,
                            struct _mesa_glsl_parse_state *state)
 {
    YYLTYPE loc = this->get_location();
@@ -8887,7 +8880,7 @@ ast_tcs_output_layout::hir(exec_list *instructions,
    /* If any shader outputs occurred before this declaration and did not
     * specify an array size, their size is determined now.
     */
-   foreach_in_list (ir_instruction, node, instructions) {
+   ir_foreach_in_list (ir_instruction, node, instructions) {
       ir_variable *var = node->as_variable();
       if (var == NULL || var->data.mode != ir_var_shader_out)
          continue;
@@ -8913,7 +8906,7 @@ ast_tcs_output_layout::hir(exec_list *instructions,
 
 
 ir_rvalue *
-ast_gs_input_layout::hir(exec_list *instructions,
+ast_gs_input_layout::hir(ir_exec_list *instructions,
                          struct _mesa_glsl_parse_state *state)
 {
    YYLTYPE loc = this->get_location();
@@ -8941,7 +8934,7 @@ ast_gs_input_layout::hir(exec_list *instructions,
    /* If any shader inputs occurred before this declaration and did not
     * specify an array size, their size is determined now.
     */
-   foreach_in_list(ir_instruction, node, instructions) {
+   ir_foreach_in_list(ir_instruction, node, instructions) {
       ir_variable *var = node->as_variable();
       if (var == NULL || var->data.mode != ir_var_shader_in)
          continue;
@@ -8969,7 +8962,7 @@ ast_gs_input_layout::hir(exec_list *instructions,
 
 
 ir_rvalue *
-ast_cs_input_layout::hir(exec_list *instructions,
+ast_cs_input_layout::hir(ir_exec_list *instructions,
                          struct _mesa_glsl_parse_state *state)
 {
    YYLTYPE loc = this->get_location();
@@ -9056,7 +9049,7 @@ ast_cs_input_layout::hir(exec_list *instructions,
     * builtin_variable_generator::generate_constants() for why we didn't
     * declare it earlier).
     */
-   ir_variable *var = new(state->symbols)
+   ir_variable *var = new(state->linalloc)
       ir_variable(&glsl_type_builtin_uvec3, "gl_WorkGroupSize", ir_var_auto);
    var->data.how_declared = ir_var_declared_implicitly;
    var->data.read_only = true;
@@ -9066,9 +9059,9 @@ ast_cs_input_layout::hir(exec_list *instructions,
    memset(&data, 0, sizeof(data));
    for (int i = 0; i < 3; i++)
       data.u[i] = qual_local_size[i];
-   var->constant_value = new(var) ir_constant(&glsl_type_builtin_uvec3, &data);
+   var->constant_value = new(state->linalloc) ir_constant(&glsl_type_builtin_uvec3, &data);
    var->constant_initializer =
-      new(var) ir_constant(&glsl_type_builtin_uvec3, &data);
+      new(state->linalloc) ir_constant(&glsl_type_builtin_uvec3, &data);
    var->data.has_initializer = true;
    var->data.is_implicit_initializer = false;
 
@@ -9078,7 +9071,7 @@ ast_cs_input_layout::hir(exec_list *instructions,
 
 static void
 detect_conflicting_assignments(struct _mesa_glsl_parse_state *state,
-                               exec_list *instructions)
+                               ir_exec_list *instructions)
 {
    bool gl_FragColor_assigned = false;
    bool gl_FragData_assigned = false;
@@ -9091,7 +9084,7 @@ detect_conflicting_assignments(struct _mesa_glsl_parse_state *state,
    YYLTYPE loc;
    memset(&loc, 0, sizeof(loc));
 
-   foreach_in_list(ir_instruction, node, instructions) {
+   ir_foreach_in_list(ir_instruction, node, instructions) {
       ir_variable *var = node->as_variable();
 
       if (!var || !var->data.assigned)
@@ -9103,7 +9096,7 @@ detect_conflicting_assignments(struct _mesa_glsl_parse_state *state,
             const ir_constant_data data = { { 0 } };
             var->data.has_initializer = true;
             var->data.is_implicit_initializer = true;
-            var->constant_initializer = new(var) ir_constant(var->type, &data);
+            var->constant_initializer = new(state->linalloc) ir_constant(var->type, &data);
          }
       }
       else if (strcmp(var->name, "gl_FragData") == 0)
@@ -9185,7 +9178,7 @@ verify_subroutine_associated_funcs(struct _mesa_glsl_parse_state *state)
       unsigned definitions = 0;
       ir_function *fn = state->subroutines[i];
       /* Calculate number of function definitions with the same name */
-      foreach_in_list(ir_function_signature, sig, &fn->signatures) {
+      ir_foreach_in_list(ir_function_signature, sig, &fn->signatures) {
          if (sig->is_defined) {
             if (++definitions > 1) {
                _mesa_glsl_error(&loc, state,
@@ -9202,7 +9195,7 @@ verify_subroutine_associated_funcs(struct _mesa_glsl_parse_state *state)
 }
 
 static void
-remove_per_vertex_blocks(exec_list *instructions,
+remove_per_vertex_blocks(ir_exec_list *instructions,
                          _mesa_glsl_parse_state *state, ir_variable_mode mode)
 {
    /* Find the gl_PerVertex interface block of the appropriate (in/out) mode,
@@ -9242,7 +9235,7 @@ remove_per_vertex_blocks(exec_list *instructions,
    /* Remove any ir_variable declarations that refer to the interface block
     * we're removing.
     */
-   foreach_in_list_safe(ir_instruction, node, instructions) {
+   ir_foreach_in_list_safe(ir_instruction, node, instructions) {
       ir_variable *const var = node->as_variable();
       if (var != NULL && var->get_interface_type() == per_vertex &&
           var->data.mode == mode &&
@@ -9254,7 +9247,7 @@ remove_per_vertex_blocks(exec_list *instructions,
 }
 
 ir_rvalue *
-ast_warnings_toggle::hir(exec_list *,
+ast_warnings_toggle::hir(ir_exec_list *,
                          struct _mesa_glsl_parse_state *state)
 {
    state->warnings_enabled = enable;

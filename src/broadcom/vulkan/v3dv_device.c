@@ -69,7 +69,6 @@
 
 #ifdef VK_USE_PLATFORM_WAYLAND_KHR
 #include <wayland-client.h>
-#include "wayland-drm-client-protocol.h"
 #endif
 
 #define V3DV_API_VERSION VK_MAKE_VERSION(1, 3, VK_HEADER_VERSION)
@@ -511,6 +510,12 @@ get_features(const struct v3dv_physical_device *physical_device,
 #ifdef V3DV_USE_WSI_PLATFORM
       /* VK_EXT_swapchain_maintenance1 */
       .swapchainMaintenance1 = true,
+
+      /* VK_KHR_present_id2 */
+      .presentId2 = true,
+
+      /* VK_KHR_present_wait2 */
+      .presentWait2 = true,
 #endif
 
       /* VK_KHR_shader_relaxed_extended_instruction */
@@ -1377,11 +1382,6 @@ create_physical_device(struct v3dv_instance *instance,
     */
    device->drm_syncobj_type.features &= ~VK_SYNC_FEATURE_TIMELINE;
 
-   /* Multiwait is required for emulated timeline semaphores and is supported
-    * by the v3d kernel interface.
-    */
-   device->drm_syncobj_type.features |= VK_SYNC_FEATURE_GPU_MULTI_WAIT;
-
    device->sync_timeline_type =
       vk_sync_timeline_get_type(&device->drm_syncobj_type);
 
@@ -1602,7 +1602,7 @@ v3dv_physical_device_device_id(const struct v3dv_physical_device *dev)
    case 71:
       return 0x55701C33; /* Broadcom deviceID for 2712 */
    default:
-      unreachable("Unsupported V3D version");
+      UNREACHABLE("Unsupported V3D version");
    }
 }
 
@@ -2183,15 +2183,7 @@ v3dv_AllocateMemory(VkDevice _device,
 
    assert(pAllocateInfo->sType == VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
 
-   /* We always allocate device memory in multiples of a page, so round up
-    * requested size to that. We need to add a V3D_TFU_READHAEAD padding to
-    * avoid invalid reads done by the TFU unit after the end of the last page
-    * allocated.
-    */
-
-   const VkDeviceSize alloc_size = align64(pAllocateInfo->allocationSize +
-                                           V3D_TFU_READAHEAD_SIZE, 4096);
-
+   const VkDeviceSize alloc_size = align64(pAllocateInfo->allocationSize, 4096);
    if (unlikely(alloc_size > MAX_MEMORY_ALLOCATION_SIZE))
       return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
 
@@ -2250,7 +2242,7 @@ v3dv_AllocateMemory(VkDevice _device,
       assert(fd_info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT ||
              fd_info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT);
       result = device_import_bo(device, pAllocator,
-                                fd_info->fd, alloc_size, &mem->bo);
+                                fd_info->fd, pAllocateInfo->allocationSize, &mem->bo);
       if (result == VK_SUCCESS)
          close(fd_info->fd);
    } else if (mem->vk.ahardware_buffer) {
@@ -2361,10 +2353,18 @@ get_image_memory_requirements(struct v3dv_image *image,
                               VkImageAspectFlagBits planeAspect,
                               VkMemoryRequirements2 *pMemoryRequirements)
 {
+   uint32_t readahead = 0;
+   /* The TFU unit has a 64-bytes readahead so we need to add a
+    * V3D_TFU_READAHEAD padding to avoid invalid reads done by the TFU after
+    * the end of the last allocated memory page causing MMU error.
+    */
+   if (image->vk.usage & (VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
+           readahead = V3D_TFU_READAHEAD_SIZE;
+
    pMemoryRequirements->memoryRequirements = (VkMemoryRequirements) {
       .memoryTypeBits = 0x1,
       .alignment = image->planes[0].alignment,
-      .size = image->non_disjoint_size
+      .size = image->non_disjoint_size ? image->non_disjoint_size + readahead : 0
    };
 
    if (planeAspect != VK_IMAGE_ASPECT_NONE) {
@@ -2377,7 +2377,7 @@ get_image_memory_requirements(struct v3dv_image *image,
       VkMemoryRequirements *mem_reqs =
          &pMemoryRequirements->memoryRequirements;
       mem_reqs->alignment = image->planes[plane].alignment;
-      mem_reqs->size = image->planes[plane].size;
+      mem_reqs->size = image->planes[plane].size + readahead;
    }
 
    vk_foreach_struct(ext, pMemoryRequirements->pNext) {
@@ -2538,16 +2538,13 @@ v3dv_BindImageMemory2(VkDevice _device,
                               BIND_IMAGE_MEMORY_SWAPCHAIN_INFO_KHR);
       if (swapchain_info && swapchain_info->swapchain) {
 #if !DETECT_OS_ANDROID
-         struct v3dv_image *swapchain_image =
-            v3dv_wsi_get_image_from_swapchain(swapchain_info->swapchain,
-                                              swapchain_info->imageIndex);
-         /* Making the assumption that swapchain images are a single plane */
-         assert(swapchain_image->plane_count == 1);
+         VkDeviceMemory wsi_mem_handle = wsi_common_get_memory(
+            swapchain_info->swapchain, swapchain_info->imageIndex);
          VkBindImageMemoryInfo swapchain_bind = {
             .sType = VK_STRUCTURE_TYPE_BIND_IMAGE_MEMORY_INFO,
             .image = pBindInfos[i].image,
-            .memory = v3dv_device_memory_to_handle(swapchain_image->planes[0].mem),
-            .memoryOffset = swapchain_image->planes[0].mem_offset,
+            .memory = wsi_mem_handle,
+            .memoryOffset = 0,
          };
          bind_image_memory(&swapchain_bind);
 #endif
@@ -2584,23 +2581,27 @@ static void
 get_buffer_memory_requirements(struct v3dv_buffer *buffer,
                                VkMemoryRequirements2 *pMemoryRequirements)
 {
+   uint32_t readahead = 0;
+   /* UBO and SSBO may be read using ldunifa, which prefetches the next 4
+    * bytes after a read. If the buffer's size is exactly a multiple of a page
+    * size and the shader reads the last 4 bytes with ldunifa the prefetching
+    * would read out of bounds and cause an MMU error, so we allocate extra
+    * space to avoid kernel error spamming. The TFU unit has also a 64-bytes
+    * readahead so we need to add a V3D_TFU_READAHEAD padding to avoid invalid
+    * reads done by the TFU after the end of the last allocated memory page.
+    */
+   if (buffer->usage & (VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
+           readahead = V3D_TFU_READAHEAD_SIZE;
+   else if (buffer->usage & (VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) {
+           readahead = 4;
+   }
+
    pMemoryRequirements->memoryRequirements = (VkMemoryRequirements) {
       .memoryTypeBits = 0x1,
       .alignment = buffer->alignment,
-      .size = align64(buffer->size, buffer->alignment),
+      .size = align64(buffer->size + readahead, buffer->alignment),
    };
-
-   /* UBO and SSBO may be read using ldunifa, which prefetches the next
-    * 4 bytes after a read. If the buffer's size is exactly a multiple
-    * of a page size and the shader reads the last 4 bytes with ldunifa
-    * the prefetching would read out of bounds and cause an MMU error,
-    * so we allocate extra space to avoid kernel error spamming.
-    */
-   bool can_ldunifa = buffer->usage &
-                      (VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                       VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-   if (can_ldunifa && (buffer->size % 4096 == 0))
-      pMemoryRequirements->memoryRequirements.size += buffer->alignment;
 
    vk_foreach_struct(ext, pMemoryRequirements->pNext) {
       switch (ext->sType) {

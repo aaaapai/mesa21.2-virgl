@@ -1100,9 +1100,6 @@ generate_fs_loop(struct gallivm_state *gallivm,
    params.ssbo_ptr = ssbo_ptr;
    params.image = image;
 
-   /* Build the actual shader */
-   lp_build_nir_soa(gallivm, nir, &params, outputs);
-
    /*
     * Must not count ps invocations if there's a null shader.
     * (It would be ok to count with null shader if there's d/s tests,
@@ -1115,6 +1112,9 @@ generate_fs_loop(struct gallivm_state *gallivm,
       LLVMValueRef invocs = lp_jit_thread_data_ps_invocations(gallivm, thread_data_type, thread_data_ptr);
       lp_build_occlusion_count(gallivm, type, lp_build_mask_value(&mask), invocs);
    }
+
+   /* Build the actual shader */
+   lp_build_nir_soa(gallivm, nir, &params, outputs);
 
    /* Alpha test */
    if (key->alpha.enabled) {
@@ -4036,7 +4036,7 @@ llvmpipe_create_fs_state(struct pipe_context *pipe,
 
    /* lower FRAG_RESULT_COLOR -> DATA[0-7] to correctly handle unused attachments */
    nir_shader *nir = shader->base.ir.nir;
-   NIR_PASS_V(nir, nir_lower_fragcolor, nir->info.fs.color_is_dual_source ? 1 : 8);
+   NIR_PASS(_, nir, nir_lower_fragcolor, nir->info.fs.color_is_dual_source ? 1 : 8);
 
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
    nir_tgsi_scan_shader(nir, &shader->info.base, true);
@@ -4212,14 +4212,14 @@ llvmpipe_delete_fs_state(struct pipe_context *pipe, void *fs)
 
 static void
 llvmpipe_set_constant_buffer(struct pipe_context *pipe,
-                             enum pipe_shader_type shader, uint index,
+                             mesa_shader_stage shader, uint index,
                              bool take_ownership,
                              const struct pipe_constant_buffer *cb)
 {
    struct llvmpipe_context *llvmpipe = llvmpipe_context(pipe);
    struct pipe_constant_buffer *constants = &llvmpipe->constants[shader][index];
 
-   assert(shader < PIPE_SHADER_MESH_TYPES);
+   assert(shader < MESA_SHADER_MESH_STAGES);
    assert(index < ARRAY_SIZE(llvmpipe->constants[shader]));
 
    /* note: reference counting */
@@ -4244,10 +4244,10 @@ llvmpipe_set_constant_buffer(struct pipe_context *pipe,
    }
 
    switch (shader) {
-   case PIPE_SHADER_VERTEX:
-   case PIPE_SHADER_GEOMETRY:
-   case PIPE_SHADER_TESS_CTRL:
-   case PIPE_SHADER_TESS_EVAL: {
+   case MESA_SHADER_VERTEX:
+   case MESA_SHADER_GEOMETRY:
+   case MESA_SHADER_TESS_CTRL:
+   case MESA_SHADER_TESS_EVAL: {
       const unsigned size = cb ? cb->buffer_size : 0;
 
       const uint8_t *data = NULL;
@@ -4260,20 +4260,20 @@ llvmpipe_set_constant_buffer(struct pipe_context *pipe,
                                       index, data, size);
       break;
    }
-   case PIPE_SHADER_COMPUTE:
+   case MESA_SHADER_COMPUTE:
       llvmpipe->cs_dirty |= LP_CSNEW_CONSTANTS;
       break;
-   case PIPE_SHADER_FRAGMENT:
+   case MESA_SHADER_FRAGMENT:
       llvmpipe->dirty |= LP_NEW_FS_CONSTANTS;
       break;
-   case PIPE_SHADER_TASK:
+   case MESA_SHADER_TASK:
       llvmpipe->dirty |= LP_NEW_TASK_CONSTANTS;
       break;
-   case PIPE_SHADER_MESH:
+   case MESA_SHADER_MESH:
       llvmpipe->dirty |= LP_NEW_MESH_CONSTANTS;
       break;
    default:
-      unreachable("Illegal shader type");
+      UNREACHABLE("Illegal shader type");
       break;
    }
 }
@@ -4281,7 +4281,7 @@ llvmpipe_set_constant_buffer(struct pipe_context *pipe,
 
 static void
 llvmpipe_set_shader_buffers(struct pipe_context *pipe,
-                            enum pipe_shader_type shader, unsigned start_slot,
+                            mesa_shader_stage shader, unsigned start_slot,
                             unsigned count,
                             const struct pipe_shader_buffer *buffers,
                             unsigned writable_bitmask)
@@ -4301,10 +4301,10 @@ llvmpipe_set_shader_buffers(struct pipe_context *pipe,
       }
 
       switch (shader) {
-      case PIPE_SHADER_VERTEX:
-      case PIPE_SHADER_GEOMETRY:
-      case PIPE_SHADER_TESS_CTRL:
-      case PIPE_SHADER_TESS_EVAL: {
+      case MESA_SHADER_VERTEX:
+      case MESA_SHADER_GEOMETRY:
+      case MESA_SHADER_TESS_CTRL:
+      case MESA_SHADER_TESS_EVAL: {
          const unsigned size = buffer ? buffer->buffer_size : 0;
          const uint8_t *data = NULL;
          if (buffer && buffer->buffer)
@@ -4315,22 +4315,22 @@ llvmpipe_set_shader_buffers(struct pipe_context *pipe,
                                        i, data, size);
          break;
       }
-      case PIPE_SHADER_COMPUTE:
+      case MESA_SHADER_COMPUTE:
          llvmpipe->cs_dirty |= LP_CSNEW_SSBOS;
          break;
-      case PIPE_SHADER_TASK:
+      case MESA_SHADER_TASK:
          llvmpipe->dirty |= LP_NEW_TASK_SSBOS;
          break;
-      case PIPE_SHADER_MESH:
+      case MESA_SHADER_MESH:
          llvmpipe->dirty |= LP_NEW_MESH_SSBOS;
          break;
-      case PIPE_SHADER_FRAGMENT:
+      case MESA_SHADER_FRAGMENT:
          llvmpipe->fs_ssbo_write_mask &= ~(((1 << count) - 1) << start_slot);
          llvmpipe->fs_ssbo_write_mask |= writable_bitmask << start_slot;
          llvmpipe->dirty |= LP_NEW_FS_SSBOS;
          break;
       default:
-         unreachable("Illegal shader type");
+         UNREACHABLE("Illegal shader type");
          break;
       }
    }
@@ -4339,7 +4339,7 @@ llvmpipe_set_shader_buffers(struct pipe_context *pipe,
 
 static void
 llvmpipe_set_shader_images(struct pipe_context *pipe,
-                           enum pipe_shader_type shader, unsigned start_slot,
+                           mesa_shader_stage shader, unsigned start_slot,
                            unsigned count, unsigned unbind_num_trailing_slots,
                            const struct pipe_image_view *images)
 {
@@ -4361,27 +4361,27 @@ llvmpipe_set_shader_images(struct pipe_context *pipe,
 
    llvmpipe->num_images[shader] = start_slot + count;
    switch (shader) {
-   case PIPE_SHADER_VERTEX:
-   case PIPE_SHADER_GEOMETRY:
-   case PIPE_SHADER_TESS_CTRL:
-   case PIPE_SHADER_TESS_EVAL:
+   case MESA_SHADER_VERTEX:
+   case MESA_SHADER_GEOMETRY:
+   case MESA_SHADER_TESS_CTRL:
+   case MESA_SHADER_TESS_EVAL:
       draw_set_images(llvmpipe->draw, shader, llvmpipe->images[shader],
                       start_slot + count);
       break;
-   case PIPE_SHADER_COMPUTE:
+   case MESA_SHADER_COMPUTE:
       llvmpipe->cs_dirty |= LP_CSNEW_IMAGES;
       break;
-   case PIPE_SHADER_FRAGMENT:
+   case MESA_SHADER_FRAGMENT:
       llvmpipe->dirty |= LP_NEW_FS_IMAGES;
       break;
-   case PIPE_SHADER_TASK:
+   case MESA_SHADER_TASK:
       llvmpipe->dirty |= LP_NEW_TASK_IMAGES;
       break;
-   case PIPE_SHADER_MESH:
+   case MESA_SHADER_MESH:
       llvmpipe->dirty |= LP_NEW_MESH_IMAGES;
       break;
    default:
-      unreachable("Illegal shader type");
+      UNREACHABLE("Illegal shader type");
       break;
    }
 
@@ -4623,7 +4623,7 @@ make_variant_key(struct llvmpipe_context *lp,
    for (unsigned i = 0; i < key->nr_samplers; ++i) {
       if (BITSET_TEST(nir->info.samplers_used, i)) {
          lp_sampler_static_sampler_state(&fs_sampler[i].sampler_state,
-                                         lp->samplers[PIPE_SHADER_FRAGMENT][i]);
+                                         lp->samplers[MESA_SHADER_FRAGMENT][i]);
       }
    }
 
@@ -4641,7 +4641,7 @@ make_variant_key(struct llvmpipe_context *lp,
           */
          if (BITSET_TEST(nir->info.textures_used, i)) {
             lp_sampler_static_texture_state(&fs_sampler[i].texture_state,
-                                  lp->sampler_views[PIPE_SHADER_FRAGMENT][i]);
+                                  lp->sampler_views[MESA_SHADER_FRAGMENT][i]);
          }
       }
    } else {
@@ -4649,7 +4649,7 @@ make_variant_key(struct llvmpipe_context *lp,
       for (unsigned i = 0; i < key->nr_sampler_views; ++i) {
          if (BITSET_TEST(nir->info.samplers_used, i)) {
             lp_sampler_static_texture_state(&fs_sampler[i].texture_state,
-                                 lp->sampler_views[PIPE_SHADER_FRAGMENT][i]);
+                                 lp->sampler_views[MESA_SHADER_FRAGMENT][i]);
          }
       }
    }
@@ -4662,7 +4662,7 @@ make_variant_key(struct llvmpipe_context *lp,
    for (unsigned i = 0; i < key->nr_images; ++i) {
       if (BITSET_TEST(nir->info.images_used, i)) {
          lp_sampler_static_texture_state_image(&lp_image[i].image_state,
-                                      &lp->images[PIPE_SHADER_FRAGMENT][i]);
+                                      &lp->images[MESA_SHADER_FRAGMENT][i]);
       }
    }
 

@@ -26,7 +26,7 @@
 
 #include <assert.h>
 #include "brw_reg.h"
-#include "compiler/glsl/list.h"
+#include "brw_list.h"
 
 #define MAX_SAMPLER_MESSAGE_SIZE 11
 
@@ -38,7 +38,7 @@
 
 struct bblock_t;
 
-struct brw_inst : public exec_node {
+struct brw_inst : public brw_exec_node {
 private:
    brw_inst &operator=(const brw_inst &);
 
@@ -64,7 +64,7 @@ public:
 
    void resize_sources(uint8_t num_sources);
 
-   bool is_send_from_grf() const;
+   bool is_send() const;
    bool is_payload(unsigned arg) const;
    bool is_partial_write(unsigned grf_size = REG_SIZE) const;
    unsigned components_read(unsigned i) const;
@@ -92,7 +92,6 @@ public:
    bool uses_indirect_addressing() const;
 
    void remove();
-   void insert_before(bblock_t *block, brw_inst *inst);
 
    /**
     * True if the instruction has side effects other than writing to
@@ -223,6 +222,9 @@ public:
           * Whether the parameters of the SEND instructions are build with
           * NoMask (for A32 messages this covers only the surface handle, for
           * A64 messages this covers the load address).
+          *
+          * Also used to signal a dummy render target SEND message that is
+          * never executed.
           */
          bool has_no_mask_send_params:1;
       };
@@ -331,12 +333,6 @@ get_exec_type_size(const brw_inst *inst)
    return brw_type_size_bytes(get_exec_type(inst));
 }
 
-static inline bool
-is_send(const brw_inst *inst)
-{
-   return inst->mlen || inst->is_send_from_grf();
-}
-
 /**
  * Return whether the instruction isn't an ALU instruction and cannot be
  * assumed to complete in-order.
@@ -344,7 +340,7 @@ is_send(const brw_inst *inst)
 static inline bool
 is_unordered(const intel_device_info *devinfo, const brw_inst *inst)
 {
-   return is_send(inst) || (devinfo->ver < 20 && inst->is_math()) ||
+   return inst->is_send() || (devinfo->ver < 20 && inst->is_math()) ||
           inst->opcode == BRW_OPCODE_DPAS ||
           (devinfo->has_64bit_float_via_math_pipe &&
            (get_exec_type(inst) == BRW_TYPE_DF ||

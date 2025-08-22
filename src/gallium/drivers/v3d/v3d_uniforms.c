@@ -83,7 +83,7 @@ get_texture_size(struct v3d_texture_stateobj *texstate,
                 return (texture->u.tex.last_level -
                         texture->u.tex.first_level) + 1;
         default:
-                unreachable("Bad texture size field");
+                UNREACHABLE("Bad texture size field");
         }
 }
 
@@ -120,7 +120,7 @@ get_image_size(struct v3d_shaderimg_stateobj *shaderimg,
                         return image->base.resource->array_size / 6;
                 }
         default:
-                unreachable("Bad texture size field");
+                UNREACHABLE("Bad texture size field");
         }
 }
 
@@ -215,7 +215,7 @@ write_tmu_p1(struct v3d_job *job,
 struct v3d_cl_reloc
 v3d_write_uniforms(struct v3d_context *v3d, struct v3d_job *job,
                    struct v3d_compiled_shader *shader,
-                   enum pipe_shader_type stage)
+                   mesa_shader_stage stage)
 {
         struct v3d_device_info *devinfo = &v3d->screen->devinfo;
         struct v3d_constbuf_stateobj *cb = &v3d->constbuf[stage];
@@ -336,6 +336,13 @@ v3d_write_uniforms(struct v3d_context *v3d, struct v3d_job *job,
                         break;
                 }
 
+                case QUNIFORM_GET_UBO_SIZE: {
+                        uint32_t unit = v3d_unit_data_get_unit(data);
+                        cl_aligned_u32(&uniforms,
+                                       cb->cb[unit].buffer_size);
+                        break;
+                }
+
                 case QUNIFORM_SSBO_OFFSET: {
                         struct pipe_shader_buffer *sb =
                                 &v3d->ssbo[stage].sb[data];
@@ -403,7 +410,7 @@ v3d_write_uniforms(struct v3d_context *v3d, struct v3d_job *job,
                         break;
 
                 default:
-                        unreachable("Unknown QUNIFORM");
+                        UNREACHABLE("Unknown QUNIFORM");
 
                 }
 #if 0
@@ -432,6 +439,7 @@ v3d_set_shader_uniform_dirty_flags(struct v3d_compiled_shader *shader)
                         break;
                 case QUNIFORM_UNIFORM:
                 case QUNIFORM_UBO_ADDR:
+                case QUNIFORM_GET_UBO_SIZE:
                         dirty |= V3D_DIRTY_CONSTBUF;
                         break;
 

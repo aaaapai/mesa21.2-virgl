@@ -6,6 +6,7 @@
 
 #include "ac_nir.h"
 #include "ac_nir_helpers.h"
+#include "ac_gpu_info.h"
 
 #include "nir_builder.h"
 
@@ -90,7 +91,7 @@ load_subgroup_id_lowered(lower_intrinsics_to_args_state *s, nir_builder *b)
          }
          return nir_ushr_imm(b, sgpr_local_invocation_index, util_logbase2(s->wave_size));
       } else {
-         unreachable("unimplemented for LS");
+         UNREACHABLE("unimplemented for LS");
       }
    } else if (s->hw_stage == AC_HW_LEGACY_GEOMETRY_SHADER ||
               s->hw_stage == AC_HW_NEXT_GEN_GEOMETRY_SHADER) {
@@ -280,7 +281,7 @@ lower_intrinsic_to_arg(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
             replacement = ac_nir_load_arg_upper_bound(b, s->args, s->args->gs_invocation_id, 31);
          }
       } else {
-         unreachable("unexpected shader stage");
+         UNREACHABLE("unexpected shader stage");
       }
       break;
    case nir_intrinsic_load_sample_id:
@@ -367,7 +368,7 @@ lower_intrinsic_to_arg(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
       else if (s->args->gs_wave_id.used)
          replacement = ac_nir_load_arg(b, s->args, s->args->gs_wave_id);
       else
-         unreachable("Shader doesn't have GS wave ID.");
+         UNREACHABLE("Shader doesn't have GS wave ID.");
       break;
    case nir_intrinsic_overwrite_vs_arguments_amd:
       s->vertex_id = intrin->src[0].ssa;
@@ -404,12 +405,12 @@ lower_intrinsic_to_arg(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
                 * to optimize some multiplications (in address calculations) so that
                 * constant additions can be added to the const offset in memory load instructions.
                 */
-               nir_intrinsic_set_arg_upper_bound_u32_amd(nir_instr_as_intrinsic(replacement->parent_instr),
+               nir_intrinsic_set_arg_upper_bound_u32_amd(nir_def_as_intrinsic(replacement),
                                                          2048 / b->shader->info.tess.tcs_vertices_out);
             }
          }
       } else {
-         unreachable("invalid stage");
+         UNREACHABLE("invalid stage");
       }
       break;
    case nir_intrinsic_load_primitive_id:
@@ -426,7 +427,7 @@ lower_intrinsic_to_arg(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
          else
             replacement = ac_nir_load_arg(b, s->args, s->args->gs_prim_id); /* NGG */
       } else {
-         unreachable("invalid stage");
+         UNREACHABLE("invalid stage");
       }
       break;
    case nir_intrinsic_load_tess_coord: {
@@ -476,6 +477,16 @@ lower_intrinsic_to_arg(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
    case nir_intrinsic_load_subgroup_invocation:
       replacement = nir_mbcnt_amd(b, nir_imm_intN_t(b, ~0ull, s->wave_size), nir_imm_int(b, 0));
       break;
+   case nir_intrinsic_load_task_ring_entry_amd:
+      replacement = ac_nir_load_arg(b, s->args, s->args->task_ring_entry);
+      break;
+   case nir_intrinsic_load_ring_mesh_scratch_offset_amd: {
+      /* gs_tg_info[0:11] is ordered_wave_id. Multiply by the ring entry size. */
+      nir_def *gs_tg_info = ac_nir_load_arg(b, s->args, s->args->gs_tg_info);
+      nir_def *ordered_wave_id = nir_iand_imm(b, gs_tg_info, 0xfff);
+      replacement = nir_imul_imm(b, ordered_wave_id, AC_MESH_SCRATCH_ENTRY_BYTES);
+      break;
+   }
    default:
       return false;
    }

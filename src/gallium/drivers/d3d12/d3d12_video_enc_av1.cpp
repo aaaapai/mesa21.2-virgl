@@ -412,7 +412,7 @@ d3d12_video_encoder_convert_d3d12_profile_to_spec_profile_av1(D3D12_VIDEO_ENCODE
       } break;
       default:
       {
-         unreachable("Unsupported D3D12_VIDEO_ENCODER_AV1_PROFILE");
+         UNREACHABLE("Unsupported D3D12_VIDEO_ENCODER_AV1_PROFILE");
       } break;
    }
 }
@@ -427,7 +427,7 @@ d3d12_video_encoder_convert_profile_to_d3d12_enc_profile_av1(enum pipe_video_pro
       } break;
       default:
       {
-         unreachable("Unsupported pipe_video_profile");
+         UNREACHABLE("Unsupported pipe_video_profile");
       } break;
    }
 }
@@ -594,7 +594,7 @@ d3d12_video_encoder_negotiate_current_av1_tiles_configuration(struct d3d12_video
                                                            sizeof(capDataTilesSupport));
    if (FAILED(hr) || !capDataTilesSupport.IsSupported) {
       debug_printf("D3D12_FEATURE_VIDEO_ENCODER_SUBREGION_TILES_SUPPORT HR (0x%x) error or IsSupported: (%d).\n",
-                   hr,
+                   (unsigned)hr,
                    capDataTilesSupport.IsSupported);
       return false;
    }
@@ -1075,7 +1075,7 @@ d3d12_video_encoder_update_current_encoder_config_state_av1(struct d3d12_video_e
                                                           &pD3D12Enc->m_currentEncodeConfig.m_encodeFormatInfo,
                                                           sizeof(pD3D12Enc->m_currentEncodeConfig.m_encodeFormatInfo));
    if (FAILED(hr)) {
-      debug_printf("CheckFeatureSupport failed with HR 0x%x\n", hr);
+      debug_printf("CheckFeatureSupport failed with HR 0x%x\n", (unsigned)hr);
       return false;
    }
 
@@ -2114,7 +2114,7 @@ d3d12_video_encoder_looprestorationsize_uint_to_d3d12_av1(uint32_t pixel_size)
       } break;
       default:
       {
-         unreachable("Unsupported D3D12_VIDEO_ENCODER_AV1_PROFILE");
+         UNREACHABLE("Unsupported D3D12_VIDEO_ENCODER_AV1_PROFILE");
       } break;
    }
 }
@@ -2141,7 +2141,7 @@ d3d12_video_encoder_looprestorationsize_d3d12_to_uint_av1(D3D12_VIDEO_ENCODER_AV
       } break;
       default:
       {
-         unreachable("Unsupported D3D12_VIDEO_ENCODER_AV1_PROFILE");
+         UNREACHABLE("Unsupported D3D12_VIDEO_ENCODER_AV1_PROFILE");
       } break;
    }
 }

@@ -84,12 +84,12 @@
       gfx8_##func(__VA_ARGS__);                   \
       break;                                      \
    default:                                       \
-      unreachable("Unknown hardware generation"); \
+      UNREACHABLE("Unknown hardware generation"); \
    }
 
 #ifndef INTEL_USE_ELK
-static inline void gfx8_init_screen_state(struct iris_screen *screen) { unreachable("no elk support"); }
-static inline void gfx8_init_screen_gen_state(struct iris_screen *screen) { unreachable("no elk support"); }
+static inline void gfx8_init_screen_state(struct iris_screen *screen) { UNREACHABLE("no elk support"); }
+static inline void gfx8_init_screen_gen_state(struct iris_screen *screen) { UNREACHABLE("no elk support"); }
 #endif
 
 static const char *
@@ -182,14 +182,9 @@ iris_get_video_memory(struct iris_screen *screen)
       const unsigned gpu_mappable_megabytes =
          (devinfo->aperture_bytes * 3 / 4) / (1024 * 1024);
 
-      const long system_memory_pages = sysconf(_SC_PHYS_PAGES);
-      const long system_page_size = sysconf(_SC_PAGE_SIZE);
-
-      if (system_memory_pages <= 0 || system_page_size <= 0)
+      uint64_t system_memory_bytes;
+      if (!os_get_total_physical_memory(&system_memory_bytes))
          return -1;
-
-      const uint64_t system_memory_bytes =
-         (uint64_t) system_memory_pages * (uint64_t) system_page_size;
 
       const unsigned system_memory_megabytes =
          (unsigned) (system_memory_bytes / (1024 * 1024));
@@ -201,18 +196,18 @@ iris_get_video_memory(struct iris_screen *screen)
 static void
 iris_init_shader_caps(struct iris_screen *screen)
 {
-   for (unsigned i = 0; i <= PIPE_SHADER_COMPUTE; i++) {
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
          (struct pipe_shader_caps *)&screen->base.shader_caps[i];
 
-      caps->max_instructions = i == PIPE_SHADER_FRAGMENT ? 1024 : 16384;
+      caps->max_instructions = i == MESA_SHADER_FRAGMENT ? 1024 : 16384;
       caps->max_alu_instructions =
       caps->max_tex_instructions =
-      caps->max_tex_indirections = i == PIPE_SHADER_FRAGMENT ? 1024 : 0;
+      caps->max_tex_indirections = i == MESA_SHADER_FRAGMENT ? 1024 : 0;
 
       caps->max_control_flow_depth = UINT_MAX;
 
-      caps->max_inputs = i == PIPE_SHADER_VERTEX ? 16 : 32;
+      caps->max_inputs = i == MESA_SHADER_VERTEX ? 16 : 32;
       caps->max_outputs = 32;
       caps->max_const_buffer0_size = 16 * 1024 * sizeof(float);
       caps->max_const_buffers = 16;
@@ -290,6 +285,7 @@ iris_init_screen_caps(struct iris_screen *screen)
 
    const struct intel_device_info *devinfo = screen->devinfo;
 
+   caps->prefer_real_buffer_in_constbuf0 = true;
    caps->npot_textures = true;
    caps->anisotropic_filter = true;
    caps->occlusion_query = true;
@@ -772,7 +768,6 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
    pscreen->get_device_vendor = iris_get_device_vendor;
    pscreen->get_cl_cts_version = iris_get_cl_cts_version;
    pscreen->get_screen_fd = iris_screen_get_fd;
-   pscreen->get_compiler_options = iris_get_compiler_options;
    pscreen->get_device_uuid = iris_get_device_uuid;
    pscreen->get_driver_uuid = iris_get_driver_uuid;
    pscreen->get_disk_shader_cache = iris_get_disk_shader_cache;
@@ -784,6 +779,9 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
    pscreen->get_driver_query_info = iris_get_monitor_info;
    pscreen->set_damage_region = iris_set_damage_region;
    iris_init_screen_program_functions(pscreen);
+
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
+      pscreen->nir_options[i] = iris_get_compiler_options(pscreen, i);
 
    iris_init_shader_caps(screen);
    iris_init_compute_caps(screen);

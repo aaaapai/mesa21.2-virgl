@@ -308,6 +308,9 @@ bo_create_internal(struct zink_screen *screen,
       goto fail;
    }
 
+   VkImportMemoryHostPointerInfoEXT *hpi = vk_find_struct(&mai, IMPORT_MEMORY_HOST_POINTER_INFO_EXT);
+   bo->u.real.is_user_ptr = hpi && hpi->pHostPointer;
+
    if (init_pb_cache) {
       bo->u.real.use_reusable_pool = true;
       pb_cache_init_entry(&screen->pb.bo_cache, bo->cache_entry, &bo->base.base, mem_type_idx);
@@ -704,6 +707,7 @@ zink_bo_map(struct zink_screen *screen, struct zink_bo *bo)
       offset = bo->offset - real->offset;
    }
 
+   p_atomic_inc(&real->u.real.map_count);
    cpu = p_atomic_read(&real->u.real.cpu_ptr);
    if (!cpu) {
       simple_mtx_lock(&real->lock);
@@ -715,6 +719,7 @@ zink_bo_map(struct zink_screen *screen, struct zink_bo *bo)
          if (result != VK_SUCCESS) {
             mesa_loge("ZINK: vkMapMemory failed (%s)", vk_Result_to_str(result));
             simple_mtx_unlock(&real->lock);
+            p_atomic_dec(&real->u.real.map_count);
             return NULL;
          }
          if (unlikely(zink_debug & ZINK_DEBUG_MAP)) {
@@ -725,7 +730,6 @@ zink_bo_map(struct zink_screen *screen, struct zink_bo *bo)
       }
       simple_mtx_unlock(&real->lock);
    }
-   p_atomic_inc(&real->u.real.map_count);
 
    return (uint8_t*)cpu + offset;
 }
@@ -738,12 +742,14 @@ zink_bo_unmap(struct zink_screen *screen, struct zink_bo *bo)
    assert(real->u.real.map_count != 0 && "too many unmaps");
 
    if (p_atomic_dec_zero(&real->u.real.map_count)) {
+      simple_mtx_lock(&real->lock);
       p_atomic_set(&real->u.real.cpu_ptr, NULL);
       if (unlikely(zink_debug & ZINK_DEBUG_MAP)) {
          p_atomic_add(&screen->mapped_vram, -real->base.base.size);
          mesa_loge("UNMAP(%"PRIu64") TOTAL(%"PRIu64")", real->base.base.size, screen->mapped_vram);
       }
       VKSCR(UnmapMemory)(screen->dev, real->mem);
+      simple_mtx_unlock(&real->lock);
    }
 }
 
@@ -805,7 +811,7 @@ buffer_bo_commit(struct zink_context *ctx, struct zink_resource *res, uint32_t o
 
    uint32_t va_page = offset / ZINK_SPARSE_BUFFER_PAGE_SIZE;
    uint32_t end_va_page = va_page + DIV_ROUND_UP(size, ZINK_SPARSE_BUFFER_PAGE_SIZE);
-   VkSemaphore cur_sem = VK_NULL_HANDLE;
+   VkSemaphore cur_sem = *sem;
    if (commit) {
       while (va_page < end_va_page) {
          uint32_t span_va_page;
@@ -1138,10 +1144,10 @@ zink_bo_commit(struct zink_context *ctx, struct zink_resource *res, unsigned lev
                            util_dynarray_append(&ctx->bs->tracked_semaphores, VkSemaphore, cur_sem);
                         else
                            ok = false;
-                        ok = sparse_backing_free(screen, backing[i]->bo, backing[i], backing_start[i], backing_size[i]);
-                        if (!ok) {
+                        if (!sparse_backing_free(screen, backing[i]->bo, backing[i], backing_start[i], backing_size[i])) {
                            /* Couldn't allocate tracking data structures, so we have to leak */
                            fprintf(stderr, "zink: leaking sparse backing memory\n");
+                           ok = false;
                         }
                      }
                      goto out;

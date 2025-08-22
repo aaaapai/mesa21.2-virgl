@@ -49,7 +49,6 @@ struct radv_vs_output_info {
    bool writes_primitive_shading_rate_per_primitive;
    bool export_prim_id;
    bool export_prim_id_per_primitive;
-   unsigned pos_exports;
 };
 
 struct radv_streamout_info {
@@ -75,13 +74,13 @@ struct gfx10_ngg_info {
    uint32_t prim_amp_factor;
    uint32_t vgt_esgs_ring_itemsize;
    uint32_t esgs_ring_size;
-   uint32_t scratch_lds_base;
    uint32_t lds_size;
    bool max_vert_out_per_gs_instance;
 };
 
 struct radv_shader_info {
    uint64_t inline_push_constant_mask;
+   uint32_t push_constant_size;
    bool can_inline_all_push_constants;
    bool loads_push_constants;
    bool loads_dynamic_offsets;
@@ -98,21 +97,23 @@ struct radv_shader_info {
    bool has_ngg_early_prim_export;
    bool has_prim_query;
    bool has_xfb_query;
+   uint8_t ngg_lds_scratch_size;
    uint32_t num_tess_patches;
-   uint32_t esgs_itemsize; /* Only for VS or TES as ES */
+   uint32_t esgs_itemsize;       /* Only for VS or TES as ES */
    uint32_t ngg_lds_vertex_size; /* VS,TES: Cull+XFB, GS: GSVS size */
    struct radv_vs_output_info outinfo;
    unsigned workgroup_size;
    bool force_vrs_per_vertex;
-   gl_shader_stage stage;
-   gl_shader_stage next_stage;
+   mesa_shader_stage stage;
+   mesa_shader_stage next_stage;
    enum radv_shader_type type;
    uint32_t user_data_0;
    bool inputs_linked;
    bool outputs_linked;
    bool merged_shader_compiled_separately; /* GFX9+ */
    bool force_indirect_desc_sets;
-   uint64_t gs_inputs_read; /* Mask of GS inputs read (only used by linked ES) */
+   uint64_t gs_inputs_read;  /* Mask of GS inputs read (only used by linked ES) */
+   unsigned nir_shared_size; /* Only used by LLVM. */
 
    struct {
       uint8_t output_usage_mask[VARYING_SLOT_VAR31 + 1];
@@ -135,12 +136,7 @@ struct radv_shader_info {
       uint32_t num_outputs; /* For NGG streamout only */
    } vs;
    struct {
-      uint8_t output_usage_mask[VARYING_SLOT_VAR31 + 1];
-      uint8_t num_stream_output_components[4];
-      uint8_t output_streams[VARYING_SLOT_VAR31 + 1];
-      uint8_t max_stream;
-      unsigned gsvs_vertex_size;
-      unsigned max_gsvs_emit_size;
+      uint8_t num_components_per_stream[4];
       unsigned vertices_in;
       unsigned vertices_out;
       unsigned input_prim;
@@ -324,13 +320,15 @@ struct radv_shader_info {
    } regs;
 };
 
-void radv_nir_shader_info_init(gl_shader_stage stage, gl_shader_stage next_stage, struct radv_shader_info *info);
+void radv_nir_shader_info_init(mesa_shader_stage stage, mesa_shader_stage next_stage, struct radv_shader_info *info);
 
 void radv_nir_shader_info_pass(struct radv_device *device, const struct nir_shader *nir,
                                const struct radv_shader_layout *layout, const struct radv_shader_stage_key *stage_key,
                                const struct radv_graphics_state_key *gfx_state,
                                const enum radv_pipeline_type pipeline_type, bool consider_force_vrs,
                                struct radv_shader_info *info);
+
+void radv_get_legacy_gs_info(const struct radv_device *device, struct radv_shader_info *gs_info);
 
 void gfx10_get_ngg_info(const struct radv_device *device, struct radv_shader_info *es_info,
                         struct radv_shader_info *gs_info, struct gfx10_ngg_info *out);

@@ -270,7 +270,7 @@ fetch_pipeline_generic(struct draw_pt_middle_end *middle,
     */
    if (fpme->opt & PT_SHADE) {
       draw_vertex_shader_run(vshader,
-                             draw->pt.user.constants[PIPE_SHADER_VERTEX],
+                             draw->pt.user.constants[MESA_SHADER_VERTEX],
                              fetch_info,
                              vert_info,
                              &vs_vert_info);
@@ -285,7 +285,7 @@ fetch_pipeline_generic(struct draw_pt_middle_end *middle,
 
    if ((fpme->opt & PT_SHADE) && gshader) {
       draw_geometry_shader_run(gshader,
-                               draw->pt.user.constants[PIPE_SHADER_GEOMETRY],
+                               draw->pt.user.constants[MESA_SHADER_GEOMETRY],
                                vert_info,
                                prim_info,
                                &vshader->info,
@@ -439,8 +439,8 @@ fetch_pipeline_linear_run_elts(struct draw_pt_middle_end *middle,
                                unsigned start,
                                unsigned count,
                                const uint16_t *draw_elts,
-                               unsigned draw_count,
-                               unsigned prim_flags)
+                               unsigned draw_start,
+                               unsigned draw_count)
 {
    struct fetch_pipeline_middle_end *fpme = fetch_pipeline_middle_end(middle);
    struct draw_fetch_info fetch_info;
@@ -452,11 +452,11 @@ fetch_pipeline_linear_run_elts(struct draw_pt_middle_end *middle,
    fetch_info.elts = NULL;
 
    prim_info.linear = false;
-   prim_info.start = start - fpme->draw->start_index;
+   prim_info.start = draw_start - fpme->draw->start_index;
    prim_info.count = draw_count;
    prim_info.elts = draw_elts;
-   prim_info.prim = prim_type(fpme->input_prim, prim_flags);
-   prim_info.flags = prim_flags;
+   prim_info.prim = fpme->input_prim;
+   prim_info.flags = 0;
    prim_info.primitive_count = 1;
    prim_info.primitive_lengths = &draw_count;
 

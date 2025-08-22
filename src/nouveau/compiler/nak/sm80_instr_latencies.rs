@@ -144,16 +144,21 @@ impl RegLatencySM80 {
 
             Op::HSet2(_) | Op::HSetP2(_) | Op::HMnMx2(_) => FP16_Alu,
             // let in for documentation purposes
-            //Op::Hmma(h) => {
-            //match h.mat_size {
-            //        HmmaSize::M16N8K4 => match h.dst_type {
-            //            FloatType::F16 => MMA_1x_Collect,
-            //            _ => MMA_2x_Collect,
-            //        }
-            //        HmmaSize::M16N8K8 => MMA_1x_Collect,
-            //        HmmaSize::M16N8K16 => MMA_2x_Collect,
-            //    }
-            //}
+            Op::Hmma(h) => match (h.mat_size, h.dst_type, h.src_type) {
+                (HmmaSize::M16N8K16, FloatType::F32, FloatType::F16) => {
+                    MMA_2x_collect
+                }
+                // (HmmaSize::M16N8K16, FloatType::F32, FloatType::BF16) => MMA_2x_collect,
+                // (HmmaSize::M16N8K8, FloatType::F32, FloatType::TF32) => MMA_2x_collect,
+                (HmmaSize::M16N8K8, FloatType::F32, FloatType::F16) => {
+                    MMA_1x_collect
+                }
+                // (HmmaSize::M16N8K8, FloatType::F32, FloatType::BF16) => MMA_1x_collect,
+                // (HmmaSize::M16N8K4, FloatType::F32, FloatType::TF32) => MMA_1x_collect,
+                (HmmaSize::M16N8K16, FloatType::F16, _) => MMA_2x_collect,
+                (HmmaSize::M16N8K8, FloatType::F16, _) => MMA_1x_collect,
+                _ => panic!("Illegal HMMA in reg category {}", h),
+            },
             Op::Ipa(_) => DecoupledAgu,
             Op::MuFu(_) => Decoupled,
 
@@ -202,7 +207,17 @@ impl RegLatencySM80 {
             // CSMTEST =>  CoupledAlu,
             Op::Bar(_) => DecoupledAgu,
             // Remove when Imma added
-            //Op::Imma(_) => IMMA,
+            Op::Imma(i) => match (i.mat_size, i.src_types[0]) {
+                (ImmaSize::M16N8K64, _) => MMA_2x_collect,
+                (ImmaSize::M16N8K32, IntType::I8 | IntType::U8) => {
+                    MMA_2x_collect
+                }
+                // (ImmaSize::M16N8K32, IntType::I4 | IntType::U4) => MMA_1x_collect,
+                (ImmaSize::M16N8K16, _) => MMA_1x_collect,
+                (ImmaSize::M8N8K32, _) => IMMA_88,
+                (ImmaSize::M8N8K16, _) => IMMA_88,
+                _ => panic!("Illegal IMMA in reg category {}", i),
+            },
             Op::IDp4(_) => CoupledFMA,
             Op::BClear(_) => Decoupled,
             Op::Bra(_) => Decoupled,
@@ -257,8 +272,8 @@ impl RegLatencySM80 {
                 RedirectedFP64 => 10,
                 Clmad => 12,
                 IMMA_88 => 13,
-                MMA_1x_collect => 13,
-                MMA_2x_collect => 17,
+                MMA_1x_collect => 16,
+                MMA_2x_collect => 24,
                 DMMA => 25,
                 Cbu => 1,
                 Decoupled => 1,
@@ -280,8 +295,8 @@ impl RegLatencySM80 {
                 RedirectedFP64 => 10,
                 Clmad => 12,
                 IMMA_88 => 13,
-                MMA_1x_collect => 13,
-                MMA_2x_collect => 17,
+                MMA_1x_collect => 16,
+                MMA_2x_collect => 24,
                 DMMA => 25,
                 Cbu => 1,
                 Decoupled => 1,
@@ -303,8 +318,8 @@ impl RegLatencySM80 {
                 RedirectedFP64 => 10,
                 Clmad => 12,
                 IMMA_88 => 13,
-                MMA_1x_collect => 13,
-                MMA_2x_collect => 17,
+                MMA_1x_collect => 16,
+                MMA_2x_collect => 24,
                 DMMA => 25,
                 Cbu => 1,
                 Decoupled => 1,
@@ -326,8 +341,8 @@ impl RegLatencySM80 {
                 RedirectedFP64 => 8,
                 Clmad => 10,
                 IMMA_88 => 11,
-                MMA_1x_collect => 11,
-                MMA_2x_collect => 15,
+                MMA_1x_collect => 14,
+                MMA_2x_collect => 22,
                 DMMA => 23,
                 Cbu => 1,
                 Decoupled => 1,
@@ -353,8 +368,8 @@ impl RegLatencySM80 {
                     RedirectedFP64 => 10,
                     Clmad => 12,
                     IMMA_88 => 13,
-                    MMA_1x_collect => 13,
-                    MMA_2x_collect => 17,
+                    MMA_1x_collect => 16,
+                    MMA_2x_collect => 24,
                     DMMA => 25,
                     Cbu => 1,
                     Decoupled => 1,
@@ -377,8 +392,8 @@ impl RegLatencySM80 {
                 RedirectedFP64 => 10,
                 Clmad => 12,
                 IMMA_88 => 13,
-                MMA_1x_collect => 13,
-                MMA_2x_collect => 17,
+                MMA_1x_collect => 16,
+                MMA_2x_collect => 24,
                 DMMA => 25,
                 Cbu => 1,
                 Decoupled => 1,
@@ -400,8 +415,8 @@ impl RegLatencySM80 {
                 RedirectedFP64 => 6,
                 Clmad => 12,
                 IMMA_88 => 13,
-                MMA_1x_collect => 13,
-                MMA_2x_collect => 17,
+                MMA_1x_collect => 16,
+                MMA_2x_collect => 24,
                 DMMA => 25,
                 Cbu => 1,
                 Decoupled => 1,
@@ -423,8 +438,8 @@ impl RegLatencySM80 {
                 RedirectedFP64 => 10,
                 Clmad => 8,
                 IMMA_88 => 13,
-                MMA_1x_collect => 13,
-                MMA_2x_collect => 17,
+                MMA_1x_collect => 16,
+                MMA_2x_collect => 24,
                 DMMA => 25,
                 Cbu => 1,
                 Decoupled => 1,
@@ -447,8 +462,8 @@ impl RegLatencySM80 {
                     RedirectedFP64 => 11,
                     Clmad => 13,
                     IMMA_88 => 14,        //6??
-                    MMA_1x_collect => 14, //6??
-                    MMA_2x_collect => 18,
+                    MMA_1x_collect => 16, //6??
+                    MMA_2x_collect => 24,
                     DMMA => 26,
                     Cbu => 1,
                     Decoupled => 1,
@@ -472,8 +487,8 @@ impl RegLatencySM80 {
                     RedirectedFP64 => 11,
                     Clmad => 13,
                     IMMA_88 => 14,
-                    MMA_1x_collect => 14,
-                    MMA_2x_collect => 18, //10??
+                    MMA_1x_collect => 16,
+                    MMA_2x_collect => 24, //10??
                     DMMA => 26,
                     Cbu => 1,
                     Decoupled => 1,
@@ -497,8 +512,8 @@ impl RegLatencySM80 {
                     RedirectedFP64 => 11,
                     Clmad => 13,
                     IMMA_88 => 14,
-                    MMA_1x_collect => 14,
-                    MMA_2x_collect => 18,
+                    MMA_1x_collect => 16,
+                    MMA_2x_collect => 24,
                     DMMA => 26, //18??
                     Cbu => 1,
                     Decoupled => 1,
@@ -521,8 +536,8 @@ impl RegLatencySM80 {
                 RedirectedFP64 => 6,
                 Clmad => 8,
                 IMMA_88 => 11,
-                MMA_1x_collect => 11,
-                MMA_2x_collect => 15,
+                MMA_1x_collect => 14,
+                MMA_2x_collect => 22,
                 DMMA => 23,
                 Cbu => 1,
                 Decoupled => 1,
@@ -544,8 +559,8 @@ impl RegLatencySM80 {
                 RedirectedFP64 => 7,
                 Clmad => 9,
                 IMMA_88 => 12,
-                MMA_1x_collect => 12,
-                MMA_2x_collect => 16,
+                MMA_1x_collect => 15,
+                MMA_2x_collect => 23,
                 DMMA => 24,
                 Cbu => 1,
                 Decoupled => 1,
@@ -787,7 +802,10 @@ impl RegLatencySM80 {
         match writer {
             CoupledAlu | CoupledDisp64 | CoupledFMA | IMADWideWriteDL
             | IMADWideWriteDH | FP16 | FP16_Alu | FP16_F32 | HFMA2_MMA
-            | RedirectedFP64 => 1,
+            | RedirectedFP64 => match reader {
+                MMA_2x_collect => 7,
+                _ => 1,
+            },
             Clmad | IMMA_88 | MMA_1x_collect | MMA_2x_collect | DMMA | Cbu
             | Decoupled | DecoupledAgu => match reader {
                 CoupledAlu | CoupledDisp64 | CoupledFMA | IMADWideReadAB
@@ -805,6 +823,7 @@ impl PredLatencySM80 {
     fn op_category(op: &Op) -> PredLatencySM80 {
         match op {
             Op::Atom(_) => PredLatencySM80::Decoupled,
+            Op::Bra(_) => PredLatencySM80::Decoupled,
             Op::DSetP(_) => PredLatencySM80::RedirectedFP64,
             Op::FMnMx(_) | Op::FSetP(_) => PredLatencySM80::Coupled,
             Op::HFma2(_) => PredLatencySM80::FP16,
@@ -1067,6 +1086,13 @@ impl URegLatencySM80 {
                     panic!("Illegal R2UR in ureg");
                 }
             }
+            Op::S2R(_) => {
+                if !reader {
+                    ToUr
+                } else {
+                    panic!("Illegal S2UR in ureg");
+                }
+            }
             Op::Vote(_) => VoteU,
 
             Op::FRnd(_) => vdecoupled,
@@ -1243,6 +1269,7 @@ impl UPredLatencySM80 {
             | Op::LeaX(_)
             | Op::Lop3(_)
             | Op::Mov(_) => Udp,
+            Op::Bra(_) => Bra_Jmp,
             Op::Ldc(_) => Uldc_Mma,
             Op::PLop3(_) => {
                 if uniform_op {

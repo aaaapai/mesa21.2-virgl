@@ -815,7 +815,7 @@ nv50_blitter_make_vp(struct nv50_blitter *blit)
       0x10000811, 0x0423c789, /* mov b32 o[0x10] s[0x10] */ /* TEXC.z */
    };
 
-   blit->vp.type = PIPE_SHADER_VERTEX;
+   blit->vp.type = MESA_SHADER_VERTEX;
    blit->vp.translated = true;
    blit->vp.code = (uint32_t *)code; /* const_cast */
    blit->vp.code_size = sizeof(code);
@@ -867,7 +867,7 @@ nv50_blitter_make_fp(struct pipe_context *pipe,
 
    const int chipset = nouveau_screen(pipe->screen)->device->chipset;
    const nir_shader_compiler_options *options =
-      nv50_ir_nir_shader_compiler_options(chipset, PIPE_SHADER_FRAGMENT);
+      nv50_ir_nir_shader_compiler_options(chipset, MESA_SHADER_FRAGMENT);
 
    struct nir_builder b =
       nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT, options,
@@ -903,7 +903,7 @@ nv50_blitter_make_fp(struct pipe_context *pipe,
 
       nir_deref_instr *tex_deref = nir_build_deref_var(&b, sampler);
 
-      s = nir_tex_deref(&b, tex_deref, tex_deref, coord);
+      s = nir_tex(&b, coord, .texture_deref = tex_deref, .sampler_deref = tex_deref);
       s = nir_channel(&b, s, 0);
    }
 
@@ -916,7 +916,7 @@ nv50_blitter_make_fp(struct pipe_context *pipe,
 
       nir_deref_instr *tex_deref = nir_build_deref_var(&b, sampler);
 
-      rgba = nir_tex_deref(&b, tex_deref, tex_deref, coord);
+      rgba = nir_tex(&b, coord, .texture_deref = tex_deref, .sampler_deref = tex_deref);
       z = nir_channel(&b, rgba, 0);
    }
 
@@ -1096,6 +1096,8 @@ nv50_blit_set_dst(struct nv50_blitctx *ctx,
    struct pipe_context *pipe = &nv50->base.pipe;
    struct pipe_surface templ;
 
+   /* We are going to reset this, so no point in refcounting */
+   templ.texture = res;
    if (util_format_is_depth_or_stencil(format))
       templ.format = nv50_blit_zeta_to_colour_format(format);
    else
@@ -1296,7 +1298,7 @@ nv50_blitctx_post_blit(struct nv50_blitctx *blit)
    struct nv50_context *nv50 = blit->nv50;
    int s;
 
-   pipe_surface_reference(&nv50->fb_cbufs[0], NULL);
+   nv50_surface_destroy(&nv50->base.pipe, nv50->fb_cbufs[0]);
 
    nv50->framebuffer.width = blit->saved.fb.width;
    nv50->framebuffer.height = blit->saved.fb.height;

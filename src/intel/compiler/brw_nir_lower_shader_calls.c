@@ -45,7 +45,7 @@ no_load_scratch_base_ptr_intrinsic(nir_shader *shader)
 }
 
 /** Insert the appropriate return instruction at the end of the shader */
-void
+bool
 brw_nir_lower_shader_returns(nir_shader *shader)
 {
    nir_function_impl *impl = nir_shader_get_entrypoint(shader);
@@ -71,7 +71,7 @@ brw_nir_lower_shader_returns(nir_shader *shader)
 
    nir_builder b = nir_builder_create(impl);
 
-   set_foreach(impl->end_block->predecessors, block_entry) {
+   set_foreach(&impl->end_block->predecessors, block_entry) {
       struct nir_block *block = (void *)block_entry->key;
       b.cursor = nir_after_block_before_jump(block);
 
@@ -81,7 +81,7 @@ brw_nir_lower_shader_returns(nir_shader *shader)
           * it ends, we retire the bindless stack ID and no further shaders
           * will be executed.
           */
-         assert(impl->end_block->predecessors->entries == 1);
+         assert(impl->end_block->predecessors.entries == 1);
          brw_nir_btd_retire(&b);
          break;
 
@@ -104,7 +104,7 @@ brw_nir_lower_shader_returns(nir_shader *shader)
           * action at the end.  They simply return back to the previous shader
           * in the call stack.
           */
-         assert(impl->end_block->predecessors->entries == 1);
+         assert(impl->end_block->predecessors.entries == 1);
          brw_nir_btd_return(&b);
          break;
 
@@ -113,11 +113,15 @@ brw_nir_lower_shader_returns(nir_shader *shader)
          break;
 
       default:
-         unreachable("Invalid callable shader stage");
+        {
+         UNREACHABLE("Invalid callable shader stage");
+         return false;
+        }
       }
    }
 
    nir_progress(true, impl, nir_metadata_control_flow);
+   return true;
 }
 
 static void
@@ -331,7 +335,7 @@ brw_nir_create_trivial_return_shader(const struct brw_compiler *compiler,
    ralloc_steal(mem_ctx, b->shader);
    nir_shader *nir = b->shader;
 
-   NIR_PASS_V(nir, brw_nir_lower_shader_returns);
+   NIR_PASS(_, nir, brw_nir_lower_shader_returns);
 
    return nir;
 }

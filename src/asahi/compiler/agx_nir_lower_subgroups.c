@@ -151,7 +151,7 @@ lower(nir_builder *b, nir_intrinsic_instr *intr, void *data)
       b->cursor = nir_after_instr(&intr->instr);
       intr->intrinsic = nir_intrinsic_exclusive_scan;
       nir_def *accum = nir_build_alu2(b, red_op, data, &intr->def);
-      nir_def_rewrite_uses_after(&intr->def, accum, accum->parent_instr);
+      nir_def_rewrite_uses_after(&intr->def, accum);
       return true;
    }
 
@@ -205,7 +205,9 @@ lower_subgroup_filter(const nir_instr *instr, UNUSED const void *data)
 
    switch (nir_intrinsic_reduction_op(intr)) {
    case nir_op_imul:
-      /* no imul hardware scan, always lower it */
+   case nir_op_fmin:
+   case nir_op_fmax:
+      /* no hardware scan for this opcode, always lower it */
       return true;
 
    case nir_op_iadd:

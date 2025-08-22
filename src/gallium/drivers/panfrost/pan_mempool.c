@@ -142,8 +142,11 @@ panfrost_pool_alloc_aligned(struct panfrost_pool *pool, size_t sz,
 #ifdef PAN_DBG_OVERFLOW
    if (unlikely(pool->dev->debug & PAN_DBG_OVERFLOW) &&
        !(pool->create_flags & PAN_BO_INVISIBLE)) {
-      long page_size = sysconf(_SC_PAGESIZE);
-      assert(page_size > 0 && util_is_power_of_two_nonzero(page_size));
+      uint64_t page_size = 0;
+      if (!os_get_page_size(&page_size))
+         return (struct pan_ptr){0};
+
+      assert(util_is_power_of_two_nonzero(page_size));
       size_t aligned = ALIGN_POT(sz, page_size);
       size_t bo_size = aligned + PAN_GUARD_SIZE;
 
@@ -180,6 +183,15 @@ panfrost_pool_alloc_aligned(struct panfrost_pool *pool, size_t sz,
       .cpu = bo->ptr.cpu + offset,
       .gpu = bo->ptr.gpu + offset,
    };
+
+   struct panfrost_device *dev = bo->dev;
+
+   /* The first 32MB are reserved, so pick a dumb address from there. */
+   if (dev->fault_injection_rate &&
+       !(random() % dev->fault_injection_rate)) {
+      ret.gpu =
+         0x1a7af00ull & ~((uint64_t)util_next_power_of_two(alignment) - 1);
+   }
 
    return ret;
 }

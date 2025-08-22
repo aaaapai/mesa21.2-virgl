@@ -60,7 +60,7 @@ brw_shader::emit_urb_writes(const brw_reg &gs_vertex_count)
       urb_handle = gs_payload().urb_handles;
       break;
    default:
-      unreachable("invalid stage");
+      UNREACHABLE("invalid stage");
    }
 
    const brw_builder bld = brw_builder(this);
@@ -189,7 +189,7 @@ brw_shader::emit_urb_writes(const brw_reg &gs_vertex_count)
          break;
       }
       case VARYING_SLOT_EDGE:
-         unreachable("unexpected scalar vs output");
+         UNREACHABLE("unexpected scalar vs output");
          break;
 
       default:
@@ -330,7 +330,7 @@ brw_shader::emit_urb_writes(const brw_reg &gs_vertex_count)
        * 4 slots data. All are explicitly zeros in order to to keep the MBZ
        * area written as zeros.
        */
-      bld.exec_all().MOV(uniform_mask, brw_imm_ud(0x10000u));
+      bld.exec_all().MOV(uniform_mask, brw_imm_ud(0x1u));
       bld.exec_all().MOV(offset(payload, bld, 0), brw_imm_ud(0u));
       bld.exec_all().MOV(offset(payload, bld, 1), brw_imm_ud(0u));
       bld.exec_all().MOV(offset(payload, bld, 2), brw_imm_ud(0u));
@@ -375,14 +375,15 @@ brw_shader::emit_cs_terminate()
    if (devinfo->ver < 11)
       desc |= (1 << 4); /* Do not dereference URB */
 
-   brw_reg srcs[4] = {
-      brw_imm_ud(desc), /* desc */
-      brw_imm_ud(0), /* ex_desc */
-      payload,       /* payload */
-      brw_reg(),      /* payload2 */
+   brw_reg srcs[SEND_NUM_SRCS] = {
+      [SEND_SRC_DESC]     = brw_imm_ud(desc),
+      [SEND_SRC_EX_DESC]  = brw_imm_ud(0),
+      [SEND_SRC_PAYLOAD1] = payload,
+      [SEND_SRC_PAYLOAD2] = brw_reg(),
    };
 
-   brw_inst *send = ubld.emit(SHADER_OPCODE_SEND, reg_undef, srcs, 4);
+   brw_inst *send =
+      ubld.emit(SHADER_OPCODE_SEND, reg_undef, srcs, SEND_NUM_SRCS);
 
    /* On Alchemist and later, send an EOT message to the message gateway to
     * terminate a compute shader.  For older GPUs, send to the thread spawner.
@@ -591,7 +592,7 @@ brw_barycentric_mode(const struct brw_wm_prog_key *key,
       bary = INTEL_BARYCENTRIC_PERSPECTIVE_SAMPLE;
       break;
    default:
-      unreachable("invalid intrinsic");
+      UNREACHABLE("invalid intrinsic");
    }
 
    if (mode == INTERP_MODE_NOPERSPECTIVE)
@@ -609,12 +610,12 @@ brw_barycentric_mode(const struct brw_wm_prog_key *key,
 bool
 brw_shader::mark_last_urb_write_with_eot()
 {
-   foreach_in_list_reverse(brw_inst, prev, &this->instructions) {
+   brw_foreach_in_list_reverse(brw_inst, prev, &this->instructions) {
       if (prev->opcode == SHADER_OPCODE_URB_WRITE_LOGICAL) {
          prev->eot = true;
 
          /* Delete now dead instructions. */
-         foreach_in_list_reverse_safe(exec_node, dead, &this->instructions) {
+         brw_foreach_in_list_reverse_safe(brw_exec_node, dead, &this->instructions) {
             if (dead == prev)
                break;
             dead->remove();
@@ -659,20 +660,19 @@ brw_shader::assign_curb_setup()
    uint64_t used = 0;
    const bool pull_constants =
       devinfo->verx10 >= 125 &&
-      (gl_shader_stage_is_compute(stage) ||
-       gl_shader_stage_is_mesh(stage)) &&
+      (mesa_shader_stage_is_compute(stage) ||
+       mesa_shader_stage_is_mesh(stage)) &&
       uniform_push_length;
 
    if (pull_constants) {
       const bool pull_constants_a64 =
-         (gl_shader_stage_is_rt(stage) &&
+         (mesa_shader_stage_is_rt(stage) &&
           brw_bs_prog_data(prog_data)->uses_inline_push_addr) ||
-         ((gl_shader_stage_is_compute(stage) ||
-           gl_shader_stage_is_mesh(stage)) &&
+         ((mesa_shader_stage_is_compute(stage) ||
+           mesa_shader_stage_is_mesh(stage)) &&
           brw_cs_prog_data(prog_data)->uses_inline_push_addr);
       assert(devinfo->has_lsc);
-      brw_builder ubld = brw_builder(this, 1).exec_all().at(
-         cfg->first_block(), cfg->first_block()->start());
+      brw_builder ubld = brw_builder(this, 1).exec_all().at_start(cfg->first_block());
 
       brw_reg base_addr;
       if (pull_constants_a64) {
@@ -680,7 +680,7 @@ brw_shader::assign_curb_setup()
           * parameter.
           */
          base_addr =
-            gl_shader_stage_is_rt(stage) ?
+            mesa_shader_stage_is_rt(stage) ?
             retype(bs_payload().inline_parameter, BRW_TYPE_UQ) :
             retype(cs_payload().inline_parameter, BRW_TYPE_UQ);
       } else {
@@ -690,6 +690,8 @@ brw_shader::assign_curb_setup()
          base_addr = ubld.AND(retype(brw_vec1_grf(0, 0), BRW_TYPE_UD),
                               brw_imm_ud(INTEL_MASK(31, 6)));
       }
+
+      brw_analysis_dependency_class dirty_bits = BRW_DEPENDENCY_INSTRUCTIONS;
 
       /* On Gfx12-HP we load constants at the start of the program using A32
        * stateless messages.
@@ -704,6 +706,7 @@ brw_shader::assign_curb_setup()
 
          if (i != 0) {
             if (pull_constants_a64) {
+               dirty_bits |= BRW_DEPENDENCY_VARIABLES;
                /* We need to do the carry manually as when this pass is run,
                 * we're not expecting any 64bit ALUs. Unfortunately all the
                 * 64bit lowering is done in NIR.
@@ -726,11 +729,11 @@ brw_shader::assign_curb_setup()
             addr = base_addr;
          }
 
-         brw_reg srcs[4] = {
-            brw_imm_ud(0), /* desc */
-            brw_imm_ud(0), /* ex_desc */
-            addr,          /* payload */
-            brw_reg(),      /* payload2 */
+         brw_reg srcs[SEND_NUM_SRCS] = {
+            [SEND_SRC_DESC]     = brw_imm_ud(0),
+            [SEND_SRC_EX_DESC]  = brw_imm_ud(0),
+            [SEND_SRC_PAYLOAD1] = addr,
+            [SEND_SRC_PAYLOAD2] = brw_reg(),
          };
 
          brw_reg dest = retype(brw_vec8_grf(payload().num_regs + i, 0),
@@ -756,16 +759,16 @@ brw_shader::assign_curb_setup()
                 (payload().num_regs + prog_data->curb_read_length));
          send->send_is_volatile = true;
 
-         send->src[0] = brw_imm_ud(desc |
-                                   brw_message_desc(devinfo,
-                                                    send->mlen,
-                                                    send->size_written / REG_SIZE,
-                                                    send->header_size));
+         send->src[SEND_SRC_DESC] =
+            brw_imm_ud(desc | brw_message_desc(devinfo,
+                                               send->mlen,
+                                               send->size_written / REG_SIZE,
+                                               send->header_size));
 
          i += num_regs;
       }
 
-      invalidate_analysis(BRW_DEPENDENCY_INSTRUCTIONS);
+      invalidate_analysis(dirty_bits);
    }
 
    /* Map the offsets in the UNIFORM file to fixed HW regs. */
@@ -810,44 +813,105 @@ brw_shader::assign_curb_setup()
       }
    }
 
-   uint64_t want_zero = used & prog_data->zero_push_reg;
-   if (want_zero) {
-      brw_builder ubld = brw_builder(this, 8).exec_all().at(
-         cfg->first_block(), cfg->first_block()->start());
+   if (prog_data->robust_ubo_ranges) {
+      brw_builder ubld = brw_builder(this, 8).exec_all().at_start(cfg->first_block());
+      /* At most we can write 2 GRFs (HW limit), the SIMD width matching the
+       * HW generation depends on the size of the physical register.
+       */
+      const unsigned max_grf_writes = 2 * reg_unit(devinfo);
+      assert(max_grf_writes <= 4);
 
       /* push_reg_mask_param is in 32-bit units */
       unsigned mask_param = prog_data->push_reg_mask_param;
-      struct brw_reg mask = brw_vec1_grf(payload().num_regs + mask_param / 8,
-                                                              mask_param % 8);
+      brw_reg mask = retype(brw_vec1_grf(payload().num_regs + mask_param / 8,
+                                         mask_param % 8), BRW_TYPE_UB);
 
-      brw_reg b32;
-      for (unsigned i = 0; i < 64; i++) {
-         if (i % 16 == 0 && (want_zero & BITFIELD64_RANGE(i, 16))) {
-            brw_reg shifted = ubld.vgrf(BRW_TYPE_W, 2);
-            ubld.SHL(horiz_offset(shifted, 8),
-                     byte_offset(retype(mask, BRW_TYPE_W), i / 8),
-                     brw_imm_v(0x01234567));
-            ubld.SHL(shifted, horiz_offset(shifted, 8), brw_imm_w(8));
+      /* For each 16bit lane, generate an offset in unit of 16B */
+      brw_reg offset_base = ubld.vgrf(BRW_TYPE_UW, max_grf_writes);
+      ubld.MOV(offset_base, brw_imm_uv(0x76543210));
+      ubld.MOV(horiz_offset(offset_base, 8), brw_imm_uv(0xFEDCBA98));
+      if (max_grf_writes > 2)
+         ubld.group(16, 0).ADD(horiz_offset(offset_base, 16), offset_base, brw_imm_uw(16));
 
-            brw_builder ubld16 = ubld.group(16, 0);
-            b32 = ubld16.vgrf(BRW_TYPE_D);
-            ubld16.group(16, 0).ASR(b32, shifted, brw_imm_w(15));
-         }
+      u_foreach_bit(i, prog_data->robust_ubo_ranges) {
+         struct brw_ubo_range *ubo_range = &prog_data->ubo_ranges[i];
 
-         if (want_zero & BITFIELD64_BIT(i)) {
-            assert(i < prog_data->curb_read_length);
-            struct brw_reg push_reg =
-               retype(brw_vec8_grf(payload().num_regs + i, 0), BRW_TYPE_D);
+         unsigned range_start = ubo_push_start[i] / 8;
+         uint64_t want_zero = (used >> range_start) & BITFIELD64_MASK(ubo_range->length);
+         if (!want_zero)
+            continue;
 
-            ubld.AND(push_reg, push_reg, component(b32, i % 16));
-         }
+         const unsigned grf_start = payload().num_regs + range_start;
+         const unsigned grf_end = grf_start + ubo_range->length;
+         const unsigned max_grf_mask = max_grf_writes * 4;
+         unsigned grf = grf_start;
+
+         do {
+            unsigned mask_length = MIN2(grf_end - grf, max_grf_mask);
+            unsigned simd_width_mask = 1 << util_last_bit(mask_length * 2 - 1);
+
+            if (!(want_zero & BITFIELD64_RANGE(grf - grf_start, mask_length))) {
+               grf += max_grf_mask;
+               continue;
+            }
+
+            /* Prepare section of mask, at 1/4 size */
+            brw_builder ubld_mask = ubld.group(simd_width_mask, 0);
+            brw_reg offset_reg = ubld_mask.vgrf(BRW_TYPE_UW);
+            unsigned mask_start = grf, mask_end = grf + mask_length;
+            ubld_mask.ADD(offset_reg, offset_base, brw_imm_uw((mask_start - grf_start) * 2));
+            /* Compare the 16B increments with the value coming from push
+             * constants and store the result into a dword. This expands a
+             * comparison between 2 values in 16B increments into a 32bit mask
+             * where each bit covers 4bits of data in the payload.
+             *
+             * This expension works because of the sign extension guaranteed
+             * by the HW.
+             *
+             * SKL PRMs, Volume 7: 3D-Media-GPGPU, Execution Data Type:
+             *
+             *   "The following rules explain the conversion of multiple
+             *   source operand types, possibly a mix of different types, to
+             *   one common execution type:
+             *      - ...
+             *      - Unsigned integers are converted to signed integers.
+             *      - Byte (B) or Unsigned Byte (UB) values are converted to a Word
+             *        or wider integer execution type.
+             *      - If source operands have different integer widths, use
+             *        the widest width specified to choose the signed integer
+             *        execution type."
+             */
+            brw_reg mask_reg = ubld_mask.vgrf(BRW_TYPE_UD);
+            ubld_mask.CMP(mask_reg, byte_offset(mask, i), offset_reg, BRW_CONDITIONAL_G);
+
+            for (unsigned and_length; grf < mask_end; grf += and_length) {
+               and_length = 1u << (util_last_bit(MIN2(grf_end - grf, max_grf_writes)) - 1);
+
+               if (!(want_zero & BITFIELD64_RANGE(grf - grf_start, and_length)))
+                  continue;
+
+               brw_reg push_reg = retype(brw_vec8_grf(grf, 0), BRW_TYPE_D);
+
+               /* Expand the masking bits one more time (1bit -> 4bit because
+                * UB -> UD) so that now each 8bits of mask cover 32bits of
+                * data to mask, while doing the masking in the payload data.
+                */
+               ubld.group(and_length * 8, 0).AND(
+                  push_reg,
+                  byte_offset(retype(mask_reg, BRW_TYPE_B),
+                              (grf - mask_start) * 8),
+                  push_reg);
+            }
+         } while (grf < grf_end);
       }
 
-      invalidate_analysis(BRW_DEPENDENCY_INSTRUCTIONS);
+      invalidate_analysis(BRW_DEPENDENCY_INSTRUCTIONS | BRW_DEPENDENCY_VARIABLES);
    }
 
    /* This may be updated in assign_urb_setup or assign_vs_urb_setup. */
    this->first_non_payload_grf = payload().num_regs + prog_data->curb_read_length;
+
+   this->debug_optimizer(this->nir, "assign_curb_setup", 90, 0);
 }
 
 /*
@@ -947,7 +1011,7 @@ brw_fb_write_msg_control(const brw_inst *inst,
       else if (inst->group % 16 == 8)
          mctl = BRW_DATAPORT_RENDER_TARGET_WRITE_SIMD8_DUAL_SOURCE_SUBSPAN23;
       else
-         unreachable("Invalid dual-source FB write instruction group");
+         UNREACHABLE("Invalid dual-source FB write instruction group");
    } else {
       assert(inst->group == 0 || (inst->group == 16 && inst->exec_size == 16));
 
@@ -958,7 +1022,7 @@ brw_fb_write_msg_control(const brw_inst *inst,
       else if (inst->exec_size == 32)
          mctl = XE2_DATAPORT_RENDER_TARGET_WRITE_SIMD32_SINGLE_SOURCE;
       else
-         unreachable("Invalid FB write execution size");
+         UNREACHABLE("Invalid FB write execution size");
    }
 
    return mctl;

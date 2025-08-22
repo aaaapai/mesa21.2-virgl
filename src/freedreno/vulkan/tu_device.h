@@ -46,7 +46,6 @@ enum global_shader {
    GLOBAL_SH_FS_BLIT,
    GLOBAL_SH_FS_BLIT_ZSCALE,
    GLOBAL_SH_FS_COPY_MS,
-   GLOBAL_SH_FS_COPY_MS_HALF,
    GLOBAL_SH_FS_CLEAR0,
    GLOBAL_SH_FS_CLEAR_MAX = GLOBAL_SH_FS_CLEAR0 + MAX_RTS,
    GLOBAL_SH_COUNT,
@@ -300,8 +299,6 @@ struct tu_device
 
    radix_sort_vk_t *radix_sort;
    mtx_t radix_sort_mutex;
-
-   struct util_sparse_array accel_struct_ranges;
 
 #define MIN_SCRATCH_BO_SIZE_LOG2 12 /* A page */
 

@@ -88,7 +88,7 @@ remap_tess_levels(nir_builder *b, nir_intrinsic_instr *intr,
          out_of_bounds = true;
          break;
       default:
-         unreachable("Bogus tessellation domain");
+         UNREACHABLE("Bogus tessellation domain");
       }
    } else if (location == VARYING_SLOT_TESS_LEVEL_OUTER) {
       b->cursor = write ? nir_before_instr(&intr->instr)
@@ -140,7 +140,7 @@ remap_tess_levels(nir_builder *b, nir_intrinsic_instr *intr,
          }
          break;
       default:
-         unreachable("Bogus tessellation domain");
+         UNREACHABLE("Bogus tessellation domain");
       }
    } else {
       return false;
@@ -157,8 +157,7 @@ remap_tess_levels(nir_builder *b, nir_intrinsic_instr *intr,
          nir_src_rewrite(&intr->src[0], src);
       }
    } else if (dest) {
-      nir_def_rewrite_uses_after(&intr->def, dest,
-                                     dest->parent_instr);
+      nir_def_rewrite_uses_after(&intr->def, dest);
    }
 
    return true;
@@ -194,7 +193,7 @@ remap_patch_urb_offsets(nir_block *block, nir_builder *b,
 
       nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
 
-      gl_shader_stage stage = b->shader->info.stage;
+      mesa_shader_stage stage = b->shader->info.stage;
 
       if ((stage == MESA_SHADER_TESS_CTRL && is_output(intrin)) ||
           (stage == MESA_SHADER_TESS_EVAL && is_input(intrin))) {
@@ -324,7 +323,7 @@ elk_nir_lower_vs_inputs(nir_shader *nir,
                      nir_intrinsic_set_component(load, 1);
                   break;
                default:
-                  unreachable("Invalid system value intrinsic");
+                  UNREACHABLE("Invalid system value intrinsic");
                }
 
                load->num_components = 1;
@@ -494,7 +493,7 @@ elk_nir_lower_fs_smooth_interp_gfx4_instr(nir_builder *b, nir_intrinsic_instr *i
    if (intr->intrinsic != nir_intrinsic_load_deref)
       return false;
 
-   nir_deref_instr *deref = nir_instr_as_deref(intr->src[0].ssa->parent_instr);
+   nir_deref_instr *deref = nir_def_as_deref(intr->src[0].ssa);
    nir_variable *var = nir_deref_instr_get_variable(deref);
 
    if (var->data.interpolation != INTERP_MODE_SMOOTH)
@@ -516,7 +515,7 @@ elk_nir_lower_fs_smooth_interp_gfx4_instr(nir_builder *b, nir_intrinsic_instr *i
    b->cursor = nir_after_instr(&intr->instr);
    nir_def *result = nir_fmul(b, &intr->def, *pixel_w);
 
-   nir_def_rewrite_uses_after(&intr->def, result, result->parent_instr);
+   nir_def_rewrite_uses_after(&intr->def, result);
    return true;
 }
 
@@ -715,7 +714,7 @@ elk_nir_optimize(nir_shader *nir, bool is_scalar,
       OPT(nir_copy_prop);
 
       if (is_scalar) {
-         OPT(nir_lower_phis_to_scalar, false);
+         OPT(nir_lower_phis_to_scalar, NULL, NULL);
       }
 
       OPT(nir_copy_prop);
@@ -861,7 +860,7 @@ lower_bit_size_callback(const nir_instr *instr, UNUSED void *data)
       case nir_op_fcos:
          return 32;
       case nir_op_isign:
-         unreachable("Should have been lowered by nir_opt_algebraic.");
+         UNREACHABLE("Should have been lowered by nir_opt_algebraic.");
       default:
          if (nir_op_infos[alu->op].num_inputs >= 2 &&
              alu->def.bit_size == 8)
@@ -1196,7 +1195,7 @@ elk_nir_link_shaders(const struct elk_compiler *compiler,
 
    if (producer->info.stage == MESA_SHADER_TESS_CTRL &&
        producer->options->vectorize_tess_levels)
-   NIR_PASS_V(producer, nir_lower_tess_level_array_vars_to_vec);
+   NIR_PASS(_, producer, nir_lower_tess_level_array_vars_to_vec);
 
    NIR_PASS(_, producer, nir_opt_combine_stores, nir_var_shader_out);
    NIR_PASS(_, consumer, nir_opt_vectorize_io_vars, nir_var_shader_in);
@@ -1208,7 +1207,7 @@ elk_nir_link_shaders(const struct elk_compiler *compiler,
        * in turn, creates temporary variables and extra copy_deref intrinsics
        * that we need to clean up.
        */
-      NIR_PASS_V(producer, nir_lower_io_vars_to_temporaries,
+      NIR_PASS(_, producer, nir_lower_io_vars_to_temporaries,
                  nir_shader_get_entrypoint(producer), true, false);
       NIR_PASS(_, producer, nir_lower_global_vars_to_local);
       NIR_PASS(_, producer, nir_split_var_copies);
@@ -1710,12 +1709,12 @@ get_subgroup_size(const struct shader_info *info, unsigned max_subgroup_size)
       return info->stage == MESA_SHADER_FRAGMENT ? 0 : max_subgroup_size;
 
    case SUBGROUP_SIZE_REQUIRE_4:
-      unreachable("Unsupported subgroup size type");
+      UNREACHABLE("Unsupported subgroup size type");
 
    case SUBGROUP_SIZE_REQUIRE_8:
    case SUBGROUP_SIZE_REQUIRE_16:
    case SUBGROUP_SIZE_REQUIRE_32:
-      assert(gl_shader_stage_uses_workgroup(info->stage) ||
+      assert(mesa_shader_stage_uses_workgroup(info->stage) ||
              (info->stage >= MESA_SHADER_RAYGEN && info->stage <= MESA_SHADER_CALLABLE));
       /* These enum values are expressly chosen to be equal to the subgroup
        * size that they require.
@@ -1728,7 +1727,7 @@ get_subgroup_size(const struct shader_info *info, unsigned max_subgroup_size)
       break;
    }
 
-   unreachable("Invalid subgroup size type");
+   UNREACHABLE("Invalid subgroup size type");
 }
 
 unsigned
@@ -1810,7 +1809,7 @@ elk_cmod_for_nir_comparison(nir_op op)
       return ELK_CONDITIONAL_NZ;
 
    default:
-      unreachable("Unsupported NIR comparison op");
+      UNREACHABLE("Unsupported NIR comparison op");
    }
 }
 
@@ -1833,7 +1832,7 @@ elk_lsc_aop_for_nir_intrinsic(const nir_intrinsic_instr *atomic)
          src_idx = 1;
          break;
       default:
-         unreachable("Invalid add atomic opcode");
+         UNREACHABLE("Invalid add atomic opcode");
       }
 
       if (nir_src_is_const(atomic->src[src_idx])) {
@@ -1862,7 +1861,7 @@ elk_lsc_aop_for_nir_intrinsic(const nir_intrinsic_instr *atomic)
    case nir_atomic_op_fadd: return LSC_OP_ATOMIC_FADD;
 
    default:
-      unreachable("Unsupported NIR atomic intrinsic");
+      UNREACHABLE("Unsupported NIR atomic intrinsic");
    }
 }
 
@@ -1899,7 +1898,7 @@ elk_type_for_nir_type(const struct intel_device_info *devinfo,
    case nir_type_uint8:
       return ELK_REGISTER_TYPE_UB;
    default:
-      unreachable("unknown type");
+      UNREACHABLE("unknown type");
    }
 
    return ELK_REGISTER_TYPE_F;

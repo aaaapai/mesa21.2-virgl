@@ -53,6 +53,7 @@
 #include "util/u_thread.h"
 #include "util/xmlconfig.h"
 #include "util/timespec.h"
+#include "x11/x11_display.h"
 
 #include "vk_format.h"
 #include "vk_instance.h"
@@ -615,10 +616,25 @@ wsi_GetPhysicalDeviceXlibPresentationSupportKHR(VkPhysicalDevice physicalDevice,
                                                 Display *dpy,
                                                 VisualID visualID)
 {
+   /* Our WSI implementation for X11 relies on threads.  Check Xlib is running
+    * in thread safe mode before advertising support.
+    */
+   if (!x11_xlib_display_is_thread_safe(dpy))
+      return false;
+
    return wsi_GetPhysicalDeviceXcbPresentationSupportKHR(physicalDevice,
                                                          queueFamilyIndex,
                                                          XGetXCBConnection(dpy),
                                                          visualID);
+}
+
+static bool
+x11_surface_is_thread_safe(VkIcdSurfaceBase *icd_surface)
+{
+   if (icd_surface->platform == VK_ICD_WSI_PLATFORM_XLIB)
+      return x11_xlib_display_is_thread_safe(((VkIcdSurfaceXlib *)icd_surface)->dpy);
+   else
+      return true;
 }
 
 static xcb_connection_t*
@@ -645,6 +661,11 @@ x11_surface_get_support(VkIcdSurfaceBase *icd_surface,
                         uint32_t queueFamilyIndex,
                         VkBool32* pSupported)
 {
+   if (!x11_surface_is_thread_safe(icd_surface)) {
+      *pSupported = false;
+      return VK_SUCCESS;
+   }
+
    xcb_connection_t *conn = x11_surface_get_connection(icd_surface);
    xcb_window_t window = x11_surface_get_window(icd_surface);
 
@@ -1713,7 +1734,7 @@ x11_present_to_x11(struct x11_swapchain *chain, uint32_t image_index,
 #ifdef HAVE_X11_DRM
       result = x11_present_to_x11_dri3(chain, image_index, target_msc, present_mode);
 #else
-      unreachable("X11 missing DRI3 support!");
+      UNREACHABLE("X11 missing DRI3 support!");
 #endif
 
    if (result < 0)
@@ -1777,10 +1798,16 @@ x11_acquire_next_image(struct wsi_swapchain *wsi_chain,
    } else {
       result = wsi_queue_pull(&chain->acquire_queue,
                               image_index, timeout);
+
+      /* x11_wait_for_explicit_sync_release_submission() is smart enough to do
+       * this for us but wsi_queue_pull() isn't.
+       */
+      if (result == VK_TIMEOUT && info->timeout == 0)
+         result = VK_NOT_READY;
    }
 
-   if (result == VK_TIMEOUT)
-      return info->timeout ? VK_TIMEOUT : VK_NOT_READY;
+   if (result == VK_TIMEOUT || result == VK_NOT_READY)
+      return result;
 
    if (result < 0) {
       mtx_lock(&chain->thread_state_lock);
@@ -2231,7 +2258,7 @@ fail_image:
    wsi_destroy_image(&chain->base, &image->base);
 
 #else
-   unreachable("SHM support not compiled in");
+   UNREACHABLE("SHM support not compiled in");
 #endif
    return VK_ERROR_INITIALIZATION_FAILED;
 }
@@ -2555,6 +2582,12 @@ x11_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
 
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR);
 
+   /* We really shouldn't get here as we return no WSI support for XLib when
+    * it's not threadsafe.  However, one final check doesn't cost much.
+    */
+   if (!x11_surface_is_thread_safe(icd_surface))
+      return VK_ERROR_UNKNOWN;
+
    /* Get xcb connection from the icd_surface and from that our internal struct
     * representing it.
     */
@@ -2682,7 +2715,7 @@ x11_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
       }
       image_params = &drm_image_params.base;
 #else
-      unreachable("X11 DRM support missing!");
+      UNREACHABLE("X11 DRM support missing!");
 #endif
    }
 

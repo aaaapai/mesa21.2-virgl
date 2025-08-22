@@ -3,6 +3,9 @@
 dEQP-VK.rasterization.provoking_vertex.transform_feedback.first.line_strip_with_adjacency,Fail
 dEQP-VK.rasterization.provoking_vertex.transform_feedback.per_pipeline.triangle_strip_with_adjacency,Fail
 
+dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multiple_interpolation.structured.no_sample_decoration.4_samples,Fail
+dEQP-VK.draw.renderpass.multiple_interpolation.structured.with_sample_decoration.4_samples,Fail
+
 dEQP-VK.dynamic_rendering.complete_secondary_cmd_buff.suballocation.unused_attachment.loadopclear.storeopdontcare.stencilloadopdontcare.stencilstoreopdontcare,Fail
 dEQP-VK.dynamic_rendering.complete_secondary_cmd_buff.suballocation.unused_attachment.loadopdontcare.storeopdontcare.stencilloadopdontcare.stencilstoreopdontcare,Fail
 dEQP-VK.dynamic_rendering.graphics_pipeline_library.dedicated_allocation.attachment_allocation.input_output.63,Fail
@@ -815,9 +818,6 @@ dEQP-VK.dynamic_rendering.primary_cmd_buff.suballocation.formats.r8g8b8a8_unorm.
 dEQP-VK.dynamic_rendering.primary_cmd_buff.suballocation.formats.r8g8b8a8_unorm.input.load.dont_care.clear_draw,Fail
 dEQP-VK.dynamic_rendering.primary_cmd_buff.suballocation.unused_attachment.loadopclear.storeopdontcare.stencilloadopdontcare.stencilstoreopdontcare,Fail
 
-# deqp-vk: pthread_mutex_lock.c:450: __pthread_mutex_lock_full: Assertion `e != ESRCH || !robust' failed.
-dEQP-VK.sparse_resources.image_sparse_binding.multiple_sparse_memory_bind.1d_array.rg8ui.512_1_64,Crash
-
 nir-stress=dEQP-VK.dynamic_rendering.graphics_pipeline_library.dedicated_allocation.attachment_allocation.input_output_chain.66,Fail
 nir-stress=dEQP-VK.dynamic_rendering.graphics_pipeline_library.dedicated_allocation.formats.a2b10g10r10_uint_pack32.input.dont_care.dont_care.clear_draw,Fail
 nir-stress=dEQP-VK.dynamic_rendering.graphics_pipeline_library.dedicated_allocation.formats.a8b8g8r8_sint_pack32.input.load.dont_care.clear_draw,Fail
@@ -863,3 +863,6 @@ dEQP-VK.pipeline.shader_object_linked_spirv.multisample.sample_rate_a2c.static_a
 dEQP-VK.pipeline.fast_linked_library.multisample.sample_rate_a2c.static_a2c,Fail
 dEQP-VK.pipeline.shader_object_linked_binary.multisample.sample_rate_a2c.static_a2c,Fail
 dEQP-VK.pipeline.shader_object_unlinked_spirv.multisample.sample_rate_a2c.static_a2c,Fail
+
+dEQP-VK.sparse_resources.image_block_shapes.2d.g8b8g8r8_422_unorm.samples_1,Fail
+dEQP-VK.sparse_resources.image_block_shapes.2d_array.g8b8g8r8_422_unorm.samples_1,Fail

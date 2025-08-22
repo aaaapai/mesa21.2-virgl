@@ -162,21 +162,21 @@ struct brw_compiler {
 #define BRW_SUBGROUP_SIZE 32
 
 static inline bool
-brw_shader_stage_is_bindless(gl_shader_stage stage)
+brw_shader_stage_is_bindless(mesa_shader_stage stage)
 {
    return stage >= MESA_SHADER_RAYGEN &&
           stage <= MESA_SHADER_CALLABLE;
 }
 
 static inline bool
-brw_shader_stage_requires_bindless_resources(gl_shader_stage stage)
+brw_shader_stage_requires_bindless_resources(mesa_shader_stage stage)
 {
-   return brw_shader_stage_is_bindless(stage) || gl_shader_stage_is_mesh(stage);
+   return brw_shader_stage_is_bindless(stage) || mesa_shader_stage_is_mesh(stage);
 }
 
 static inline bool
 brw_shader_stage_has_inline_data(const struct intel_device_info *devinfo,
-                                 gl_shader_stage stage)
+                                 mesa_shader_stage stage)
 {
    return stage == MESA_SHADER_MESH || stage == MESA_SHADER_TASK ||
           (stage == MESA_SHADER_COMPUTE && devinfo->verx10 >= 125);
@@ -360,6 +360,9 @@ struct brw_wm_prog_key {
    struct brw_base_prog_key base;
 
    uint64_t input_slots_valid;
+
+   float min_sample_shading;
+
    uint8_t color_outputs_valid;
 
    /* Some collection of BRW_WM_IZ_* */
@@ -394,8 +397,7 @@ struct brw_wm_prog_key {
    bool ignore_sample_mask_out:1;
    bool coarse_pixel:1;
    bool null_push_constant_tbimr_workaround:1;
-
-   uint64_t padding:33;
+   bool api_sample_shading:1;
 };
 
 static inline bool
@@ -412,6 +414,14 @@ brw_wm_prog_key_is_dynamic(const struct brw_wm_prog_key *key)
 
 struct brw_cs_prog_key {
    struct brw_base_prog_key base;
+
+   /**
+    * Lowers unaligned dispatches into aligned one by dispatching one more
+    * extra workgroup and masking off excessive invocations in the shader.
+    */
+   bool lower_unaligned_dispatch:1;
+
+   uint32_t padding:31;
 };
 
 struct brw_bs_prog_key {
@@ -534,12 +544,13 @@ enum brw_shader_reloc_id {
    BRW_SHADER_RELOC_DESCRIPTORS_ADDR_HIGH,
    BRW_SHADER_RELOC_DESCRIPTORS_BUFFER_ADDR_HIGH,
    BRW_SHADER_RELOC_INSTRUCTION_BASE_ADDR_HIGH,
-   BRW_SHADER_RELOC_EMBEDDED_SAMPLER_HANDLE,
-   BRW_SHADER_RELOC_LAST_EMBEDDED_SAMPLER_HANDLE =
-   BRW_SHADER_RELOC_EMBEDDED_SAMPLER_HANDLE + BRW_MAX_EMBEDDED_SAMPLERS - 1,
    BRW_SHADER_RELOC_PRINTF_BUFFER_ADDR_LOW,
    BRW_SHADER_RELOC_PRINTF_BUFFER_ADDR_HIGH,
    BRW_SHADER_RELOC_PRINTF_BUFFER_SIZE,
+   /* Leave this entry last: */
+   BRW_SHADER_RELOC_EMBEDDED_SAMPLER_HANDLE,
+   BRW_SHADER_RELOC_LAST_EMBEDDED_SAMPLER_HANDLE =
+   BRW_SHADER_RELOC_EMBEDDED_SAMPLER_HANDLE + BRW_MAX_EMBEDDED_SAMPLERS - 1,
 };
 
 enum brw_shader_reloc_type {
@@ -586,19 +597,18 @@ struct brw_stage_prog_data {
 
    unsigned nr_params;       /**< number of float params/constants */
 
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
 
-   /* zero_push_reg is a bitfield which indicates what push registers (if any)
-    * should be zeroed by SW at the start of the shader.  The corresponding
-    * push_reg_mask_param specifies the param index (in 32-bit units) where
-    * the actual runtime 64-bit mask will be pushed.  The shader will zero
-    * push reg i if
+   /* If robust_ubo_ranges not 0, push_reg_mask_param specifies the param
+    * index (in 32-bit units) where the 4 UBO range limits will be pushed
+    * as 8-bit integers. The shader will zero byte i of UBO range j if:
     *
-    *    reg_used & zero_push_reg & ~*push_reg_mask_param & (1ull << i)
+    *    (robust_ubo_ranges & (1 << j)) &&
+    *    (i < push_reg_mask_param[j] * 16)
     *
-    * If this field is set, brw_compiler::compact_params must be false.
+    * brw_compiler::compact_params must be false if robust_ubo_ranges used
     */
-   uint64_t zero_push_reg;
+   uint8_t robust_ubo_ranges;
    unsigned push_reg_mask_param;
 
    unsigned curb_read_length;
@@ -652,12 +662,7 @@ struct brw_stage_prog_data {
  * Convert a number of GRF registers used (grf_used in prog_data) into
  * a number of GRF register blocks supported by the hardware on PTL+.
  */
-static inline unsigned
-ptl_register_blocks(unsigned grf_used)
-{
-   const unsigned n = DIV_ROUND_UP(grf_used, 32) - 1;
-   return (n < 6 ? n : 7);
-}
+unsigned ptl_register_blocks(unsigned grf_used);
 
 static inline uint32_t *
 brw_stage_prog_data_add_params(struct brw_stage_prog_data *prog_data,
@@ -759,6 +764,13 @@ struct brw_wm_prog_data {
     * GL_MIN_SAMPLE_SHADING_VALUE in GL or minSampleShading in Vulkan.
     */
    bool sample_shading;
+
+   /** True if the API wants sample shading
+    *
+    * Not used by the compiler, but useful for restore from the cache. The
+    * driver is expected to write the value it wants.
+    */
+   bool api_sample_shading;
 
    /** Min sample shading value
     *
@@ -923,7 +935,7 @@ brw_fs_simd_width_for_ksp(unsigned ksp_idx, bool simd8_enabled,
    case 2:
       return (simd16_enabled && (simd32_enabled || simd8_enabled)) ? 16 : 0;
    default:
-      unreachable("Invalid KSP index");
+      UNREACHABLE("Invalid KSP index");
    }
 }
 
@@ -1101,7 +1113,7 @@ typedef enum
     ~VARYING_BIT_POS & ~VARYING_BIT_FACE)
 
 void brw_print_vue_map(FILE *fp, const struct intel_vue_map *vue_map,
-                       gl_shader_stage stage);
+                       mesa_shader_stage stage);
 
 /**
  * Convert a VUE slot number into a byte offset within the VUE.
@@ -1360,7 +1372,7 @@ DEFINE_PROG_DATA_DOWNCAST(tcs, prog_data->stage == MESA_SHADER_TESS_CTRL)
 DEFINE_PROG_DATA_DOWNCAST(tes, prog_data->stage == MESA_SHADER_TESS_EVAL)
 DEFINE_PROG_DATA_DOWNCAST(gs,  prog_data->stage == MESA_SHADER_GEOMETRY)
 DEFINE_PROG_DATA_DOWNCAST(wm,  prog_data->stage == MESA_SHADER_FRAGMENT)
-DEFINE_PROG_DATA_DOWNCAST(cs,  gl_shader_stage_uses_workgroup(prog_data->stage))
+DEFINE_PROG_DATA_DOWNCAST(cs,  mesa_shader_stage_uses_workgroup(prog_data->stage))
 DEFINE_PROG_DATA_DOWNCAST(bs,  brw_shader_stage_is_bindless(prog_data->stage))
 
 DEFINE_PROG_DATA_DOWNCAST(vue, prog_data->stage == MESA_SHADER_VERTEX ||
@@ -1419,10 +1431,10 @@ brw_device_sha1_update(struct mesa_sha1 *sha1_ctx,
                        const struct intel_device_info *devinfo);
 
 unsigned
-brw_prog_data_size(gl_shader_stage stage);
+brw_prog_data_size(mesa_shader_stage stage);
 
 unsigned
-brw_prog_key_size(gl_shader_stage stage);
+brw_prog_key_size(mesa_shader_stage stage);
 
 struct brw_compile_params {
    void *mem_ctx;
@@ -1629,7 +1641,7 @@ brw_compile_bs(const struct brw_compiler *compiler,
                struct brw_compile_bs_params *params);
 
 void brw_debug_key_recompile(const struct brw_compiler *c, void *log,
-                             gl_shader_stage stage,
+                             mesa_shader_stage stage,
                              const struct brw_base_prog_key *old_key,
                              const struct brw_base_prog_key *key);
 
@@ -1666,7 +1678,7 @@ brw_cs_get_dispatch_info(const struct intel_device_info *devinfo,
  */
 static inline bool
 brw_stage_has_packed_dispatch(ASSERTED const struct intel_device_info *devinfo,
-                              gl_shader_stage stage, unsigned max_polygons,
+                              mesa_shader_stage stage, unsigned max_polygons,
                               const struct brw_stage_prog_data *prog_data)
 {
    /* The code below makes assumptions about the hardware's thread dispatch

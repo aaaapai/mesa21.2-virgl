@@ -26,7 +26,7 @@ vk_image_view_type_to_nil_view_type(VkImageViewType view_type)
    case VK_IMAGE_VIEW_TYPE_2D_ARRAY:   return NIL_VIEW_TYPE_2D_ARRAY;
    case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY: return NIL_VIEW_TYPE_CUBE_ARRAY;
    default:
-      unreachable("Invalid image view type");
+      UNREACHABLE("Invalid image view type");
    }
 }
 
@@ -41,7 +41,7 @@ vk_swizzle_to_pipe(VkComponentSwizzle swizzle)
    case VK_COMPONENT_SWIZZLE_ONE:   return PIPE_SWIZZLE_1;
    case VK_COMPONENT_SWIZZLE_ZERO:  return PIPE_SWIZZLE_0;
    default:
-      unreachable("Invalid component swizzle");
+      UNREACHABLE("Invalid component swizzle");
    }
 }
 
@@ -188,6 +188,7 @@ nvk_image_view_init(struct nvk_device *dev,
 
       if (view->vk.usage & (VK_IMAGE_USAGE_SAMPLED_BIT |
                            VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) {
+         nil_view.access = NIL_VIEW_ACCESS_TEXTURE;
          const struct nil_descriptor desc =
             nil_image_view_descriptor(&pdev->info, &nil_image,
                                       &nil_view, base_addr);
@@ -214,6 +215,8 @@ nvk_image_view_init(struct nvk_device *dev,
       }
 
       if (view->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) {
+         nil_view.access = NIL_VIEW_ACCESS_STORAGE;
+
          /* For storage images, we can't have any cubes */
          if (view->vk.view_type == VK_IMAGE_VIEW_TYPE_CUBE ||
             view->vk.view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY)
@@ -237,9 +240,6 @@ nvk_image_view_init(struct nvk_device *dev,
          }
 
          if (pdev->info.cls_eng3d >= MAXWELL_A) {
-            if (image->vk.samples != VK_SAMPLE_COUNT_1_BIT)
-               nil_image = nil_msaa_image_as_sa(&nil_image);
-
             const struct nil_descriptor desc =
                nil_image_view_descriptor(&pdev->info, &nil_image,
                                          &nil_view, base_addr);

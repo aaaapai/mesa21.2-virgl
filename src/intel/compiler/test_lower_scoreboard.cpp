@@ -43,7 +43,13 @@ emit_SEND(const brw_builder &bld, const brw_reg &dst,
           const brw_reg &desc, const brw_reg &payload)
 {
    brw_reg uniform_desc = component(desc, 0);
-   brw_inst *inst = bld.emit(SHADER_OPCODE_SEND, dst, uniform_desc, uniform_desc, payload);
+   brw_reg srcs[SEND_NUM_SRCS] = {
+      [SEND_SRC_DESC]     = uniform_desc,
+      [SEND_SRC_EX_DESC]  = uniform_desc,
+      [SEND_SRC_PAYLOAD1] = payload,
+      [SEND_SRC_PAYLOAD2] = brw_reg(),
+   };
+   brw_inst *inst = bld.emit(SHADER_OPCODE_SEND, dst, srcs, SEND_NUM_SRCS);
    inst->mlen = 1;
    return inst;
 }
@@ -1140,6 +1146,68 @@ TEST_F(scoreboard_test, scalar_register_mov_grf_is_not_in_scalar_pipe)
    exp.uniform().MOV     (scalar, r10);
                  SYNC_NOP(exp       )->sched = SWSB("I@1");
    exp          .MOV     (r20, scalar);
+
+   EXPECT_SHADERS_MATCH(bld, exp);
+}
+
+TEST_F(scoreboard_test, baked_dependency_with_inferred_pipe_combination)
+{
+   brw_builder bld = make_shader();
+   brw_builder exp = make_shader();
+
+   brw_reg *g = vgrf_array(bld, exp, BRW_TYPE_F, 8);
+   brw_reg  x = vgrf(bld, exp, BRW_TYPE_F);
+
+   bld.MOV(g[1], brw_imm_f(1.0f));
+   bld.MOV(g[2], brw_imm_f(2.0f));
+   bld.MOV(g[5], brw_imm_f(5.0f));
+
+   bld.IF();
+   emit_SEND(bld, x, g[1], g[2]);
+   bld.ELSE();
+   emit_SEND(bld, x, g[1], g[2]);
+   bld.ENDIF();
+
+   bld.MAD(g[4], g[5], g[1], x);
+
+   EXPECT_PROGRESS(brw_lower_scoreboard, bld);
+
+   exp.MOV(g[1], brw_imm_f(1.0f));
+   exp.MOV(g[2], brw_imm_f(2.0f));
+   exp.MOV(g[5], brw_imm_f(5.0f));
+
+   exp.IF();
+   emit_SEND(exp, x, g[1], g[2])->sched = SWSB("@3 $0");
+   exp.ELSE();
+   emit_SEND(exp, x, g[1], g[2])->sched = SWSB("@3 $0");
+   exp.ENDIF();
+
+   exp.MAD(g[4], g[5], g[1], x)->sched = SWSB("@3 $0.dst");
+
+   EXPECT_SHADERS_MATCH(bld, exp);
+}
+
+TEST_F(scoreboard_test, math_inv_with_mul_dependency)
+{
+   brw_builder bld = make_shader();
+   brw_builder exp = make_shader();
+
+   brw_reg *g = vgrf_array(bld, exp, BRW_TYPE_F, 8);
+   brw_reg  x = vgrf(bld, exp, BRW_TYPE_F);
+
+   bld.MOV(g[1], brw_imm_f(1.0f));
+   bld.MOV(g[2], brw_imm_f(2.0f));
+
+   bld.emit(SHADER_OPCODE_RCP, x, g[1]);
+   bld.MUL(g[1], g[2], x);
+
+   EXPECT_PROGRESS(brw_lower_scoreboard, bld);
+
+   exp.MOV(g[1], brw_imm_f(1.0f));
+   exp.MOV(g[2], brw_imm_f(2.0f));
+
+   exp.emit(SHADER_OPCODE_RCP, x, g[1])->sched = SWSB("@2 $0");
+   exp.MUL(g[1], g[2], x)->sched = SWSB("@1 $0.dst");
 
    EXPECT_SHADERS_MATCH(bld, exp);
 }

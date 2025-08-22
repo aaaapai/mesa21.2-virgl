@@ -26,6 +26,7 @@ struct amd_ip_info {
    uint8_t ver_minor;
    uint8_t ver_rev;
    uint8_t num_queues;
+   uint8_t num_queue_slots;
    uint8_t num_instances;
    uint32_t ib_alignment;
    uint32_t ib_pad_dw_mask;
@@ -155,6 +156,8 @@ struct radeon_info {
     * AnisoPoint is treated as Point.
     */
    bool conformant_trunc_coord;
+   /* Support GS_FAST_LAUNCH(2) for mesh shaders. */
+   bool mesh_fast_launch_2;
 
    /* Display features. */
    /* There are 2 display DCC codepaths, because display expects unaligned DCC. */
@@ -177,6 +180,7 @@ struct radeon_info {
    uint32_t address32_hi;
    bool has_dedicated_vram;
    bool all_vram_visible;
+   uint64_t virtual_address_max;
    bool has_l2_uncached;
    bool r600_has_virtual_memory;
    uint32_t max_tcc_blocks;
@@ -243,7 +247,7 @@ struct radeon_info {
    bool has_pcie_bandwidth_info;
    bool has_stable_pstate;
    /* Whether SR-IOV is enabled or amdgpu.mcbp=1 was set on the kernel command line. */
-   bool register_shadowing_required;
+   bool has_kernelq_reg_shadowing;
    bool has_default_zerovram_support;
    bool has_tmz_support;
    bool has_trap_handler_support;
@@ -407,6 +411,28 @@ void ac_get_task_info(const struct radeon_info *info,
 uint32_t ac_memory_ops_per_clock(uint32_t vram_type);
 
 uint32_t ac_gfx103_get_cu_mask_ps(const struct radeon_info *info);
+
+/* Number of entries in the mesh shader scratch ring.
+ * This depends on VGT_GS_MAX_WAVE_ID which is set by the kernel
+ * and is impossible to query. We leave it on its maximum value
+ * because real applications are unlikely to use it.
+ *
+ * The maximum ID on GFX10.3 is 2047 (0x7ff), so we need 2048 entries.
+ */
+#define AC_MESH_SCRATCH_NUM_ENTRIES 2048
+
+/* Size of each entry in the mesh shader scratch ring.
+ * We must ensure that the absolute maximum mesh shader output fits here.
+ *
+ * Mesh shaders can create up to 256 vertices/primitives per workgroup,
+ * and up to the following amount of outputs:
+ * - 32 parameters
+ * - 4 positions (clip/cull distance, etc.)
+ * - 4 per-primitive built-in outputs (layer, view index, prim id, VRS rate)
+ * - primitive indices which are always kept in LDS
+ * That is a total of 32+4+4=40 output slots x 16 bytes per slot x 256 = 160K bytes.
+ */
+#define AC_MESH_SCRATCH_ENTRY_BYTES (160 * 1024)
 
 #ifdef __cplusplus
 }

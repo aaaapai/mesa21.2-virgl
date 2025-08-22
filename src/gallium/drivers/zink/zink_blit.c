@@ -71,7 +71,15 @@ blit_resolve(struct zink_context *ctx, const struct pipe_blit_info *info, bool *
    if (src->obj->dt)
       *needs_present_readback = zink_kopper_acquire_readback(ctx, src, &use_src);
 
-   zink_resource_setup_transfer_layouts(ctx, use_src, dst);
+   if (zink_screen(ctx->base.screen)->driver_workarounds.general_layout) {
+      zink_resource_image_transfer_dst_barrier(ctx, dst, info->dst.level, &info->dst.box, false);
+      screen->image_barrier(ctx, use_src,
+                              VK_IMAGE_LAYOUT_GENERAL,
+                              VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT);
+   } else {
+      zink_resource_setup_transfer_layouts(ctx, use_src, dst);
+   }
    VkCommandBuffer cmdbuf = *needs_present_readback ?
                             ctx->bs->cmdbuf :
                             zink_get_cmdbuf(ctx, src, dst);
@@ -276,7 +284,15 @@ blit_native(struct zink_context *ctx, const struct pipe_blit_info *info, bool *n
    if (src->obj->dt)
       *needs_present_readback = zink_kopper_acquire_readback(ctx, src, &use_src);
 
-   zink_resource_setup_transfer_layouts(ctx, use_src, dst);
+   if (zink_screen(ctx->base.screen)->driver_workarounds.general_layout) {
+      zink_resource_image_transfer_dst_barrier(ctx, dst, info->dst.level, &info->dst.box, false);
+      screen->image_barrier(ctx, use_src,
+                              VK_IMAGE_LAYOUT_GENERAL,
+                              VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT);
+   } else {
+      zink_resource_setup_transfer_layouts(ctx, use_src, dst);
+   }
    VkCommandBuffer cmdbuf = *needs_present_readback ?
                             ctx->bs->cmdbuf :
                             zink_get_cmdbuf(ctx, src, dst);
@@ -332,9 +348,10 @@ zink_blit(struct pipe_context *pctx,
    bool needs_present_readback = false;
 
    if (ctx->awaiting_resolve && ctx->in_rp && ctx->dynamic_fb.tc_info.has_resolve) {
+      bool is_depth = util_format_is_depth_or_stencil(info->src.format);
       struct pipe_resource *resolve = ctx->fb_state.resolve;
       if (!resolve)
-         resolve = ctx->dynamic_fb.tc_info.resolve;
+         resolve = ctx->dynamic_fb.tc_info.resolve[is_depth];
       if (resolve == info->dst.resource) {
          zink_batch_no_rp_safe(ctx);
          ctx->awaiting_resolve = false;

@@ -81,6 +81,7 @@ static const struct debug_named_value fd_debug_options[] = {
    {"nohw",      FD_DBG_NOHW,     "Disable submitting commands to the HW"},
    {"nosbin",    FD_DBG_NOSBIN,   "Execute GMEM bins in raster order instead of 'S' pattern"},
    {"stomp",     FD_DBG_STOMP,    "Enable register stomper"},
+   {"abort",     FD_DBG_ABORT,    "Abort on GPU reset"},
    DEBUG_NAMED_VALUE_END
 };
 /* clang-format on */
@@ -203,20 +204,20 @@ fd_query_memory_info(struct pipe_screen *pscreen,
 static void
 fd_init_shader_caps(struct fd_screen *screen)
 {
-   for (unsigned i = 0; i <= PIPE_SHADER_COMPUTE; i++) {
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
          (struct pipe_shader_caps *)&screen->base.shader_caps[i];
 
       switch (i) {
-      case PIPE_SHADER_TESS_CTRL:
-      case PIPE_SHADER_TESS_EVAL:
-      case PIPE_SHADER_GEOMETRY:
+      case MESA_SHADER_TESS_CTRL:
+      case MESA_SHADER_TESS_EVAL:
+      case MESA_SHADER_GEOMETRY:
          if (!is_a6xx(screen))
             continue;
          if (screen->info->a6xx.is_a702)
             continue;
          break;
-      case PIPE_SHADER_COMPUTE:
+      case MESA_SHADER_COMPUTE:
          if (!has_compute(screen))
             continue;
          break;
@@ -231,7 +232,7 @@ fd_init_shader_caps(struct fd_screen *screen)
 
       caps->max_control_flow_depth = 8; /* XXX */
 
-      caps->max_inputs = is_a6xx(screen) && i != PIPE_SHADER_GEOMETRY ?
+      caps->max_inputs = is_a6xx(screen) && i != MESA_SHADER_GEOMETRY ?
          screen->info->a6xx.vs_max_inputs_count : 16;
 
       caps->max_outputs =
@@ -261,7 +262,7 @@ fd_init_shader_caps(struct fd_screen *screen)
       caps->int16 =
       caps->fp16 =
          (is_a5xx(screen) || is_a6xx(screen)) &&
-         (i == PIPE_SHADER_COMPUTE || i == PIPE_SHADER_FRAGMENT) &&
+         (i == MESA_SHADER_COMPUTE || i == MESA_SHADER_FRAGMENT) &&
          !FD_DBG(NOFP16);
       caps->glsl_16bit_load_dst = true;
 
@@ -271,9 +272,9 @@ fd_init_shader_caps(struct fd_screen *screen)
       caps->supported_irs =
          (1 << PIPE_SHADER_IR_NIR) |
          /* tgsi_to_nir doesn't support all stages: */
-         COND(i == PIPE_SHADER_VERTEX ||
-              i == PIPE_SHADER_FRAGMENT ||
-              i == PIPE_SHADER_COMPUTE,
+         COND(i == MESA_SHADER_VERTEX ||
+              i == MESA_SHADER_FRAGMENT ||
+              i == MESA_SHADER_COMPUTE,
               1 << PIPE_SHADER_IR_TGSI);
 
       if (is_a6xx(screen)) {
@@ -302,7 +303,7 @@ fd_init_shader_caps(struct fd_screen *screen)
           * but images also need texture state for read access
           * (isam/isam.3d)
           */
-         if (i == PIPE_SHADER_FRAGMENT || i == PIPE_SHADER_COMPUTE) {
+         if (i == MESA_SHADER_FRAGMENT || i == MESA_SHADER_COMPUTE) {
             caps->max_shader_buffers =
             caps->max_shader_images = 24;
          }
@@ -364,6 +365,7 @@ fd_init_screen_caps(struct fd_screen *screen)
    /* this is probably not totally correct.. but it's a start: */
 
    /* Supported features (boolean caps). */
+   caps->prefer_real_buffer_in_constbuf0 = true;
    caps->npot_textures = true;
    caps->mixed_framebuffer_sizes = true;
    caps->anisotropic_filter = true;
@@ -573,7 +575,7 @@ fd_init_screen_caps(struct fd_screen *screen)
        * the frontend clip-plane lowering.  So we handle this in the backend
        *
        */
-      screen->base.shader_caps[PIPE_SHADER_GEOMETRY].max_instructions ? 1 :
+      screen->base.shader_caps[MESA_SHADER_GEOMETRY].max_instructions ? 1 :
       /* On a3xx, there is HW support for GL user clip planes that
        * occasionally has to fall back to shader key-based lowering to clip
        * distances in the VS, and we don't support clip distances so that is
@@ -676,9 +678,9 @@ fd_init_screen_caps(struct fd_screen *screen)
    caps->shader_clock = is_a6xx(screen);
 }
 
-static const void *
-fd_get_compiler_options(struct pipe_screen *pscreen, enum pipe_shader_ir ir,
-                        enum pipe_shader_type shader)
+static const struct nir_shader_compiler_options *
+fd_get_compiler_options(struct pipe_screen *pscreen,
+                        mesa_shader_stage shader)
 {
    struct fd_screen *screen = fd_screen(pscreen);
 
@@ -744,6 +746,12 @@ is_format_supported(struct pipe_screen *pscreen,
    return modifier == DRM_FORMAT_MOD_LINEAR;
 }
 
+static bool
+is_rendering_supported(struct pipe_screen *pscreen, enum pipe_format format)
+{
+   return pscreen->is_format_supported(pscreen, format, PIPE_TEXTURE_2D, 0, 0, PIPE_BIND_RENDER_TARGET);
+}
+
 static void
 fd_screen_query_dmabuf_modifiers(struct pipe_screen *pscreen,
                                  enum pipe_format format, int max,
@@ -767,7 +775,7 @@ fd_screen_query_dmabuf_modifiers(struct pipe_screen *pscreen,
             modifiers[num] = all_modifiers[i];
 
          if (external_only)
-            external_only[num] = false;
+            external_only[num] = !is_rendering_supported(pscreen, format);
       }
 
       num++;
@@ -985,17 +993,6 @@ fd_screen_create(int fd,
    screen->dev_info = info;
    screen->info = &screen->dev_info;
 
-   /* explicitly checking for GPU revisions that are known to work.  This
-    * may be overly conservative for a3xx, where spoofing the gpu_id with
-    * the blob driver seems to generate identical cmdstream dumps.  But
-    * on a2xx, there seem to be small differences between the GPU revs
-    * so it is probably better to actually test first on real hardware
-    * before enabling:
-    *
-    * If you have a different adreno version, feel free to add it to one
-    * of the cases below and see what happens.  And if it works, please
-    * send a patch ;-)
-    */
    switch (screen->gen) {
    case 2:
       fd2_screen_init(pscreen);
@@ -1048,8 +1045,10 @@ fd_screen_create(int fd,
    pscreen->destroy = fd_screen_destroy;
    pscreen->get_screen_fd = fd_screen_get_fd;
    pscreen->query_memory_info = fd_query_memory_info;
-   pscreen->get_compiler_options = fd_get_compiler_options;
    pscreen->get_disk_shader_cache = fd_get_disk_shader_cache;
+
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
+      pscreen->nir_options[i] = fd_get_compiler_options(pscreen, i);
 
    fd_resource_screen_init(pscreen);
    fd_query_screen_init(pscreen);

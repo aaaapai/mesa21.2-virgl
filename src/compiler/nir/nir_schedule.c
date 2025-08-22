@@ -477,15 +477,15 @@ nir_schedule_calculate_deps(nir_deps_state *state, nir_schedule_node *n)
       break;
 
    case nir_instr_type_call:
-      unreachable("Calls should have been lowered");
+      UNREACHABLE("Calls should have been lowered");
       break;
 
    case nir_instr_type_parallel_copy:
-      unreachable("Parallel copies should have been lowered");
+      UNREACHABLE("Parallel copies should have been lowered");
       break;
 
    case nir_instr_type_phi:
-      unreachable("nir_schedule() should be called after lowering from SSA");
+      UNREACHABLE("nir_schedule() should be called after lowering from SSA");
       break;
 
    case nir_instr_type_intrinsic:
@@ -1270,7 +1270,7 @@ nir_schedule_validate_uses(nir_schedule_scoreboard *scoreboard)
  * free a register immediately.  The amount below the limit is up to you to
  * tune.
  */
-void
+bool
 nir_schedule(nir_shader *shader,
              const nir_schedule_options *options)
 {
@@ -1286,9 +1286,14 @@ nir_schedule(nir_shader *shader,
       nir_foreach_block(block, impl) {
          nir_schedule_block(scoreboard, block);
       }
+
+      nir_progress(true, impl, nir_metadata_control_flow |
+                               nir_metadata_divergence |
+                               nir_metadata_live_defs);
    }
 
    nir_schedule_validate_uses(scoreboard);
 
    ralloc_free(scoreboard);
+   return true;
 }

@@ -220,7 +220,7 @@ compute_local_index_id(struct lower_intrinsics_state *state, nir_intrinsic_instr
       break;
    }
    default:
-      unreachable("invalid derivative group");
+      UNREACHABLE("invalid derivative group");
    }
 }
 
@@ -326,7 +326,7 @@ brw_nir_lower_cs_intrinsics(nir_shader *nir,
                             const struct intel_device_info *devinfo,
                             struct brw_cs_prog_data *prog_data)
 {
-   assert(gl_shader_stage_uses_workgroup(nir->info.stage));
+   assert(mesa_shader_stage_uses_workgroup(nir->info.stage));
 
    struct lower_intrinsics_state state = {
       .nir = nir,

@@ -141,9 +141,12 @@ class LowerSplit64op : public NirLowerInstruction {
          case nir_op_f2u32:
          case nir_op_f2i64:
          case nir_op_f2u64:
-         case nir_op_u2f64:
-         case nir_op_i2f64:
             return nir_src_bit_size(alu->src[0].src) == 64;
+         case nir_op_i2f64:
+         case nir_op_u2f64:
+            return nir_src_bit_size(alu->src[0].src) >= 32;
+         case nir_op_b2f64:
+            return true;
          default:
             return false;
          }
@@ -205,22 +208,28 @@ class LowerSplit64op : public NirLowerInstruction {
          }        
          case nir_op_u2f64: {
             auto src = nir_ssa_for_alu_src(b, alu, 0);
-            auto low = nir_unpack_64_2x32_split_x(b, src);
-            auto high = nir_unpack_64_2x32_split_y(b, src);
-            auto flow = nir_u2f64(b, low);
-            auto fhigh = nir_u2f64(b, high);
-            return nir_fadd(b, nir_fmul_imm(b, fhigh, 65536.0 * 65536.0), flow);
+            if (src->bit_size == 64) {
+               return lower_i64_to_f64(src, nir_op_u2f64);
+            } else {
+               return lower_i32_to_f64(src, nir_op_u2f32);
+            }
          }
          case nir_op_i2f64: {
             auto src = nir_ssa_for_alu_src(b, alu, 0);
-            auto low = nir_unpack_64_2x32_split_x(b, src);
-            auto high = nir_unpack_64_2x32_split_y(b, src);
-            auto flow = nir_u2f64(b, low);
-            auto fhigh = nir_i2f64(b, high);
-            return nir_fadd(b, nir_fmul_imm(b, fhigh, 65536.0 * 65536.0), flow);
+            if (src->bit_size == 64) {
+               return lower_i64_to_f64(src, nir_op_i2f64);
+            } else {
+               return lower_i32_to_f64(src, nir_op_i2f32);
+            }
+         }
+         case nir_op_b2f64: {
+            auto src = nir_b2b32(b, nir_ssa_for_alu_src(b, alu, 0));
+            return nir_pack_64_2x32_split(b,
+                                          nir_imm_zero(b, 1, 32),
+                                          nir_iand(b, src, nir_imm_int(b, 0x3ff00000)));
          }
          default:
-            unreachable("trying to lower instruction that was not in filter");
+            UNREACHABLE("trying to lower instruction that was not in filter");
          }
       }
       case nir_instr_type_phi: {
@@ -241,8 +250,24 @@ class LowerSplit64op : public NirLowerInstruction {
          return nir_pack_64_2x32_split(b, &phi_lo->def, &phi_hi->def);
       }
       default:
-         unreachable("Trying to lower instruction that was not in filter");
+         UNREACHABLE("Trying to lower instruction that was not in filter");
       }
+   }
+
+   nir_def *lower_i64_to_f64(nir_def *src, nir_op op)
+   {
+      auto flow = nir_i2f64(b, nir_unpack_64_2x32_split_x(b, src));
+      auto fhigh = nir_build_alu1(b, op, nir_unpack_64_2x32_split_y(b, src));
+      return nir_fadd(b, nir_fmul_imm(b, fhigh, 65536.0 * 65536.0), flow);
+   }
+
+   nir_def *lower_i32_to_f64(nir_def *src, nir_op op)
+   {
+      auto tmplo = nir_u2f32(b, nir_iand(b, src, nir_imm_int(b, 0x000000ff)));
+      auto tmphi =
+         nir_build_alu1(b, op, nir_iand(b, src, nir_imm_int(b, 0xffffff00)));
+      auto f64 = nir_f2f64(b, nir_vec2(b, tmplo, tmphi));
+      return nir_fadd(b, nir_channel(b, f64, 0), nir_channel(b, f64, 1));
    }
 };
 
@@ -349,7 +374,7 @@ LowerSplit64BitVar::split_double_store_deref(nir_intrinsic_instr *intr)
    else if (deref->deref_type == nir_deref_type_array)
       return split_store_deref_array(intr, deref);
    else {
-      unreachable("only splitting of stores to vars and arrays is supported");
+      UNREACHABLE("only splitting of stores to vars and arrays is supported");
    }
 }
 
@@ -362,7 +387,7 @@ LowerSplit64BitVar::split_double_load_deref(nir_intrinsic_instr *intr)
    else if (deref->deref_type == nir_deref_type_array)
       return split_load_deref_array(intr, deref->arr.index);
    else {
-      unreachable("only splitting of loads from vars and arrays is supported");
+      UNREACHABLE("only splitting of loads from vars and arrays is supported");
    }
    m_old_stores.push_back(&intr->instr);
 }

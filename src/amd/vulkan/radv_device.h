@@ -15,10 +15,11 @@
 #include "ac_spm.h"
 #include "ac_sqtt.h"
 
+#include "util/bitset.h"
 #include "util/mesa-blake3.h"
 
+#include "radv_debug_nir.h"
 #include "radv_pipeline.h"
-#include "radv_printf.h"
 #include "radv_queue.h"
 #include "radv_radeon_winsys.h"
 #include "radv_rra.h"
@@ -33,6 +34,7 @@
 #define RADV_NUM_HW_CTX (RADEON_CTX_PRIORITY_REALTIME + 1)
 
 struct radv_image_view;
+struct radv_cmd_stream;
 
 enum radv_dispatch_table {
    RADV_DEVICE_DISPATCH_TABLE,
@@ -94,12 +96,6 @@ struct radv_meta_state {
       struct radix_sort_vk *radix_sort;
       struct vk_acceleration_structure_build_ops build_ops;
       struct vk_acceleration_structure_build_args build_args;
-
-      struct {
-         VkBuffer buffer;
-         VkDeviceMemory memory;
-         VkAccelerationStructureKHR accel_struct;
-      } null;
    } accel_struct_build;
 
    struct vk_texcompress_etc2_state etc_decode;
@@ -176,6 +172,11 @@ struct radv_device {
 
    struct radeon_winsys_bo *trace_bo;
    struct radv_trace_data *trace_data;
+
+   VkDeviceMemory va_validation_memory;
+   VkBuffer va_validation_buffer;
+   BITSET_WORD *valid_vas;
+   uint64_t valid_vas_addr;
 
    /* Whether to keep shader debug info, for debugging. */
    bool keep_shader_info;
@@ -295,7 +296,7 @@ struct radv_device {
    struct radeon_winsys_bo *perf_counter_bo;
 
    /* Interleaved lock/unlock commandbuffers for perfcounter passes. */
-   struct radeon_cmdbuf **perf_counter_lock_cs;
+   struct radv_cmd_stream **perf_counter_lock_cs;
 
    bool uses_shadow_regs;
 
@@ -346,7 +347,7 @@ VkResult radv_device_init_vrs_state(struct radv_device *device);
 
 unsigned radv_get_default_max_sample_dist(int log_samples);
 
-void radv_emit_default_sample_locations(const struct radv_physical_device *pdev, struct radeon_cmdbuf *cs,
+void radv_emit_default_sample_locations(const struct radv_physical_device *pdev, struct radv_cmd_stream *cs,
                                         int nr_samples);
 
 struct radv_color_buffer_info {
@@ -365,7 +366,6 @@ void radv_initialise_color_surface(struct radv_device *device, struct radv_color
 
 void radv_initialise_vrs_surface(struct radv_image *image, struct radv_buffer *htile_buffer,
                                  struct radv_ds_buffer_info *ds);
-
 
 void radv_initialise_ds_surface(const struct radv_device *device, struct radv_ds_buffer_info *ds,
                                 struct radv_image_view *iview, VkImageAspectFlags ds_aspects);

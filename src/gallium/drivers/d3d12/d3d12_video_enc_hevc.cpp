@@ -304,7 +304,7 @@ d3d12_video_encoder_update_current_rate_control_hevc(struct d3d12_video_encoder 
             } break;
             default:
             {
-               unreachable("Unsupported pipe_h2645_enc_picture_type");
+               UNREACHABLE("Unsupported pipe_h2645_enc_picture_type");
             } break;
          }
 
@@ -1302,7 +1302,7 @@ d3d12_video_encoder_update_current_encoder_config_state_hevc(struct d3d12_video_
                                                           &pD3D12Enc->m_currentEncodeConfig.m_encodeFormatInfo,
                                                           sizeof(pD3D12Enc->m_currentEncodeConfig.m_encodeFormatInfo));
    if (FAILED(hr)) {
-      debug_printf("CheckFeatureSupport failed with HR %x\n", hr);
+      debug_printf("CheckFeatureSupport failed with HR %x\n", (unsigned)hr);
       return false;
    }
 
@@ -1495,7 +1495,7 @@ d3d12_video_encoder_convert_profile_to_d3d12_enc_profile_hevc(enum pipe_video_pr
       } break;
       default:
       {
-         unreachable("Unsupported pipe_video_profile");
+         UNREACHABLE("Unsupported pipe_video_profile");
       } break;
    }
 }

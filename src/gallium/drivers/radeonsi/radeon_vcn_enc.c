@@ -38,13 +38,6 @@ static void radeon_vcn_enc_quality_modes(struct radeon_encoder *enc,
    if (enc->enc_pic.rc_session_init.rate_control_method == RENCODE_RATE_CONTROL_METHOD_QUALITY_VBR)
       p->pre_encode_mode = RENCODE_PREENCODE_MODE_4X;
 
-   /* Disabling 2pass encoding for VCN 5.0
-    * This is a temporary limitation only for VCN 5.0 due to HW,
-    * once verified in future VCN 5.X versions, it will be enabled again.
-    */
-   if (sscreen->info.vcn_ip_version >= VCN_5_0_0)
-      p->pre_encode_mode = RENCODE_PREENCODE_MODE_NONE;
-
    p->vbaq_mode = in->vbaq_mode ? RENCODE_VBAQ_AUTO : RENCODE_VBAQ_NONE;
 
    if (enc->enc_pic.rc_session_init.rate_control_method == RENCODE_RATE_CONTROL_METHOD_NONE)
@@ -53,9 +46,15 @@ static void radeon_vcn_enc_quality_modes(struct radeon_encoder *enc,
    enc->enc_pic.quality_params.vbaq_mode = p->vbaq_mode;
    enc->enc_pic.quality_params.scene_change_sensitivity = 0;
    enc->enc_pic.quality_params.scene_change_min_idr_interval = 0;
+
+   /* By default, two_pass_search_center_map_mode is enabled when
+    * pre_encode_mode is enabled, however this doesn't apply to
+    * VCN 5.0.0, where only pre_encode_mode is enabled.
+    */
    enc->enc_pic.quality_params.two_pass_search_center_map_mode =
-      (enc->enc_pic.quality_modes.pre_encode_mode &&
-       !enc->enc_pic.spec_misc.b_picture_enabled) ? 1 : 0;
+      (sscreen->info.vcn_ip_version < VCN_5_0_0 &&
+         enc->enc_pic.quality_modes.pre_encode_mode &&
+         !enc->enc_pic.spec_misc.b_picture_enabled) ? 1 : 0;
    enc->enc_pic.quality_params.vbaq_strength = 0;
 }
 
@@ -220,7 +219,7 @@ static void radeon_vcn_enc_get_latency_param(struct radeon_encoder *enc)
    struct si_screen *sscreen = (struct si_screen *)enc->screen;
 
    enc->enc_pic.enc_latency.encode_latency =
-      sscreen->debug_flags & DBG(LOW_LATENCY_ENCODE) ? 1000 : 0;
+      sscreen->multimedia_debug_flags & DBG(LOW_LATENCY_ENCODE) ? 1000 : 0;
 }
 
 static void radeon_vcn_enc_h264_get_session_param(struct radeon_encoder *enc,
@@ -302,6 +301,7 @@ static void radeon_vcn_enc_h264_get_spec_misc_param(struct radeon_encoder *enc,
       pic->pic_ctrl.weighted_bipred_idc : 0;
    enc->enc_pic.spec_misc.transform_8x8_mode =
       sscreen->info.vcn_ip_version >= VCN_5_0_0 &&
+      enc->enc_pic.spec_misc.cabac_enable &&
       pic->pic_ctrl.transform_8x8_mode_flag;
    enc->enc_pic.spec_misc.level_idc = pic->seq.level_idc;
 }
@@ -420,30 +420,25 @@ static void radeon_vcn_enc_h264_get_slice_ctrl_param(struct radeon_encoder *enc,
    enc->enc_pic.slice_ctrl.num_mbs_per_slice = num_mbs_in_slice;
 }
 
-static void radeon_vcn_enc_get_output_format_param(struct radeon_encoder *enc, bool full_range)
+static void radeon_vcn_enc_get_output_format_param(struct radeon_encoder *enc)
 {
    switch (enc->enc_pic.bit_depth_luma_minus8) {
    case 2: /* 10 bits */
-      enc->enc_pic.enc_output_format.output_color_volume = RENCODE_COLOR_VOLUME_G22_BT709;
-      enc->enc_pic.enc_output_format.output_color_range = full_range ?
-         RENCODE_COLOR_RANGE_FULL : RENCODE_COLOR_RANGE_STUDIO;
-      enc->enc_pic.enc_output_format.output_chroma_location = RENCODE_CHROMA_LOCATION_INTERSTITIAL;
       enc->enc_pic.enc_output_format.output_color_bit_depth = RENCODE_COLOR_BIT_DEPTH_10_BIT;
       break;
    default: /* 8 bits */
-      enc->enc_pic.enc_output_format.output_color_volume = RENCODE_COLOR_VOLUME_G22_BT709;
-      enc->enc_pic.enc_output_format.output_color_range = full_range ?
-         RENCODE_COLOR_RANGE_FULL : RENCODE_COLOR_RANGE_STUDIO;
-      enc->enc_pic.enc_output_format.output_chroma_location = RENCODE_CHROMA_LOCATION_INTERSTITIAL;
       enc->enc_pic.enc_output_format.output_color_bit_depth = RENCODE_COLOR_BIT_DEPTH_8_BIT;
       break;
    }
+
+   enc->enc_pic.enc_output_format.output_color_volume = enc->output_color_volume;
+   enc->enc_pic.enc_output_format.output_color_range = enc->output_color_range;
+   enc->enc_pic.enc_output_format.output_chroma_location = RENCODE_CHROMA_LOCATION_INTERSTITIAL;
 }
 
-static void radeon_vcn_enc_get_input_format_param(struct radeon_encoder *enc,
-                                                  struct pipe_picture_desc *pic_base)
+static void radeon_vcn_enc_get_input_format_param(struct radeon_encoder *enc)
 {
-   switch (pic_base->input_format) {
+   switch (enc->source->buffer_format) {
    case PIPE_FORMAT_P010:
       enc->enc_pic.enc_input_format.input_color_bit_depth = RENCODE_COLOR_BIT_DEPTH_10_BIT;
       enc->enc_pic.enc_input_format.input_color_packing_format = RENCODE_COLOR_PACKING_FORMAT_P010;
@@ -487,10 +482,9 @@ static void radeon_vcn_enc_get_input_format_param(struct radeon_encoder *enc,
       break;
    }
 
-  enc->enc_pic.enc_input_format.input_color_volume = RENCODE_COLOR_VOLUME_G22_BT709;
-  enc->enc_pic.enc_input_format.input_color_range = pic_base->input_full_range ?
-     RENCODE_COLOR_RANGE_FULL : RENCODE_COLOR_RANGE_STUDIO;
-   enc->enc_pic.enc_input_format.input_chroma_location = RENCODE_CHROMA_LOCATION_INTERSTITIAL;
+  enc->enc_pic.enc_input_format.input_color_volume = enc->input_color_volume;
+  enc->enc_pic.enc_input_format.input_color_range = enc->input_color_range;
+  enc->enc_pic.enc_input_format.input_chroma_location = RENCODE_CHROMA_LOCATION_INTERSTITIAL;
 }
 
 static void radeon_vcn_enc_h264_get_param(struct radeon_encoder *enc,
@@ -538,11 +532,9 @@ static void radeon_vcn_enc_h264_get_param(struct radeon_encoder *enc,
       enc->enc_pic.h264_enc_params.l1_reference_picture0_index = 0xffffffff;
    }
 
-   if ((pic->ref_list0[0] != PIPE_H2645_LIST_REF_INVALID_ENTRY &&
-        pic->dpb[pic->ref_list0[0]].picture_type == PIPE_H2645_ENC_PICTURE_TYPE_B) ||
-       (pic->ref_list1[0] != PIPE_H2645_LIST_REF_INVALID_ENTRY &&
-        pic->dpb[pic->ref_list1[0]].picture_type == PIPE_H2645_ENC_PICTURE_TYPE_B))
-      RADEON_ENC_ERR("B-frame references not supported\n");
+   if (pic->ref_list1[0] != PIPE_H2645_LIST_REF_INVALID_ENTRY &&
+       pic->dpb[pic->ref_list1[0]].picture_type == PIPE_H2645_ENC_PICTURE_TYPE_B)
+      RADEON_ENC_ERR("B-frame as L1 reference not supported\n");
 
    if (enc->dpb_type == DPB_TIER_2) {
       for (uint32_t i = 0; i < ARRAY_SIZE(pic->dpb); i++) {
@@ -558,8 +550,8 @@ static void radeon_vcn_enc_h264_get_param(struct radeon_encoder *enc,
    radeon_vcn_enc_h264_get_rc_param(enc, pic);
    radeon_vcn_enc_h264_get_spec_misc_param(enc, pic);
    radeon_vcn_enc_h264_get_slice_ctrl_param(enc, pic);
-   radeon_vcn_enc_get_input_format_param(enc, &pic->base);
-   radeon_vcn_enc_get_output_format_param(enc, pic->seq.video_full_range_flag);
+   radeon_vcn_enc_get_input_format_param(enc);
+   radeon_vcn_enc_get_output_format_param(enc);
 
    use_filter = enc->enc_pic.h264_deblock.disable_deblocking_filter_idc != 1;
    radeon_vcn_enc_get_intra_refresh_param(enc, use_filter, &pic->intra_refresh);
@@ -787,8 +779,8 @@ static void radeon_vcn_enc_hevc_get_param(struct radeon_encoder *enc,
    radeon_vcn_enc_hevc_get_dbk_param(enc, pic);
    radeon_vcn_enc_hevc_get_rc_param(enc, pic);
    radeon_vcn_enc_hevc_get_slice_ctrl_param(enc, pic);
-   radeon_vcn_enc_get_input_format_param(enc, &pic->base);
-   radeon_vcn_enc_get_output_format_param(enc, pic->seq.video_full_range_flag);
+   radeon_vcn_enc_get_input_format_param(enc);
+   radeon_vcn_enc_get_output_format_param(enc);
    radeon_vcn_enc_get_intra_refresh_param(enc,
                                         !(enc->enc_pic.hevc_deblock.deblocking_filter_disabled),
                                          &pic->intra_refresh);
@@ -1065,8 +1057,8 @@ static void radeon_vcn_enc_av1_get_param(struct radeon_encoder *enc,
    radeon_vcn_enc_av1_get_spec_misc_param(enc, pic);
    radeon_vcn_enc_av1_get_rc_param(enc, pic);
    radeon_vcn_enc_av1_get_tile_config(enc, pic);
-   radeon_vcn_enc_get_input_format_param(enc, &pic->base);
-   radeon_vcn_enc_get_output_format_param(enc, pic->seq.color_config.color_range);
+   radeon_vcn_enc_get_input_format_param(enc);
+   radeon_vcn_enc_get_output_format_param(enc);
    /* loop filter enabled all the time */
    radeon_vcn_enc_get_intra_refresh_param(enc,
                                          true,
@@ -1468,10 +1460,17 @@ static void radeon_enc_begin_frame(struct pipe_video_codec *encoder,
 {
    struct radeon_encoder *enc = (struct radeon_encoder *)encoder;
    struct si_screen *sscreen = (struct si_screen *)enc->screen;
-   struct vl_video_buffer *vid_buf = (struct vl_video_buffer *)source;
+   struct vl_video_buffer *vid_buf;
    unsigned dpb_slots = 0;
 
-   enc->source = source;
+   if (enc->efc_source) {
+      enc->source = enc->efc_source;
+      enc->efc_source = NULL;
+   } else {
+      enc->source = source;
+      enc->input_color_volume = enc->output_color_volume = RENCODE_COLOR_VOLUME_G22_BT709;
+      enc->input_color_range = enc->output_color_range = RENCODE_COLOR_RANGE_FULL;
+   }
    enc->need_rate_control = false;
    enc->need_rc_per_pic = false;
 
@@ -1580,9 +1579,11 @@ static void radeon_enc_begin_frame(struct pipe_video_codec *encoder,
       }
    }
 
-   if (source->buffer_format == PIPE_FORMAT_NV12 ||
-       source->buffer_format == PIPE_FORMAT_P010 ||
-       source->buffer_format == PIPE_FORMAT_P016) {
+   vid_buf = (struct vl_video_buffer *)enc->source;
+
+   if (enc->source->buffer_format == PIPE_FORMAT_NV12 ||
+       enc->source->buffer_format == PIPE_FORMAT_P010 ||
+       enc->source->buffer_format == PIPE_FORMAT_P016) {
       enc->get_buffer(vid_buf->resources[0], &enc->handle, &enc->luma);
       enc->get_buffer(vid_buf->resources[1], NULL, &enc->chroma);
    }
@@ -1752,7 +1753,7 @@ static void radeon_enc_encode_bitstream(struct pipe_video_codec *encoder,
                                         struct pipe_resource *destination, void **fb)
 {
    struct radeon_encoder *enc = (struct radeon_encoder *)encoder;
-   struct vl_video_buffer *vid_buf = (struct vl_video_buffer *)source;
+   struct vl_video_buffer *vid_buf = (struct vl_video_buffer *)enc->source;
 
    if (enc->error)
       return;
@@ -1785,6 +1786,105 @@ static void radeon_enc_encode_bitstream(struct pipe_video_codec *encoder,
    enc->encode(enc);
 }
 
+static bool radeon_vcn_enc_efc_supported(struct radeon_encoder *enc,
+                                         struct pipe_video_buffer *src,
+                                         const struct pipe_vpp_desc *vpp)
+{
+   struct si_screen *sscreen = (struct si_screen *)enc->screen;
+   struct si_texture *tex = (struct si_texture *)((struct vl_video_buffer *)src)->resources[0];
+   enum pipe_format src_format = src->buffer_format;
+   enum pipe_format dst_format = vpp->dst->buffer_format;
+
+   if (sscreen->info.vcn_ip_version < VCN_2_0_0 ||
+       sscreen->info.vcn_ip_version == VCN_2_2_0 ||
+       sscreen->multimedia_debug_flags & DBG(NO_EFC))
+      return false;
+
+   if (vpp->orientation != PIPE_VIDEO_VPP_ORIENTATION_DEFAULT ||
+       vpp->blend.mode != PIPE_VIDEO_VPP_BLEND_MODE_NONE)
+      return false;
+
+   if (vpp->src_region.x0 || vpp->src_region.y0 ||
+       vpp->dst_region.x0 || vpp->dst_region.y0 ||
+       vpp->src_region.x1 != vpp->dst_region.x1 ||
+       vpp->src_region.y1 != vpp->dst_region.y1)
+      return false;
+
+   if (vpp->in_colors_standard != vpp->out_colors_standard ||
+       (vpp->in_colors_standard != PIPE_VIDEO_VPP_COLOR_STANDARD_TYPE_NONE &&
+        vpp->in_colors_standard != PIPE_VIDEO_VPP_COLOR_STANDARD_TYPE_BT709))
+      return false;
+
+   /* DCC not supported */
+   if (tex->surface.meta_offset)
+      return false;
+
+   const bool input_8bit =
+      src_format == PIPE_FORMAT_B8G8R8A8_UNORM ||
+      src_format == PIPE_FORMAT_B8G8R8X8_UNORM ||
+      src_format == PIPE_FORMAT_R8G8B8A8_UNORM ||
+      src_format == PIPE_FORMAT_R8G8B8X8_UNORM;
+
+   const bool input_10bit =
+      src_format == PIPE_FORMAT_B10G10R10A2_UNORM ||
+      src_format == PIPE_FORMAT_B10G10R10X2_UNORM ||
+      src_format == PIPE_FORMAT_R10G10B10A2_UNORM ||
+      src_format == PIPE_FORMAT_R10G10B10X2_UNORM;
+
+   /* Unsupported input format */
+   if (!input_8bit && !input_10bit)
+      return false;
+
+   if (input_8bit && dst_format != PIPE_FORMAT_NV12)
+      return false;
+
+   if (input_10bit && dst_format != PIPE_FORMAT_NV12 && dst_format != PIPE_FORMAT_P010)
+      return false;
+
+   return true;
+}
+
+static uint32_t radeon_vcn_enc_color_volume(enum pipe_video_vpp_color_standard_type color_standard)
+{
+   switch (color_standard) {
+   case PIPE_VIDEO_VPP_COLOR_STANDARD_TYPE_NONE:
+   case PIPE_VIDEO_VPP_COLOR_STANDARD_TYPE_BT709:
+      return RENCODE_COLOR_VOLUME_G22_BT709;
+   default:
+      assert(0);
+      return 0;
+   }
+}
+
+static uint32_t radeon_vcn_enc_color_range(enum pipe_video_vpp_color_range color_range)
+{
+   switch (color_range) {
+   case PIPE_VIDEO_VPP_CHROMA_COLOR_RANGE_REDUCED:
+      return RENCODE_COLOR_RANGE_STUDIO;
+   case PIPE_VIDEO_VPP_CHROMA_COLOR_RANGE_FULL:
+   default:
+      return RENCODE_COLOR_RANGE_FULL;
+   }
+}
+
+static int radeon_enc_process_frame(struct pipe_video_codec *encoder,
+                                    struct pipe_video_buffer *source,
+                                    const struct pipe_vpp_desc *vpp)
+{
+   struct radeon_encoder *enc = (struct radeon_encoder *)encoder;
+
+   if (radeon_vcn_enc_efc_supported(enc, source, vpp)) {
+      enc->efc_source = source;
+      enc->input_color_volume = radeon_vcn_enc_color_volume(vpp->in_colors_standard);
+      enc->input_color_range = radeon_vcn_enc_color_range(vpp->in_color_range);
+      enc->output_color_volume = radeon_vcn_enc_color_volume(vpp->out_colors_standard);
+      enc->output_color_range = radeon_vcn_enc_color_range(vpp->out_color_range);
+      return 0;
+   }
+
+   return 1;
+}
+
 static int radeon_enc_end_frame(struct pipe_video_codec *encoder, struct pipe_video_buffer *source,
                                 struct pipe_picture_desc *picture)
 {
@@ -1793,7 +1893,7 @@ static int radeon_enc_end_frame(struct pipe_video_codec *encoder, struct pipe_vi
    if (enc->error)
       return -1;
 
-   return flush(enc, picture->flush_flags, picture->fence);
+   return flush(enc, picture->flush_flags, picture->out_fence);
 }
 
 static void radeon_enc_destroy(struct pipe_video_codec *encoder)
@@ -2002,6 +2102,7 @@ struct pipe_video_codec *radeon_create_encoder(struct pipe_context *context,
    enc->base.destroy = radeon_enc_destroy;
    enc->base.begin_frame = radeon_enc_begin_frame;
    enc->base.encode_bitstream = radeon_enc_encode_bitstream;
+   enc->base.process_frame = radeon_enc_process_frame;
    enc->base.end_frame = radeon_enc_end_frame;
    enc->base.flush = radeon_enc_flush;
    enc->base.get_feedback = radeon_enc_get_feedback;
@@ -2022,7 +2123,8 @@ struct pipe_video_codec *radeon_create_encoder(struct pipe_context *context,
 
    ac_vcn_enc_init_cmds(&enc->cmd, sscreen->info.vcn_ip_version);
 
-   if (sscreen->info.vcn_ip_version >= VCN_5_0_0)
+   if (sscreen->info.vcn_ip_version >= VCN_5_0_0 &&
+       !(sscreen->multimedia_debug_flags & DBG(NO_ENCODE_TIER2)))
       enc->dpb_type = DPB_TIER_2;
 
    if (enc->dpb_type == DPB_TIER_2)

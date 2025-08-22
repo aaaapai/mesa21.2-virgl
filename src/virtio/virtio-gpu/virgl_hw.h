@@ -551,6 +551,17 @@ enum virgl_formats {
    VIRGL_FORMAT_ASTC_10x10_FLOAT        = 468,
    VIRGL_FORMAT_ASTC_12x10_FLOAT        = 469,
    VIRGL_FORMAT_ASTC_12x12_FLOAT        = 470,
+   VIRGL_FORMAT_Y8U8V8_420_UNORM_PACKED = 471,
+   VIRGL_FORMAT_Y10U10V10_420_UNORM_PACKED = 472,
+   VIRGL_FORMAT_R8G8B8_420_UNORM_PACKED = 473,
+   VIRGL_FORMAT_R10G10B10_420_UNORM_PACKED = 474,
+   VIRGL_FORMAT_Y10X6_U10X6_V10X6_420_UNORM = 475,
+   VIRGL_FORMAT_Y10X6_U10X6_V10X6_422_UNORM = 476,
+   VIRGL_FORMAT_Y10X6_U10X6_V10X6_444_UNORM = 477,
+   VIRGL_FORMAT_Y12X4_U12X4_V12X4_420_UNORM = 478,
+   VIRGL_FORMAT_Y12X4_U12X4_V12X4_422_UNORM = 479,
+   VIRGL_FORMAT_Y12X4_U12X4_V12X4_444_UNORM = 480,
+
    VIRGL_FORMAT_MAX /* = PIPE_FORMAT_COUNT */,
 
    /* Below formats must not be used in the guest. */
@@ -796,13 +807,13 @@ struct virgl_caps_v2 {
         // Guest-side driver has always used it as such.
         uint32_t max_texture_samplers;
         struct virgl_supported_format_mask supported_multisample_formats;
-        uint32_t max_const_buffer_size[6]; // PIPE_SHADER_TYPES
+        uint32_t max_const_buffer_size[6]; // MESA_SHADER_STAGES
         uint32_t num_video_caps;
         struct virgl_video_caps video_caps[32];
         uint32_t max_uniform_block_size;
         uint32_t max_tcs_outputs;
         uint32_t max_tes_outputs;
-        uint32_t max_shader_storage_blocks[6]; // PIPE_SHADER_TYPES
+        uint32_t max_shader_storage_blocks[6]; // MESA_SHADER_STAGES
 };
 
 union virgl_caps {

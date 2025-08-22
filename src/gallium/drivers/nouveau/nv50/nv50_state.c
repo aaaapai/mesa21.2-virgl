@@ -630,7 +630,7 @@ nv50_stage_sampler_states_bind(struct nv50_context *nv50, int s,
 
 static void
 nv50_bind_sampler_states(struct pipe_context *pipe,
-                         enum pipe_shader_type shader, unsigned start,
+                         mesa_shader_stage shader, unsigned start,
                          unsigned num_samplers, void **samplers)
 {
    unsigned s = nv50_context_shader_stage(shader);
@@ -701,7 +701,7 @@ nv50_stage_set_sampler_views(struct nv50_context *nv50, int s,
 }
 
 static void
-nv50_set_sampler_views(struct pipe_context *pipe, enum pipe_shader_type shader,
+nv50_set_sampler_views(struct pipe_context *pipe, mesa_shader_stage shader,
                        unsigned start, unsigned nr,
                        unsigned unbind_num_trailing_slots,
                        struct pipe_sampler_view **views)
@@ -731,7 +731,7 @@ nv50_set_sampler_views(struct pipe_context *pipe, enum pipe_shader_type shader,
 static void *
 nv50_sp_state_create(struct pipe_context *pipe,
                      const struct pipe_shader_state *cso,
-                     enum pipe_shader_type type)
+                     mesa_shader_stage type)
 {
    struct nv50_program *prog;
 
@@ -782,7 +782,7 @@ static void *
 nv50_vp_state_create(struct pipe_context *pipe,
                      const struct pipe_shader_state *cso)
 {
-   return nv50_sp_state_create(pipe, cso, PIPE_SHADER_VERTEX);
+   return nv50_sp_state_create(pipe, cso, MESA_SHADER_VERTEX);
 }
 
 static void
@@ -798,7 +798,7 @@ static void *
 nv50_fp_state_create(struct pipe_context *pipe,
                      const struct pipe_shader_state *cso)
 {
-   return nv50_sp_state_create(pipe, cso, PIPE_SHADER_FRAGMENT);
+   return nv50_sp_state_create(pipe, cso, MESA_SHADER_FRAGMENT);
 }
 
 static void
@@ -814,7 +814,7 @@ static void *
 nv50_gp_state_create(struct pipe_context *pipe,
                      const struct pipe_shader_state *cso)
 {
-   return nv50_sp_state_create(pipe, cso, PIPE_SHADER_GEOMETRY);
+   return nv50_sp_state_create(pipe, cso, MESA_SHADER_GEOMETRY);
 }
 
 static void
@@ -835,7 +835,7 @@ nv50_cp_state_create(struct pipe_context *pipe,
    prog = CALLOC_STRUCT(nv50_program);
    if (!prog)
       return NULL;
-   prog->type = PIPE_SHADER_COMPUTE;
+   prog->type = MESA_SHADER_COMPUTE;
 
    switch(cso->ir_type) {
    case PIPE_SHADER_IR_TGSI: {
@@ -884,7 +884,7 @@ nv50_get_compute_state_info(struct pipe_context *pipe, void *hwcso,
 
 static void
 nv50_set_constant_buffer(struct pipe_context *pipe,
-                         enum pipe_shader_type shader, uint index,
+                         mesa_shader_stage shader, uint index,
                          bool take_ownership,
                          const struct pipe_constant_buffer *cb)
 {
@@ -893,7 +893,7 @@ nv50_set_constant_buffer(struct pipe_context *pipe,
    const unsigned s = nv50_context_shader_stage(shader);
    const unsigned i = index;
 
-   if (unlikely(shader == PIPE_SHADER_COMPUTE)) {
+   if (unlikely(shader == MESA_SHADER_COMPUTE)) {
       if (nv50->constbuf[s][i].user)
          nv50->constbuf[s][i].u.buf = NULL;
       else
@@ -1006,7 +1006,7 @@ nv50_set_framebuffer_state(struct pipe_context *pipe,
 
    nouveau_bufctx_reset(nv50->bufctx_3d, NV50_BIND_3D_FB);
 
-   util_framebuffer_init(pipe, fb, nv50->fb_cbufs, &nv50->fb_zsbuf);
+   nv50_framebuffer_init(pipe, fb, nv50->fb_cbufs, &nv50->fb_zsbuf);
    util_copy_framebuffer_state(&nv50->framebuffer, fb);
 
    nv50->dirty_3d |= NV50_NEW_3D_FRAMEBUFFER | NV50_NEW_3D_TEXTURES;
@@ -1311,7 +1311,7 @@ nv50_bind_images_range(struct nv50_context *nv50,
 
 static void
 nv50_set_shader_images(struct pipe_context *pipe,
-                       enum pipe_shader_type shader,
+                       mesa_shader_stage shader,
                        unsigned start, unsigned nr,
                        unsigned unbind_num_trailing_slots,
                        const struct pipe_image_view *images)
@@ -1376,7 +1376,7 @@ nv50_bind_buffers_range(struct nv50_context *nv50,
 
 static void
 nv50_set_shader_buffers(struct pipe_context *pipe,
-                        enum pipe_shader_type shader,
+                        mesa_shader_stage shader,
                         unsigned start, unsigned nr,
                         const struct pipe_shader_buffer *buffers,
                         unsigned writable_bitmask)

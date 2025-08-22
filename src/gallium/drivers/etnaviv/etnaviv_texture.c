@@ -40,7 +40,7 @@
 #include "drm-uapi/drm_fourcc.h"
 
 static void
-etna_bind_sampler_states(struct pipe_context *pctx, enum pipe_shader_type shader,
+etna_bind_sampler_states(struct pipe_context *pctx, mesa_shader_stage shader,
                          unsigned start_slot, unsigned num_samplers,
                          void **samplers)
 {
@@ -50,11 +50,11 @@ etna_bind_sampler_states(struct pipe_context *pctx, enum pipe_shader_type shader
    int offset;
 
    switch (shader) {
-   case PIPE_SHADER_FRAGMENT:
+   case MESA_SHADER_FRAGMENT:
       offset = 0;
       ctx->num_fragment_samplers = num_samplers;
       break;
-   case PIPE_SHADER_VERTEX:
+   case MESA_SHADER_VERTEX:
       offset = screen->specs.vertex_sampler_offset;
       break;
    default:
@@ -102,7 +102,8 @@ etna_configure_sampler_ts(struct etna_sampler_ts *sts, struct pipe_sampler_view 
    sts->TS_SAMPLER_CONFIG =
       VIVS_TS_SAMPLER_CONFIG_ENABLE |
       COND(lev->ts_compress_fmt >= 0, VIVS_TS_SAMPLER_CONFIG_COMPRESSION) |
-      VIVS_TS_SAMPLER_CONFIG_COMPRESSION_FORMAT(lev->ts_compress_fmt);
+      VIVS_TS_SAMPLER_CONFIG_COMPRESSION_FORMAT(lev->ts_compress_fmt) |
+      COND(util_format_get_blocksizebits(pview->format) == 64, VIVS_TS_SAMPLER_CONFIG_64BPP_FORMAT);
    sts->TS_SAMPLER_CLEAR_VALUE = lev->clear_value;
    sts->TS_SAMPLER_CLEAR_VALUE2 = lev->clear_value >> 32;
    sts->TS_SAMPLER_STATUS_BASE.bo = rsc->ts_bo;
@@ -319,7 +320,7 @@ etna_vertex_set_sampler_views(struct etna_context *ctx, unsigned nr,
 }
 
 static void
-etna_set_sampler_views(struct pipe_context *pctx, enum pipe_shader_type shader,
+etna_set_sampler_views(struct pipe_context *pctx, mesa_shader_stage shader,
                        unsigned start_slot, unsigned num_views,
                        unsigned unbind_num_trailing_slots,
                        struct pipe_sampler_view **views)
@@ -330,10 +331,10 @@ etna_set_sampler_views(struct pipe_context *pctx, enum pipe_shader_type shader,
    ctx->dirty |= ETNA_DIRTY_SAMPLER_VIEWS | ETNA_DIRTY_TEXTURE_CACHES;
 
    switch (shader) {
-   case PIPE_SHADER_FRAGMENT:
+   case MESA_SHADER_FRAGMENT:
       etna_fragtex_set_sampler_views(ctx, num_views, views);
       break;
-   case PIPE_SHADER_VERTEX:
+   case MESA_SHADER_VERTEX:
       etna_vertex_set_sampler_views(ctx, num_views, views);
       break;
    default:;

@@ -262,13 +262,13 @@ static bool
 nir_interstage_cross_validate_uniform_blocks(struct gl_shader_program *prog,
                                              enum block_type block_type)
 {
-   int *interfaceBlockStageIndex[MESA_SHADER_STAGES];
+   int *interfaceBlockStageIndex[MESA_SHADER_MESH_STAGES];
    struct gl_uniform_block *blks = NULL;
    unsigned *num_blks = block_type == BLOCK_SSBO ? &prog->data->NumShaderStorageBlocks :
       &prog->data->NumUniformBlocks;
 
    unsigned max_num_buffer_blocks = 0;
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       if (prog->_LinkedShaders[i]) {
          if (block_type == BLOCK_SSBO) {
             max_num_buffer_blocks +=
@@ -280,7 +280,7 @@ nir_interstage_cross_validate_uniform_blocks(struct gl_shader_program *prog,
       }
    }
 
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       struct gl_linked_shader *sh = prog->_LinkedShaders[i];
 
       interfaceBlockStageIndex[i] = malloc(max_num_buffer_blocks * sizeof(int));
@@ -328,7 +328,7 @@ nir_interstage_cross_validate_uniform_blocks(struct gl_shader_program *prog,
 
    /* Update per stage block pointers to point to the program list.
     */
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       for (unsigned j = 0; j < *num_blks; j++) {
          int stage_index = interfaceBlockStageIndex[i][j];
 
@@ -345,7 +345,7 @@ nir_interstage_cross_validate_uniform_blocks(struct gl_shader_program *prog,
       }
    }
 
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       free(interfaceBlockStageIndex[i]);
    }
 
@@ -1026,7 +1026,7 @@ fill_block(void *mem_ctx, const struct gl_constants *consts, const char *name,
            unsigned binding_offset,
            unsigned linearized_index,
            struct gl_shader_program *prog,
-           const gl_shader_stage stage,
+           const mesa_shader_stage stage,
            enum block_type block_type)
 {
    struct gl_uniform_block *block = &blocks[*block_index];
@@ -1136,7 +1136,7 @@ fill_block_array(struct uniform_block_array_elements *ub_array,
                  struct gl_uniform_buffer_variable *variables,
                  unsigned *variable_index, unsigned binding_offset,
                  struct gl_shader_program *prog,
-                 const gl_shader_stage stage, enum block_type block_type,
+                 const mesa_shader_stage stage, enum block_type block_type,
                  unsigned *block_index, unsigned first_index)
 {
    for (unsigned j = 0; j < ub_array->num_array_elements; j++) {
@@ -1250,7 +1250,7 @@ gl_nir_link_uniform_blocks(const struct gl_constants *consts,
 {
    void *mem_ctx = ralloc_context(NULL);
    bool ret = false;
-   for (int stage = 0; stage < MESA_SHADER_STAGES; stage++) {
+   for (int stage = 0; stage < MESA_SHADER_MESH_STAGES; stage++) {
       struct gl_linked_shader *const linked = prog->_LinkedShaders[stage];
       struct gl_uniform_block *ubo_blocks = NULL;
       unsigned num_ubo_blocks = 0;
@@ -1291,8 +1291,11 @@ gl_nir_link_uniform_blocks(const struct gl_constants *consts,
       prog->data->linked_stages |= 1 << stage;
 
       /* Copy ubo blocks to linked shader list */
-      linked->Program->sh.UniformBlocks =
-         ralloc_array(linked, struct gl_uniform_block *, num_ubo_blocks);
+      linked->Program->sh.UniformBlocks = NULL;
+      if (num_ubo_blocks) {
+         linked->Program->sh.UniformBlocks =
+            ralloc_array(linked, struct gl_uniform_block *, num_ubo_blocks);
+      }
       ralloc_steal(linked, ubo_blocks);
       linked->Program->sh.NumUniformBlocks = num_ubo_blocks;
       for (unsigned i = 0; i < num_ubo_blocks; i++) {
@@ -1307,8 +1310,11 @@ gl_nir_link_uniform_blocks(const struct gl_constants *consts,
       linked->Program->info.num_ubos = num_ubo_blocks;
 
       /* Copy ssbo blocks to linked shader list */
-      linked->Program->sh.ShaderStorageBlocks =
-         ralloc_array(linked, struct gl_uniform_block *, num_ssbo_blocks);
+      linked->Program->sh.ShaderStorageBlocks = NULL;
+      if (num_ssbo_blocks) {
+         linked->Program->sh.ShaderStorageBlocks =
+            ralloc_array(linked, struct gl_uniform_block *, num_ssbo_blocks);
+      }
       ralloc_steal(linked, ssbo_blocks);
       for (unsigned i = 0; i < num_ssbo_blocks; i++) {
          linked->Program->sh.ShaderStorageBlocks[i] = &ssbo_blocks[i];

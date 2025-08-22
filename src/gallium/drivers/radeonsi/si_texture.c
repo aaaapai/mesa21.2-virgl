@@ -222,7 +222,9 @@ static int si_init_surface(struct si_screen *sscreen, struct radeon_surf *surfac
             flags |= RADEON_SURF_SBUFFER;
 
          if (sscreen->debug_flags & DBG(NO_HYPERZ) ||
-             ptex->flags & PIPE_RESOURCE_FLAG_SPARSE)
+             (ptex->flags & PIPE_RESOURCE_FLAG_SPARSE) ||
+             (ptex->bind & PIPE_BIND_SHARED) ||
+             is_imported)
             flags |= RADEON_SURF_NO_HTILE;
       }
 
@@ -488,7 +490,7 @@ bool si_texture_disable_dcc(struct si_context *sctx, struct si_texture *tex)
 {
    struct si_screen *sscreen = sctx->screen;
 
-   if (!sctx->has_graphics)
+   if (!sctx->is_gfx_queue)
       return si_texture_discard_dcc(sscreen, tex);
 
    if (!si_can_disable_dcc(tex))
@@ -1121,8 +1123,11 @@ static struct si_texture *si_texture_create_object(struct pipe_screen *screen,
       /* Always set BO metadata - required for programming DCC fields for GFX12 SDMA in the kernel.
        * If the texture is suballocated, this will overwrite the metadata for all suballocations,
        * but there is nothing we can do about that.
+       *
+       * Sparse textures don't have any backing storage at this point.
        */
-      si_set_tex_bo_metadata(sscreen, tex);
+      if (!(base->flags & PIPE_RESOURCE_FLAG_SPARSE))
+         si_set_tex_bo_metadata(sscreen, tex);
       return tex;
    }
 
@@ -1309,6 +1314,23 @@ error:
    return NULL;
 }
 
+static enum pipe_format
+si_get_plane_format(enum pipe_format format, unsigned plane)
+{
+   enum pipe_format fmt = util_format_get_plane_format(format, plane);
+
+   switch (fmt) {
+   case PIPE_FORMAT_X6R10_UNORM:
+   case PIPE_FORMAT_X4R12_UNORM:
+      return PIPE_FORMAT_R16_UNORM;
+   case PIPE_FORMAT_X6R10X6G10_UNORM:
+   case PIPE_FORMAT_X4R12X4G12_UNORM:
+      return PIPE_FORMAT_R16G16_UNORM;
+   default:
+      return fmt;
+   }
+}
+
 static enum radeon_surf_mode si_choose_tiling(struct si_screen *sscreen,
                                               const struct pipe_resource *templ,
                                               bool tc_compatible_htile)
@@ -1417,7 +1439,7 @@ si_texture_create_with_modifier(struct pipe_screen *screen,
    /* Compute texture or plane layouts and offsets. */
    for (unsigned i = 0; i < num_planes; i++) {
       plane_templ[i] = *templ;
-      plane_templ[i].format = util_format_get_plane_format(templ->format, i);
+      plane_templ[i].format = si_get_plane_format(templ->format, i);
       plane_templ[i].width0 = util_format_get_plane_width(templ->format, i, templ->width0);
       plane_templ[i].height0 = util_format_get_plane_height(templ->format, i, templ->height0);
 
@@ -1545,7 +1567,7 @@ bool si_texture_commit(struct si_context *ctx, struct si_resource *res, unsigned
    for (int i = 0; i < d; i++) {
       uint64_t base = commit_base + i * depth_pitch;
       for (int j = 0; j < h; j++) {
-         uint64_t offset = base + j * row_pitch;
+         uint64_t offset = base + j * (uint64_t)row_pitch;
          if (!ctx->ws->buffer_commit(ctx->ws, res->buf, offset, size, commit))
             return false;
       }
@@ -1719,7 +1741,8 @@ static struct pipe_resource *si_texture_from_winsys_buffer(struct si_screen *ssc
                                                            const struct pipe_resource *templ,
                                                            struct pb_buffer_lean *buf, unsigned stride,
                                                            uint64_t offset, uint64_t modifier,
-                                                           unsigned usage, bool dedicated)
+                                                           unsigned usage, bool dedicated,
+                                                           bool take_ownership)
 {
    struct radeon_surf surface = {};
    struct radeon_bo_metadata metadata = {};
@@ -1744,8 +1767,8 @@ static struct pipe_resource *si_texture_from_winsys_buffer(struct si_screen *ssc
           modifier == DRM_FORMAT_MOD_INVALID &&
           md_version >= 3 &&
           md_flags & (1u << AC_SURF_METADATA_FLAG_FAMILY_OVERRIDEN_BIT)) {
-         fprintf(stderr, "si_texture_from_winsys_buffer: fail texture import due to "
-                         "AC_SURF_METADATA_FLAG_FAMILY_OVERRIDEN_BIT being set.\n");
+         mesa_loge("si_texture_from_winsys_buffer: fail texture import due to "
+                   "AC_SURF_METADATA_FLAG_FAMILY_OVERRIDEN_BIT being set.");
          return NULL;
       }
    } else {
@@ -1787,6 +1810,11 @@ static struct pipe_resource *si_texture_from_winsys_buffer(struct si_screen *ssc
                                   offset, stride, 0, 0);
    if (!tex)
       return NULL;
+
+   if (!take_ownership) {
+      struct pb_buffer_lean *tmp = NULL;
+      radeon_bo_reference(sscreen->ws, &tmp, buf);
+   }
 
    tex->buffer.b.is_shared = true;
    tex->buffer.external_usage = usage;
@@ -1867,7 +1895,7 @@ static struct pipe_resource *si_texture_from_handle(struct pipe_screen *screen,
       return NULL;
 
    if (templ->target == PIPE_BUFFER)
-      return si_buffer_from_winsys_buffer(screen, templ, buf, 0);
+      return si_buffer_from_winsys_buffer(screen, templ, buf, 0, true);
 
    if (whandle->plane >= util_format_get_num_planes(whandle->format)) {
       struct si_auxiliary_texture *tex = CALLOC_STRUCT_CL(si_auxiliary_texture);
@@ -1885,7 +1913,7 @@ static struct pipe_resource *si_texture_from_handle(struct pipe_screen *screen,
    }
 
    return si_texture_from_winsys_buffer(sscreen, templ, buf, whandle->stride, whandle->offset,
-                                        whandle->modifier, usage, true);
+                                        whandle->modifier, usage, true, true);
 }
 
 bool si_init_flushed_depth_texture(struct pipe_context *ctx, struct pipe_resource *texture)
@@ -2386,22 +2414,17 @@ static struct pipe_resource *si_resource_from_memobj(struct pipe_screen *screen,
    struct pipe_resource *res;
 
    if (templ->target == PIPE_BUFFER)
-      res = si_buffer_from_winsys_buffer(screen, templ, memobj->buf, offset);
+      res = si_buffer_from_winsys_buffer(screen, templ, memobj->buf, offset, false);
    else
       res = si_texture_from_winsys_buffer(sscreen, templ, memobj->buf,
                                           memobj->stride,
                                           offset, DRM_FORMAT_MOD_INVALID,
                                           PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE | PIPE_HANDLE_USAGE_SHADER_WRITE,
-                                          memobj->b.dedicated);
+                                          memobj->b.dedicated, false);
 
    if (!res)
       return NULL;
 
-   /* si_texture_from_winsys_buffer doesn't increment refcount of
-    * memobj->buf, so increment it here.
-    */
-   struct pb_buffer_lean *buf = NULL;
-   radeon_bo_reference(sscreen->ws, &buf, memobj->buf);
    return res;
 }
 

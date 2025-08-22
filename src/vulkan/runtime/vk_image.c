@@ -284,6 +284,25 @@ vk_image_expand_aspect_mask(const struct vk_image *image,
    }
 }
 
+uint32_t
+vk_image_subresource_slice_count(const struct vk_device *device,
+                                 const struct vk_image *image,
+                                 const VkImageSubresourceLayers *range)
+{
+   assert(image->image_type == VK_IMAGE_TYPE_3D);
+
+   bool layers_are_slices = device->enabled_features.maintenance9 &&
+      (image->create_flags & VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT);
+   uint32_t slices = u_minify(image->extent.depth, range->mipLevel);
+
+   if (!layers_are_slices) {
+      assert(range->baseArrayLayer == 0);
+      return slices;
+   }
+   return range->layerCount == VK_REMAINING_ARRAY_LAYERS ?
+          slices - range->baseArrayLayer : range->layerCount;
+}
+
 VkExtent3D
 vk_image_extent_to_elements(const struct vk_image *image, VkExtent3D extent)
 {
@@ -455,7 +474,7 @@ vk_image_view_init(struct vk_device *device,
          assert(image->create_flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
          break;
       default:
-         unreachable("Invalid image view type");
+         UNREACHABLE("Invalid image view type");
       }
    }
 
@@ -619,7 +638,7 @@ vk_image_view_init(struct vk_device *device,
           <= image->mip_levels);
    switch (image->image_type) {
    default:
-      unreachable("bad VkImageType");
+      UNREACHABLE("bad VkImageType");
    case VK_IMAGE_TYPE_1D:
    case VK_IMAGE_TYPE_2D:
       assert(image_view->base_array_layer + image_view->layer_count
@@ -739,10 +758,10 @@ vk_image_layout_is_read_only(VkImageLayout layout,
    case VK_IMAGE_LAYOUT_VIDEO_ENCODE_DPB_KHR:
    case VK_IMAGE_LAYOUT_VIDEO_ENCODE_QUANTIZATION_MAP_KHR:
    case VK_IMAGE_LAYOUT_TENSOR_ALIASING_ARM:
-      unreachable("Invalid image layout.");
+      UNREACHABLE("Invalid image layout.");
    }
 
-   unreachable("Invalid image layout.");
+   UNREACHABLE("Invalid image layout.");
 }
 
 bool
@@ -1133,8 +1152,8 @@ vk_image_layout_to_usage_flags(VkImageLayout layout,
       return VK_IMAGE_USAGE_TENSOR_ALIASING_BIT_ARM;
 
    case VK_IMAGE_LAYOUT_MAX_ENUM:
-      unreachable("Invalid image layout.");
+      UNREACHABLE("Invalid image layout.");
    }
 
-   unreachable("Invalid image layout.");
+   UNREACHABLE("Invalid image layout.");
 }

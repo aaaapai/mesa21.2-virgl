@@ -159,10 +159,8 @@ anv_gfx_state_bit_to_str(enum anv_gfx_state_bits state)
       NAME(TASK_CONTROL);
       NAME(TASK_SHADER);
       NAME(TASK_REDISTRIB);
-      NAME(BLEND_STATE_PTR);
       NAME(CLIP);
       NAME(CC_STATE);
-      NAME(CC_STATE_PTR);
       NAME(CPS);
       NAME(DEPTH_BOUNDS);
       NAME(INDEX_BUFFER);
@@ -180,18 +178,17 @@ anv_gfx_state_bit_to_str(enum anv_gfx_state_bits state)
       NAME(VF_TOPOLOGY);
       NAME(VFG);
       NAME(VIEWPORT_CC);
-      NAME(VIEWPORT_CC_PTR);
       NAME(VIEWPORT_SF_CLIP);
       NAME(WM);
       NAME(WM_DEPTH_STENCIL);
       NAME(PMA_FIX);
       NAME(WA_18019816803);
+      NAME(WA_14018283232);
       NAME(TBIMR_TILE_PASS_INFO);
       NAME(FS_MSAA_FLAGS);
       NAME(TCS_INPUT_VERTICES);
-      NAME(COARSE_STATE);
       NAME(MESH_PROVOKING_VERTEX);
-   default: unreachable("invalid state");
+   default: UNREACHABLE("invalid state");
    }
 }
 
@@ -262,7 +259,7 @@ create_bvh_dump_file(struct anv_bvh_dump *bvh)
       dump_sub_directory = "BVH_IR_AS";
       break;
    default:
-      unreachable("invalid dump type");
+      UNREACHABLE("invalid dump type");
    }
 
    create_directory(dump_directory, dump_sub_directory);

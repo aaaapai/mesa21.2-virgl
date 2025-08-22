@@ -58,9 +58,13 @@ brw_emit_single_fb_write(brw_shader &s, const brw_builder &bld,
 static void
 brw_do_emit_fb_writes(brw_shader &s, int nr_color_regions, bool replicate_alpha)
 {
+   struct brw_wm_prog_data *prog_data = brw_wm_prog_data(s.prog_data);
    const brw_builder bld = brw_builder(&s);
-   brw_inst *inst = NULL;
 
+   const bool double_rt_writes = s.devinfo->ver == 11 &&
+      prog_data->coarse_pixel_dispatch == INTEL_SOMETIMES;
+
+   brw_inst *inst = NULL;
    for (int target = 0; target < nr_color_regions; target++) {
       /* Skip over outputs that weren't written. */
       if (s.outputs[target].file == BAD_FILE)
@@ -74,13 +78,18 @@ brw_do_emit_fb_writes(brw_shader &s, int nr_color_regions, bool replicate_alpha)
          src0_alpha = offset(s.outputs[0], bld, 3);
 
       inst = brw_emit_single_fb_write(s, abld, s.outputs[target],
-                                      s.dual_src_output, src0_alpha, target, 4,
-                                      false);
+                                      s.dual_src_output, src0_alpha,
+                                      target, 4, false);
+   }
+
+   bool flag_dummy_message = inst && double_rt_writes;
+   if (inst) {
+      inst->src[FB_WRITE_LOGICAL_SRC_LAST_RT] = brw_imm_ud(true);
+      inst->eot = true;
    }
 
    if (inst == NULL) {
       struct brw_wm_prog_key *key = (brw_wm_prog_key*) s.key;
-      struct brw_wm_prog_data *prog_data = brw_wm_prog_data(s.prog_data);
       /* Disable null_rt if any non color output is written or if
        * alpha_to_coverage can be enabled. Since the alpha_to_coverage bit is
        * coming from the BLEND_STATE structure and the HW will avoid reading
@@ -90,24 +99,24 @@ brw_do_emit_fb_writes(brw_shader &s, int nr_color_regions, bool replicate_alpha)
          key->alpha_to_coverage == INTEL_NEVER &&
          !prog_data->uses_omask;
 
-      /* Even if there's no color buffers enabled, we still need to send
-       * alpha out the pipeline to our null renderbuffer to support
-       * alpha-testing, alpha-to-coverage, and so on.
+      /* Even if there's no color buffers enabled, we still need to send alpha
+       * out the pipeline to our null renderbuffer to support alpha-testing,
+       * alpha-to-coverage, and so on.
        */
       /* FINISHME: Factor out this frequently recurring pattern into a
        * helper function.
        */
       const brw_reg srcs[] = { reg_undef, reg_undef,
-                              reg_undef, offset(s.outputs[0], bld, 3) };
+                               reg_undef, offset(s.outputs[0], bld, 3) };
       const brw_reg tmp = bld.vgrf(BRW_TYPE_UD, 4);
       bld.LOAD_PAYLOAD(tmp, srcs, 4, 0);
 
       inst = brw_emit_single_fb_write(s, bld, tmp, reg_undef, reg_undef,
                                       0, 4, use_null_rt);
+      inst->src[FB_WRITE_LOGICAL_SRC_LAST_RT] = brw_imm_ud(true);
+      inst->has_no_mask_send_params = flag_dummy_message;
+      inst->eot = true;
    }
-
-   inst->src[FB_WRITE_LOGICAL_SRC_LAST_RT] = brw_imm_ud(true);
-   inst->eot = true;
 }
 
 static void
@@ -181,12 +190,44 @@ brw_emit_interpolation_setup(brw_shader &s)
    const struct intel_device_info *devinfo = s.devinfo;
    const brw_builder bld = brw_builder(&s);
    brw_builder abld = bld.annotate("compute pixel centers");
+   const struct brw_wm_prog_key *wm_key = (brw_wm_prog_key*) s.key;
+   struct brw_wm_prog_data *wm_prog_data = brw_wm_prog_data(s.prog_data);
+
+   brw_reg ub_cps_width, ub_cps_height;
+   {
+      /* The coarse pixel size is delivered as 2 u8 in r1.0 if coarse pixel
+       * dispatch is active. Otherwise we need to build a value ourselves.
+       */
+      brw_builder ubld = bld.exec_all().scalar_group();
+      const brw_reg r1_0 = retype(brw_vec1_reg(FIXED_GRF, 1, 0), BRW_TYPE_UD);
+
+      brw_reg cps_size = ubld.vgrf(BRW_TYPE_UD);
+      switch (wm_prog_data->coarse_pixel_dispatch) {
+      case INTEL_NEVER:
+         ubld.MOV(cps_size, brw_imm_ud(0x00000101));
+         break;
+      case INTEL_SOMETIMES:
+         brw_check_dynamic_msaa_flag(ubld, wm_prog_data,
+                                     INTEL_MSAA_FLAG_COARSE_RT_WRITES);
+
+         set_predicate_inv(BRW_PREDICATE_NORMAL, false,
+                           ubld.MOV(cps_size, r1_0));
+         set_predicate_inv(BRW_PREDICATE_NORMAL, true,
+                           ubld.MOV(cps_size, brw_imm_ud(0x00000101)));
+         break;
+      case INTEL_ALWAYS:
+         ubld.MOV(cps_size, r1_0);
+         break;
+      }
+
+      cps_size = component(cps_size, 0);
+      ub_cps_width = retype(cps_size, BRW_TYPE_UB);
+      ub_cps_height = byte_offset(retype(cps_size, BRW_TYPE_UB), 1);
+   }
 
    s.pixel_x = bld.vgrf(BRW_TYPE_F);
    s.pixel_y = bld.vgrf(BRW_TYPE_F);
 
-   const struct brw_wm_prog_key *wm_key = (brw_wm_prog_key*) s.key;
-   struct brw_wm_prog_data *wm_prog_data = brw_wm_prog_data(s.prog_data);
    brw_fs_thread_payload &payload = s.fs_payload();
 
    brw_reg int_sample_offset_x, int_sample_offset_y; /* Used on Gen12HP+ */
@@ -245,11 +286,7 @@ brw_emit_interpolation_setup(brw_shader &s)
       /* In coarse pixel dispatch we have to do the same ADD instruction that
        * we do in normal per pixel dispatch, except this time we're not adding
        * 1 in each direction, but instead the coarse pixel size.
-       *
-       * The coarse pixel size is delivered as 2 u8 in r1.0
        */
-      struct brw_reg r1_0 = retype(brw_vec1_reg(FIXED_GRF, 1, 0), BRW_TYPE_UB);
-
       const brw_builder dbld =
          abld.exec_all().group(MIN2(16, s.dispatch_width) * 2, 0);
 
@@ -258,21 +295,21 @@ brw_emit_interpolation_setup(brw_shader &s)
           * right mask in X.
           */
          int_coarse_offset_x = dbld.vgrf(BRW_TYPE_UW);
-         dbld.AND(int_coarse_offset_x, byte_offset(r1_0, 0), brw_imm_v(0x0f000f00));
+         dbld.AND(int_coarse_offset_x, ub_cps_width, brw_imm_v(0x0f000f00));
 
          /* And the right mask in Y. */
          int_coarse_offset_y = dbld.vgrf(BRW_TYPE_UW);
-         dbld.AND(int_coarse_offset_y, byte_offset(r1_0, 1), brw_imm_v(0x0f0f0000));
+         dbld.AND(int_coarse_offset_y, ub_cps_height, brw_imm_v(0x0f0f0000));
       } else {
          /* To build the array of half bytes we do and AND operation with the
           * right mask in X.
           */
          int_coarse_offset_x = dbld.vgrf(BRW_TYPE_UW);
-         dbld.AND(int_coarse_offset_x, byte_offset(r1_0, 0), brw_imm_v(0x0000f0f0));
+         dbld.AND(int_coarse_offset_x, ub_cps_width, brw_imm_v(0x0000f0f0));
 
          /* And the right mask in Y. */
          int_coarse_offset_y = dbld.vgrf(BRW_TYPE_UW);
-         dbld.AND(int_coarse_offset_y, byte_offset(r1_0, 1), brw_imm_v(0xff000000));
+         dbld.AND(int_coarse_offset_y, ub_cps_height, brw_imm_v(0xff000000));
 
          /* Finally OR the 2 registers. */
          int_coarse_offset_xy = dbld.vgrf(BRW_TYPE_UW);
@@ -283,8 +320,8 @@ brw_emit_interpolation_setup(brw_shader &s)
       half_int_coarse_offset_x = bld.vgrf(BRW_TYPE_UW);
       half_int_coarse_offset_y = bld.vgrf(BRW_TYPE_UW);
 
-      bld.SHR(half_int_coarse_offset_x, suboffset(r1_0, 0), brw_imm_ud(1));
-      bld.SHR(half_int_coarse_offset_y, suboffset(r1_0, 1), brw_imm_ud(1));
+      bld.SHR(half_int_coarse_offset_x, ub_cps_width, brw_imm_ud(1));
+      bld.SHR(half_int_coarse_offset_y, ub_cps_height, brw_imm_ud(1));
    }
 
    brw_reg int_pixel_offset_x, int_pixel_offset_y; /* Used on Gen12HP+ */
@@ -448,6 +485,8 @@ brw_emit_interpolation_setup(brw_shader &s)
        * properly. In the same way we have to add the coarse pixel size to
        * pixels locations, here we recompute the Z value with 2 coefficients
        * in X & Y axis.
+       *
+       * src_z = (x - xstart)*z_cx + (y - ystart)*z_cy + z_c0
        */
       brw_reg coef_payload = brw_vec8_grf(payload.depth_w_coef_reg, 0);
       const brw_reg x_start = devinfo->ver >= 20 ?
@@ -472,19 +511,10 @@ brw_emit_interpolation_setup(brw_shader &s)
       abld.ADD(float_pixel_x, s.pixel_x, negate(x_start));
       abld.ADD(float_pixel_y, s.pixel_y, negate(y_start));
 
-      /* r1.0 - 0:7 ActualCoarsePixelShadingSize.X */
-      const brw_reg u8_cps_width = brw_reg(retype(brw_vec1_grf(1, 0), BRW_TYPE_UB));
-      /* r1.0 - 15:8 ActualCoarsePixelShadingSize.Y */
-      const brw_reg u8_cps_height = byte_offset(u8_cps_width, 1);
-      const brw_reg u32_cps_width = abld.vgrf(BRW_TYPE_UD);
-      const brw_reg u32_cps_height = abld.vgrf(BRW_TYPE_UD);
-      abld.MOV(u32_cps_width, u8_cps_width);
-      abld.MOV(u32_cps_height, u8_cps_height);
-
       const brw_reg f_cps_width = abld.vgrf(BRW_TYPE_F);
       const brw_reg f_cps_height = abld.vgrf(BRW_TYPE_F);
-      abld.MOV(f_cps_width, u32_cps_width);
-      abld.MOV(f_cps_height, u32_cps_height);
+      abld.MOV(f_cps_width, ub_cps_width);
+      abld.MOV(f_cps_height, ub_cps_height);
 
       /* Center in the middle of the coarse pixel. */
       abld.MAD(float_pixel_x, float_pixel_x, f_cps_width, brw_imm_f(0.5f));
@@ -500,22 +530,19 @@ brw_emit_interpolation_setup(brw_shader &s)
 
    if (wm_prog_data->uses_depth_w_coefficients ||
        wm_prog_data->uses_src_depth) {
-      brw_reg sample_z = s.pixel_z;
-
       switch (wm_prog_data->coarse_pixel_dispatch) {
       case INTEL_NEVER:
          break;
 
       case INTEL_SOMETIMES:
-         assert(wm_prog_data->uses_src_depth);
-         assert(wm_prog_data->uses_depth_w_coefficients);
-         s.pixel_z = abld.vgrf(BRW_TYPE_F);
+         /* We cannot enable 3DSTATE_PS_EXTRA::PixelShaderUsesSourceDepth when
+          * coarse is enabled. Here we don't know if it's going to be, but
+          * setting brw_wm_prog_data::uses_src_depth dynamically would disturb
+          * the payload. So instead rely on the computed coarse_z which will
+          * produce a correct value even when coarse is disabled.
+          */
 
-         /* We re-use the check_dynamic_msaa_flag() call from above */
-         set_predicate(BRW_PREDICATE_NORMAL,
-                       abld.SEL(s.pixel_z, coarse_z, sample_z));
-         break;
-
+         /* Fallthrough */
       case INTEL_ALWAYS:
          assert(!wm_prog_data->uses_src_depth);
          assert(wm_prog_data->uses_depth_w_coefficients);
@@ -622,22 +649,23 @@ brw_emit_repclear_shader(brw_shader &s)
          bld.uniform().MOV(component(header, 2), brw_imm_ud(i));
 
       write = bld.emit(SHADER_OPCODE_SEND);
-      write->resize_sources(3);
+      write->resize_sources(SEND_NUM_SRCS);
 
       /* We can use a headerless message for the first render target */
       write->header_size = i == 0 ? 0 : 2;
       write->mlen = 1 + write->header_size;
 
       write->sfid = BRW_SFID_RENDER_CACHE;
-      write->src[0] = brw_imm_ud(
+      write->src[SEND_SRC_DESC] = brw_imm_ud(
          brw_fb_write_desc(
             s.devinfo, i,
             BRW_DATAPORT_RENDER_TARGET_WRITE_SIMD16_SINGLE_SOURCE_REPLICATED,
             i == key->nr_color_regions - 1, false) |
          brw_message_desc(s.devinfo, write->mlen,
                           0 /* rlen */, write->header_size));
-      write->src[1] = brw_imm_ud(0);
-      write->src[2] = i == 0 ? color_output : header;
+      write->src[SEND_SRC_EX_DESC] = brw_imm_ud(0);
+      write->src[SEND_SRC_PAYLOAD1] = i == 0 ? color_output : header;
+      write->src[SEND_SRC_PAYLOAD2] = brw_reg();
       write->check_tdr = true;
       write->send_has_side_effects = true;
 
@@ -942,6 +970,8 @@ brw_nir_populate_wm_prog_data(nir_shader *shader,
    prog_data->sample_shading =
       shader->info.fs.uses_sample_shading ||
       shader->info.outputs_read;
+   prog_data->api_sample_shading = key->api_sample_shading;
+   prog_data->min_sample_shading = key->min_sample_shading;
 
    assert(key->multisample_fbo != INTEL_NEVER ||
           key->persample_interp == INTEL_NEVER);
@@ -1040,7 +1070,8 @@ brw_nir_populate_wm_prog_data(nir_shader *shader,
        prog_data->sample_shading ||
        prog_data->uses_sample_mask ||
        (prog_data->computed_depth_mode != BRW_PSCDEPTH_OFF) ||
-       prog_data->computed_stencil) {
+       prog_data->computed_stencil ||
+       devinfo->ver < 11) {
       prog_data->coarse_pixel_dispatch = INTEL_NEVER;
    }
 
@@ -1085,7 +1116,7 @@ brw_nir_populate_wm_prog_data(nir_shader *shader,
       BITSET_TEST(shader->info.system_values_read, SYSTEM_VALUE_FRAG_COORD);
    prog_data->uses_src_depth =
       BITSET_TEST(shader->info.system_values_read, SYSTEM_VALUE_FRAG_COORD) &&
-      prog_data->coarse_pixel_dispatch != INTEL_ALWAYS;
+      prog_data->coarse_pixel_dispatch == INTEL_NEVER;
    prog_data->uses_depth_w_coefficients = prog_data->uses_pc_bary_coefficients ||
       (BITSET_TEST(shader->info.system_values_read, SYSTEM_VALUE_FRAG_COORD) &&
        prog_data->coarse_pixel_dispatch != INTEL_NEVER);
@@ -1335,6 +1366,8 @@ brw_assign_urb_setup(brw_shader &s)
     */
    assert(prog_data->num_per_primitive_inputs % 2 == 0);
    s.first_non_payload_grf += prog_data->num_per_primitive_inputs / 2 * s.max_polygons;
+
+   s.debug_optimizer(s.nir, "urb_setup", 91, 0);
 }
 
 static bool
@@ -1404,9 +1437,6 @@ run_fs(brw_shader &s, bool allow_spilling, bool do_rep_send)
          gfx9_ps_header_only_workaround(wm_prog_data);
 
       brw_assign_urb_setup(s);
-
-      s.debug_optimizer(nir, "urb_setup", 89, 0);
-
 
       brw_lower_3src_null_dest(s);
       brw_workaround_emit_dummy_mov_instruction(s);
@@ -1509,7 +1539,27 @@ brw_compile_fs(const struct brw_compiler *compiler,
    }
 
    NIR_PASS(_, nir, brw_nir_move_interpolation_to_top);
-   NIR_PASS(_, nir, brw_nir_lower_fs_msaa, key);
+
+   if (!brw_wm_prog_key_is_dynamic(key)) {
+      uint32_t f = 0;
+
+      if (key->multisample_fbo == INTEL_ALWAYS)
+         f |= INTEL_MSAA_FLAG_MULTISAMPLE_FBO;
+
+      if (key->alpha_to_coverage == INTEL_ALWAYS)
+         f |= INTEL_MSAA_FLAG_ALPHA_TO_COVERAGE;
+
+      if (key->provoking_vertex_last == INTEL_ALWAYS)
+         f |= INTEL_MSAA_FLAG_PROVOKING_VERTEX_LAST;
+
+      if (key->persample_interp == INTEL_ALWAYS) {
+         f |= INTEL_MSAA_FLAG_PERSAMPLE_DISPATCH |
+              INTEL_MSAA_FLAG_PERSAMPLE_INTERP;
+      }
+
+      NIR_PASS(_, nir, nir_inline_sysval, nir_intrinsic_load_fs_msaa_intel, f);
+   }
+
    brw_postprocess_nir(nir, compiler, debug_enabled,
                        key->base.robust_flags);
 

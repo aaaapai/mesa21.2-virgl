@@ -5,6 +5,7 @@
  */
 
 #include "aco_instruction_selection.h"
+#include "aco_interface.h"
 
 #include "nir_builder.h"
 #include "nir_control_flow.h"
@@ -128,7 +129,7 @@ sanitize_cf_list(nir_function_impl* impl, struct exec_list* cf_list)
           * from the loop header are live. Handle this without complicating the ACO IR by creating a
           * dummy break.
           */
-         if (nir_cf_node_cf_tree_next(&loop->cf_node)->predecessors->entries == 0) {
+         if (nir_cf_node_cf_tree_next(&loop->cf_node)->predecessors.entries == 0) {
             nir_builder b = nir_builder_create(impl);
             b.cursor = nir_after_block_before_jump(nir_loop_last_block(loop));
 
@@ -142,7 +143,7 @@ sanitize_cf_list(nir_function_impl* impl, struct exec_list* cf_list)
          }
          break;
       }
-      case nir_cf_node_function: unreachable("Invalid cf type");
+      case nir_cf_node_function: UNREACHABLE("Invalid cf type");
       }
    }
 
@@ -168,9 +169,7 @@ apply_nuw_to_ssa(isel_context* ctx, nir_def* ssa)
    nir_scalar src1 = nir_scalar_chase_alu_src(scalar, 1);
 
    if (nir_scalar_is_const(src0)) {
-      nir_scalar tmp = src0;
-      src0 = src1;
-      src1 = tmp;
+      std::swap(src0, src1);
    }
 
    uint32_t src1_ub = nir_unsigned_upper_bound(ctx->shader, ctx->range_ht, src1, &ctx->ub_config);
@@ -249,7 +248,7 @@ void
 setup_nir(isel_context* ctx, nir_shader* nir)
 {
    nir_convert_to_lcssa(nir, true, false);
-   if (nir_lower_phis_to_scalar(nir, true)) {
+   if (nir_lower_phis_to_scalar(nir, ac_nir_lower_phis_to_scalar_cb, NULL)) {
       nir_copy_prop(nir);
       nir_opt_dce(nir);
    }
@@ -368,6 +367,12 @@ init_context(isel_context* ctx, nir_shader* shader)
    apply_nuw_to_offsets(ctx, impl);
    ac_nir_flag_smem_for_loads(shader, ctx->program->gfx_level, false, true);
 
+   if (shader->info.stage == MESA_SHADER_FRAGMENT) {
+      nir_opt_load_skip_helpers_options skip_helper_options = {};
+      skip_helper_options.no_add_divergence = true;
+      nir_opt_load_skip_helpers(shader, &skip_helper_options);
+   }
+
    /* sanitize control flow */
    sanitize_cf_list(impl, &impl->body);
    nir_progress(true, impl, nir_metadata_none);
@@ -398,9 +403,9 @@ init_context(isel_context* ctx, nir_shader* shader)
                nir_alu_instr* alu_instr = nir_instr_as_alu(instr);
                RegType type = RegType::sgpr;
 
-               /* packed 16bit instructions have to be VGPR */
+               /* Packed 16-bit instructions have to be VGPR. */
                if (alu_instr->def.num_components == 2 &&
-                   nir_op_infos[alu_instr->op].output_size == 0)
+                   aco_nir_op_supports_packed_math_16bit(alu_instr))
                   type = RegType::vgpr;
 
                switch (alu_instr->op) {
@@ -446,6 +451,7 @@ init_context(isel_context* ctx, nir_shader* shader)
                case nir_op_udot_2x16_uadd_sat:
                case nir_op_sdot_2x16_iadd_sat:
                case nir_op_bfdot2_bfadd:
+               case nir_op_byte_perm_amd:
                case nir_op_alignbyte_amd: type = RegType::vgpr; break;
                case nir_op_fmul:
                case nir_op_ffma:
@@ -540,8 +546,6 @@ init_context(isel_context* ctx, nir_shader* shader)
                case nir_intrinsic_ballot_relaxed:
                case nir_intrinsic_bindless_image_samples:
                case nir_intrinsic_load_scalar_arg_amd:
-               case nir_intrinsic_load_lds_ngg_scratch_base_amd:
-               case nir_intrinsic_load_lds_ngg_gs_out_vertex_base_amd:
                case nir_intrinsic_load_smem_amd:
                case nir_intrinsic_unit_test_uniform_amd: type = RegType::sgpr; break;
                case nir_intrinsic_load_input:
@@ -623,11 +627,8 @@ init_context(isel_context* ctx, nir_shader* shader)
             }
             case nir_instr_type_tex: {
                nir_tex_instr* tex = nir_instr_as_tex(instr);
-               RegType type = tex->def.divergent ? RegType::vgpr : RegType::sgpr;
-
-               if (tex->op == nir_texop_texture_samples) {
-                  assert(!tex->def.divergent);
-               }
+               RegType type =
+                  tex->def.divergent || tex->skip_helpers ? RegType::vgpr : RegType::sgpr;
 
                RegClass rc = get_reg_class(ctx, type, tex->def.num_components, tex->def.bit_size);
                regclasses[tex->def.index] = rc;
@@ -728,7 +729,7 @@ setup_isel_context(Program* program, unsigned shader_count, struct nir_shader* c
       case MESA_SHADER_CALLABLE:
       case MESA_SHADER_INTERSECTION:
       case MESA_SHADER_ANY_HIT: sw_stage = SWStage::RT; break;
-      default: unreachable("Shader stage not implemented");
+      default: UNREACHABLE("Shader stage not implemented");
       }
    }
 
@@ -762,7 +763,7 @@ setup_isel_context(Program* program, unsigned shader_count, struct nir_shader* c
    for (unsigned i = 0; i < shader_count; i++)
       scratch_size = std::max(scratch_size, shaders[i]->scratch_size);
 
-   ctx.program->config->scratch_bytes_per_wave = scratch_size * ctx.program->wave_size;
+   ctx.program->config->scratch_bytes_per_wave = align(scratch_size, 4) * ctx.program->wave_size;
 
    unsigned nir_num_blocks = 0;
    for (unsigned i = 0; i < shader_count; i++)

@@ -669,7 +669,7 @@ iris_rewrite_compute_walker_pc(struct iris_batch *batch,
    for (uint32_t i = 0; i < GENX(COMPUTE_WALKER_length); i++)
       walker[i] |= dwords[i];
 #else
-   unreachable("Unsupported");
+   UNREACHABLE("Unsupported");
 #endif
 }
 
@@ -897,7 +897,6 @@ genX(emit_urb_config)(struct iris_batch *batch,
                         has_tess_eval,
                         has_geometry,
                         &ice->shaders.urb.cfg,
-                        &ice->state.urb_deref_block_size,
                         &ice->shaders.urb.constrained);
 
    genX(urb_workaround)(batch, &ice->shaders.urb.cfg);
@@ -1015,7 +1014,7 @@ upload_pixel_hashing_tables(struct iris_batch *batch)
       else if (ppipes_of[2] == 1 && ppipes_of[1] == 1 && ppipes_of[0] == 1)
          intel_compute_pixel_hash_table_3way(8, 16, 3, 3, 0, p.ThreeWayTableEntry[0]);
       else
-         unreachable("Illegal fusing.");
+         UNREACHABLE("Illegal fusing.");
    }
 
    iris_emit_cmd(batch, GENX(3DSTATE_3D_MODE), p) {
@@ -1234,7 +1233,7 @@ toggle_protected(struct iris_batch *batch)
    else if (batch->name == IRIS_BATCH_COMPUTE)
       ice = container_of(batch, struct iris_context, batches[IRIS_BATCH_COMPUTE]);
    else
-      unreachable("unhandled batch");
+      UNREACHABLE("unhandled batch");
 
    if (!ice->protected)
       return;
@@ -1256,7 +1255,7 @@ toggle_protected(struct iris_batch *batch)
       pc.ProtectedMemoryEnable = true;
    }
 #else
-   unreachable("Not supported");
+   UNREACHABLE("Not supported");
 #endif
 }
 
@@ -1413,7 +1412,7 @@ iris_init_render_context(struct iris_batch *batch)
 #if GFX_VER >= 30
    iris_emit_cmd(batch, GENX(STATE_COMPUTE_MODE), cm) {
       cm.EnableVariableRegisterSizeAllocationMask = 1;
-      cm.EnableVariableRegisterSizeAllocation = true;
+      cm.EnableVariableRegisterSizeAllocation = !INTEL_DEBUG(DEBUG_NO_VRT);
    }
 #endif
 
@@ -1549,7 +1548,7 @@ iris_init_compute_context(struct iris_batch *batch)
    iris_emit_cmd(batch, GENX(STATE_COMPUTE_MODE), cm) {
 #if GFX_VER >= 30
       cm.EnableVariableRegisterSizeAllocationMask = 1;
-      cm.EnableVariableRegisterSizeAllocation = true;
+      cm.EnableVariableRegisterSizeAllocation = !INTEL_DEBUG(DEBUG_NO_VRT);
 #endif
 #if GFX_VER >= 20
       cm.AsyncComputeThreadLimit = pixel_async_compute_thread_limit;
@@ -2624,12 +2623,12 @@ iris_create_sampler_state(struct pipe_context *ctx,
  */
 static void
 iris_bind_sampler_states(struct pipe_context *ctx,
-                         enum pipe_shader_type p_stage,
+                         mesa_shader_stage p_stage,
                          unsigned start, unsigned count,
                          void **states)
 {
    struct iris_context *ice = (struct iris_context *) ctx;
-   gl_shader_stage stage = stage_from_pipe(p_stage);
+   mesa_shader_stage stage = stage_from_pipe(p_stage);
    struct iris_shader_state *shs = &ice->state.shaders[stage];
 
    assert(start + count <= IRIS_MAX_SAMPLERS);
@@ -2655,7 +2654,7 @@ iris_bind_sampler_states(struct pipe_context *ctx,
  * Also fill out the border color state pointers.
  */
 static void
-iris_upload_sampler_states(struct iris_context *ice, gl_shader_stage stage)
+iris_upload_sampler_states(struct iris_context *ice, mesa_shader_stage stage)
 {
    struct iris_screen *screen = (struct iris_screen *) ice->ctx.screen;
    struct iris_compiled_shader *shader = ice->shaders.prog[stage];
@@ -2769,7 +2768,7 @@ fmt_swizzle(const struct iris_format_info *fmt, enum pipe_swizzle swz)
    case PIPE_SWIZZLE_W: return fmt->swizzle.a;
    case PIPE_SWIZZLE_1: return ISL_CHANNEL_SELECT_ONE;
    case PIPE_SWIZZLE_0: return ISL_CHANNEL_SELECT_ZERO;
-   default: unreachable("invalid swizzle");
+   default: UNREACHABLE("invalid swizzle");
    }
 }
 
@@ -3358,14 +3357,14 @@ fill_buffer_image_param(struct isl_image_param *param,
  */
 static void
 iris_set_shader_images(struct pipe_context *ctx,
-                       enum pipe_shader_type p_stage,
+                       mesa_shader_stage p_stage,
                        unsigned start_slot, unsigned count,
                        unsigned unbind_num_trailing_slots,
                        const struct pipe_image_view *p_images)
 {
    struct iris_context *ice = (struct iris_context *) ctx;
    struct iris_screen *screen = (struct iris_screen *)ctx->screen;
-   gl_shader_stage stage = stage_from_pipe(p_stage);
+   mesa_shader_stage stage = stage_from_pipe(p_stage);
    struct iris_shader_state *shs = &ice->state.shaders[stage];
 #if GFX_VER == 8
    struct iris_genx_state *genx = ice->state.genx;
@@ -3506,7 +3505,7 @@ is_sampler_view_3d(const struct iris_sampler_view *view)
  */
 static void
 iris_set_sampler_views(struct pipe_context *ctx,
-                       enum pipe_shader_type p_stage,
+                       mesa_shader_stage p_stage,
                        unsigned start, unsigned count,
                        unsigned unbind_num_trailing_slots,
                        struct pipe_sampler_view **views)
@@ -3514,7 +3513,7 @@ iris_set_sampler_views(struct pipe_context *ctx,
    struct iris_context *ice = (struct iris_context *) ctx;
    UNUSED struct iris_screen *screen = (void *) ctx->screen;
    UNUSED const struct intel_device_info *devinfo = screen->devinfo;
-   gl_shader_stage stage = stage_from_pipe(p_stage);
+   mesa_shader_stage stage = stage_from_pipe(p_stage);
    struct iris_shader_state *shs = &ice->state.shaders[stage];
    unsigned i;
 
@@ -3796,7 +3795,8 @@ iris_set_framebuffer_state(struct pipe_context *ctx,
       ice->state.dirty |= IRIS_DIRTY_MULTISAMPLE;
 
       /* We need to toggle 3DSTATE_PS::32 Pixel Dispatch Enable */
-      if (GFX_VER >= 9 && (cso->samples == 16 || samples == 16))
+      if (GFX_VER >= 9 && GFX_VER < 30 &&
+          (cso->samples == 16 || samples == 16))
          ice->state.stage_dirty |= IRIS_STAGE_DIRTY_FS;
 
       /* We may need to emit blend state for Wa_14018912822. */
@@ -3949,12 +3949,12 @@ iris_set_framebuffer_state(struct pipe_context *ctx,
  */
 static void
 iris_set_constant_buffer(struct pipe_context *ctx,
-                         enum pipe_shader_type p_stage, unsigned index,
+                         mesa_shader_stage p_stage, unsigned index,
                          bool take_ownership,
                          const struct pipe_constant_buffer *input)
 {
    struct iris_context *ice = (struct iris_context *) ctx;
-   gl_shader_stage stage = stage_from_pipe(p_stage);
+   mesa_shader_stage stage = stage_from_pipe(p_stage);
    struct iris_shader_state *shs = &ice->state.shaders[stage];
    struct pipe_shader_buffer *cbuf = &shs->constbuf[index];
 
@@ -4012,7 +4012,7 @@ iris_set_constant_buffer(struct pipe_context *ctx,
 
 static void
 upload_sysvals(struct iris_context *ice,
-               gl_shader_stage stage,
+               mesa_shader_stage stage,
                const struct pipe_grid_info *grid)
 {
    UNUSED struct iris_genx_state *genx = ice->state.genx;
@@ -4109,13 +4109,13 @@ upload_sysvals(struct iris_context *ice,
  */
 static void
 iris_set_shader_buffers(struct pipe_context *ctx,
-                        enum pipe_shader_type p_stage,
+                        mesa_shader_stage p_stage,
                         unsigned start_slot, unsigned count,
                         const struct pipe_shader_buffer *buffers,
                         unsigned writable_bitmask)
 {
    struct iris_context *ice = (struct iris_context *) ctx;
-   gl_shader_stage stage = stage_from_pipe(p_stage);
+   mesa_shader_stage stage = stage_from_pipe(p_stage);
    struct iris_shader_state *shs = &ice->state.shaders[stage];
 
    unsigned modified_bits = u_bit_consecutive(start_slot, count);
@@ -4970,7 +4970,7 @@ iris_emit_sbe(struct iris_batch *batch, const struct iris_context *ice)
 static void
 iris_populate_vs_key(const struct iris_context *ice,
                      const struct shader_info *info,
-                     gl_shader_stage last_stage,
+                     mesa_shader_stage last_stage,
                      struct iris_vs_prog_key *key)
 {
    const struct iris_rasterizer_state *cso_rast = ice->state.cso_rast;
@@ -4996,7 +4996,7 @@ iris_populate_tcs_key(const struct iris_context *ice,
 static void
 iris_populate_tes_key(const struct iris_context *ice,
                       const struct shader_info *info,
-                      gl_shader_stage last_stage,
+                      mesa_shader_stage last_stage,
                       struct iris_tes_prog_key *key)
 {
    const struct iris_rasterizer_state *cso_rast = ice->state.cso_rast;
@@ -5013,7 +5013,7 @@ iris_populate_tes_key(const struct iris_context *ice,
 static void
 iris_populate_gs_key(const struct iris_context *ice,
                      const struct shader_info *info,
-                     gl_shader_stage last_stage,
+                     mesa_shader_stage last_stage,
                      struct iris_gs_prog_key *key)
 {
    const struct iris_rasterizer_state *cso_rast = ice->state.cso_rast;
@@ -5782,7 +5782,7 @@ use_image(struct iris_batch *batch, struct iris_context *ice,
 static void
 iris_populate_binding_table(struct iris_context *ice,
                             struct iris_batch *batch,
-                            gl_shader_stage stage,
+                            mesa_shader_stage stage,
                             bool pin_only)
 {
    const struct iris_binder *binder = &ice->state.binder;
@@ -5937,7 +5937,7 @@ static uint32_t
 pin_scratch_space(struct iris_context *ice,
                   struct iris_batch *batch,
                   const struct iris_compiled_shader *shader,
-                  gl_shader_stage stage)
+                  mesa_shader_stage stage)
 {
    uint32_t scratch_addr = 0;
 
@@ -6248,19 +6248,14 @@ iris_viewport_zmin_zmax(const struct pipe_viewport_state *vp, bool halfz,
 static inline void
 batch_emit_fast_color_dummy_blit(struct iris_batch *batch)
 {
-#if GFX_VERx10 >= 125
+#if INTEL_WA_16018063123_GFX_VER
    iris_emit_cmd(batch, GENX(XY_FAST_COLOR_BLT), blt) {
       uint32_t mocs = iris_mocs(batch->screen->workaround_address.bo,
                                 &batch->screen->isl_dev,
                                 ISL_SURF_USAGE_BLITTER_DST_BIT);
 
       blt.DestinationBaseAddress = batch->screen->workaround_address;
-#if GFX_VERx10 >= 200
-      blt.DestinationMOCSindex = MOCS_GET_INDEX(mocs);
-      blt.DestinationEncryptEn = MOCS_GET_ENCRYPT_EN(mocs);
-#else
       blt.DestinationMOCS = mocs;
-#endif
       blt.DestinationPitch = 63;
       blt.DestinationX2 = 1;
       blt.DestinationY2 = 4;
@@ -6270,6 +6265,8 @@ batch_emit_fast_color_dummy_blit(struct iris_batch *batch)
       blt.DestinationSurfaceQPitch = 4;
       blt.DestinationTiling = XY_TILE_LINEAR;
    }
+#else
+   UNREACHABLE("Not implemented");
 #endif
 }
 
@@ -6327,7 +6324,7 @@ invalidate_aux_map_state_per_engine(struct iris_batch *batch)
    case IRIS_BATCH_BLITTER: {
 #if GFX_VERx10 >= 125
       /* Wa_16018063123 - emit fast color dummy blit before MI_FLUSH_DW. */
-      if (intel_needs_workaround(batch->screen->devinfo, 16018063123))
+      if (INTEL_WA_16018063123_GFX_VER)
          batch_emit_fast_color_dummy_blit(batch);
 
       /*
@@ -6357,7 +6354,7 @@ invalidate_aux_map_state_per_engine(struct iris_batch *batch)
       break;
    }
    default:
-      unreachable("Invalid batch for aux map invalidation");
+      UNREACHABLE("Invalid batch for aux map invalidation");
       break;
    }
 
@@ -6427,7 +6424,7 @@ init_aux_map_state(struct iris_batch *batch)
 #endif
       break;
    default:
-      unreachable("Invalid batch for aux map init.");
+      UNREACHABLE("Invalid batch for aux map init.");
    }
 
    if (reg)
@@ -6783,7 +6780,7 @@ static void
 shader_program_uses_primitive_id(struct iris_context *ice,
                                  struct iris_batch *batch,
                                  struct iris_compiled_shader *shader,
-                                 gl_shader_stage stage,
+                                 mesa_shader_stage stage,
                                  bool *uses_primitive_id)
 {
    switch (stage) {
@@ -7791,7 +7788,7 @@ iris_upload_dirty_render_state(struct iris_context *ice,
          sf.ViewportTransformEnable = !ice->state.window_space_position;
 
 #if GFX_VER >= 12
-         sf.DerefBlockSize = ice->state.urb_deref_block_size;
+         sf.DerefBlockSize = ice->shaders.urb.cfg.deref_block_size;
 #endif
       }
       iris_emit_merge(batch, cso->sf, dynamic_sf,
@@ -8839,7 +8836,7 @@ iris_upload_indirect_render_state(struct iris_context *ice,
    count *= draw->instance_count ? draw->instance_count : 1;
    trace_intel_end_draw(&batch->trace, count, 0, 0);
 #else
-   unreachable("Unsupported path");
+   UNREACHABLE("Unsupported path");
 #endif /* GFX_VERx10 >= 125 */
 }
 
@@ -9101,7 +9098,7 @@ static void iris_emit_execute_indirect_dispatch(struct iris_context *ice,
       ind.PredicateEnable            =
          ice->state.predicate == IRIS_PREDICATE_STATE_USE_BIT;
       ind.MaxCount                   = 1;
-      ind.COMPUTE_WALKER_BODY        = body;
+      ind.body                       = body;
       ind.ArgumentBufferStartAddress = indirect_bo;
       ind.MOCS                       =
          iris_mocs(indirect_bo.bo, &screen->isl_dev, 0);
@@ -9183,6 +9180,8 @@ iris_upload_compute_walker(struct iris_context *ice,
    idd.KernelStartPointer =
       KSP(shader) + iris_cs_data_prog_offset(cs_data, dispatch.simd_size);
    idd.NumberofThreadsinGPGPUThreadGroup = dispatch.threads;
+   idd.ThreadGroupDispatchSize =
+      intel_compute_threads_group_dispatch_size(dispatch.threads);
    idd.SharedLocalMemorySize =
       intel_compute_slm_encode_size(GFX_VER, total_shared);
    idd.PreferredSLMAllocationSize =
@@ -9233,6 +9232,11 @@ iris_upload_compute_walker(struct iris_context *ice,
          .WalkOrder       = cs_data->walk_order,
          .TileLayout = cs_data->walk_order == INTEL_WALK_ORDER_YXZ ?
                        TileY32bpe : Linear,
+#endif
+#if GFX_VER >= 30
+         /* HSD 14016252163 */
+         .DispatchWalkOrder = cs_data->uses_sampler ? MortonWalk : LinearWalk,
+         .ThreadGroupBatchSize = cs_data->uses_sampler ? TG_BATCH_4 : TG_BATCH_1,
 #endif
       };
 
@@ -9313,6 +9317,7 @@ iris_upload_gpgpu_walker(struct iris_context *ice,
 
    /* TODO: Combine subgroup-id with cbuf0 so we can push regular uniforms */
    if ((stage_dirty & IRIS_STAGE_DIRTY_CS) ||
+       (GFX_VER == 12 && !batch->contains_draw) ||
        cs_data->local_size[0] == 0 /* Variable local group size */) {
       uint32_t curbe_data_offset = 0;
       assert(cs_data->push.cross_thread.dwords == 0 &&
@@ -9611,7 +9616,7 @@ iris_rebind_buffer(struct iris_context *ice,
 
    for (int s = MESA_SHADER_VERTEX; s < MESA_SHADER_STAGES; s++) {
       struct iris_shader_state *shs = &ice->state.shaders[s];
-      enum pipe_shader_type p_stage = stage_to_pipe(s);
+      mesa_shader_stage p_stage = stage_to_pipe(s);
 
       if (!(res->bind_stages & (1 << s)))
          continue;
@@ -9850,7 +9855,7 @@ iris_emit_raw_pipe_control(struct iris_batch *batch,
       assert(!(flags & PIPE_CONTROL_WRITE_DEPTH_COUNT));
 
       /* Wa_16018063123 - emit fast color dummy blit before MI_FLUSH_DW. */
-      if (intel_needs_workaround(batch->screen->devinfo, 16018063123))
+      if (INTEL_WA_16018063123_GFX_VER)
          batch_emit_fast_color_dummy_blit(batch);
 
       /* The blitter doesn't actually use PIPE_CONTROL; rather it uses the

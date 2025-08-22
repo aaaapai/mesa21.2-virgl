@@ -48,6 +48,7 @@ struct radv_pipeline {
 
    bool is_internal;
    bool need_indirect_descriptor_sets;
+   bool need_push_constants_upload;
    struct radv_shader *shaders[MESA_VULKAN_SHADER_STAGES];
    struct radv_shader *gs_copy_shader;
 
@@ -72,8 +73,6 @@ VK_DEFINE_NONDISP_HANDLE_CASTS(radv_pipeline, base, VkPipeline, VK_OBJECT_TYPE_P
 
 bool radv_pipeline_capture_shaders(const struct radv_device *device, VkPipelineCreateFlags2 flags);
 
-bool radv_shader_need_indirect_descriptor_sets(const struct radv_shader *shader);
-
 bool radv_pipeline_capture_shader_stats(const struct radv_device *device, VkPipelineCreateFlags2 flags);
 
 bool radv_pipeline_skip_shaders_cache(const struct radv_device *device, const struct radv_pipeline *pipeline);
@@ -91,7 +90,7 @@ void radv_pipeline_stage_init(VkPipelineCreateFlags2 pipeline_flags, const VkPip
                               const struct radv_pipeline_layout *layout, const struct radv_shader_stage_key *stage_key,
                               struct radv_shader_stage *out_stage);
 
-void radv_shader_layout_init(const struct radv_pipeline_layout *pipeline_layout, gl_shader_stage stage,
+void radv_shader_layout_init(const struct radv_pipeline_layout *pipeline_layout, mesa_shader_stage stage,
                              struct radv_shader_layout *layout);
 
 void radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_state_key *gfx_state,

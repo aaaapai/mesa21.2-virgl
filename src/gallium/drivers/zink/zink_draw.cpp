@@ -320,7 +320,7 @@ zink_rast_prim(const struct zink_context *ctx,
       case PIPE_POLYGON_MODE_LINE:
          return MESA_PRIM_LINES;
       default:
-         unreachable("unexpected polygon mode");
+         UNREACHABLE("unexpected polygon mode");
       }
    }
 
@@ -1030,6 +1030,16 @@ zink_launch_grid(struct pipe_context *pctx, const struct pipe_grid_info *info)
    struct zink_batch_state *bs = ctx->bs;
    struct zink_screen *screen = zink_screen(pctx->screen);
 
+   if (unlikely(ctx->buffer_rebind_counter < screen->buffer_rebind_counter)) {
+      ctx->buffer_rebind_counter = screen->buffer_rebind_counter;
+      zink_rebind_all_buffers(ctx);
+   }
+
+   if (unlikely(ctx->image_rebind_counter < screen->image_rebind_counter)) {
+      ctx->image_rebind_counter = screen->image_rebind_counter;
+      zink_rebind_all_images(ctx);
+   }
+
    if (ctx->render_condition_active)
       zink_start_conditional_render(ctx);
 
@@ -1170,7 +1180,7 @@ zink_invalid_draw_vbo(struct pipe_context *pipe,
                       const struct pipe_draw_start_count_bias *draws,
                       unsigned num_draws)
 {
-   unreachable("vertex shader not bound");
+   UNREACHABLE("vertex shader not bound");
 }
 
 static void
@@ -1181,13 +1191,13 @@ zink_invalid_draw_vertex_state(struct pipe_context *pipe,
                                const struct pipe_draw_start_count_bias *draws,
                                unsigned num_draws)
 {
-   unreachable("vertex shader not bound");
+   UNREACHABLE("vertex shader not bound");
 }
 
 static void
 zink_invalid_launch_grid(struct pipe_context *pctx, const struct pipe_grid_info *info)
 {
-   unreachable("compute shader not bound");
+   UNREACHABLE("compute shader not bound");
 }
 
 #define STAGE_BASE 0

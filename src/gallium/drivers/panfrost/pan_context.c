@@ -97,7 +97,7 @@ panfrost_clear(struct pipe_context *pipe, unsigned buffers,
 bool
 panfrost_writes_point_size(struct panfrost_context *ctx)
 {
-   struct panfrost_compiled_shader *vs = ctx->prog[PIPE_SHADER_VERTEX];
+   struct panfrost_compiled_shader *vs = ctx->prog[MESA_SHADER_VERTEX];
    assert(vs != NULL);
 
    return vs->info.vs.writes_point_size && ctx->active_prim == MESA_PRIM_POINTS;
@@ -211,7 +211,7 @@ panfrost_get_blend(struct panfrost_batch *batch, unsigned rti)
    memcpy(pan_blend.constants, ctx->blend_color.color,
           sizeof(pan_blend.constants));
 
-   struct panfrost_compiled_shader *ss = ctx->prog[PIPE_SHADER_FRAGMENT];
+   struct panfrost_compiled_shader *ss = ctx->prog[MESA_SHADER_FRAGMENT];
 
    /* Default for Midgard */
    nir_alu_type col0_type = nir_type_float32;
@@ -249,7 +249,7 @@ panfrost_bind_rasterizer_state(struct pipe_context *pctx, void *hwcso)
 
 static void
 panfrost_set_shader_images(struct pipe_context *pctx,
-                           enum pipe_shader_type shader, unsigned start_slot,
+                           mesa_shader_stage shader, unsigned start_slot,
                            unsigned count, unsigned unbind_num_trailing_slots,
                            const struct pipe_image_view *iviews)
 {
@@ -313,7 +313,7 @@ panfrost_bind_vertex_elements_state(struct pipe_context *pctx, void *hwcso)
 
 static void
 panfrost_bind_sampler_states(struct pipe_context *pctx,
-                             enum pipe_shader_type shader, unsigned start_slot,
+                             mesa_shader_stage shader, unsigned start_slot,
                              unsigned num_sampler, void **sampler)
 {
    struct panfrost_context *ctx = pan_context(pctx);
@@ -345,7 +345,7 @@ panfrost_set_vertex_buffers(struct pipe_context *pctx, unsigned num_buffers,
 
 static void
 panfrost_set_constant_buffer(struct pipe_context *pctx,
-                             enum pipe_shader_type shader, uint index,
+                             mesa_shader_stage shader, uint index,
                              bool take_ownership,
                              const struct pipe_constant_buffer *buf)
 {
@@ -376,7 +376,7 @@ panfrost_set_stencil_ref(struct pipe_context *pctx,
 
 static void
 panfrost_set_sampler_views(struct pipe_context *pctx,
-                           enum pipe_shader_type shader, unsigned start_slot,
+                           mesa_shader_stage shader, unsigned start_slot,
                            unsigned num_views,
                            unsigned unbind_num_trailing_slots,
                            struct pipe_sampler_view **views)
@@ -424,7 +424,7 @@ panfrost_set_sampler_views(struct pipe_context *pctx,
 
 static void
 panfrost_set_shader_buffers(struct pipe_context *pctx,
-                            enum pipe_shader_type shader, unsigned start,
+                            mesa_shader_stage shader, unsigned start,
                             unsigned count,
                             const struct pipe_shader_buffer *buffers,
                             unsigned writable_bitmask)
@@ -913,7 +913,7 @@ panfrost_set_global_binding(struct pipe_context *pctx, unsigned first,
       /* we are screwed no matter what */
       if (!util_dynarray_grow(&ctx->global_buffers, *resources,
                               (first + count) - old_size))
-         unreachable("out of memory");
+         UNREACHABLE("out of memory");
 
       for (unsigned i = old_size; i < first + count; i++)
          *util_dynarray_element(&ctx->global_buffers, struct pipe_resource *,
@@ -960,11 +960,13 @@ panfrost_create_fence_fd(struct pipe_context *pctx,
 
 static void
 panfrost_fence_server_sync(struct pipe_context *pctx,
-                           struct pipe_fence_handle *f)
+                           struct pipe_fence_handle *f,
+                           uint64_t value)
 {
    struct panfrost_device *dev = pan_device(pctx->screen);
    struct panfrost_context *ctx = pan_context(pctx);
    int fd = -1, ret;
+   assert(!value);
 
    ret = drmSyncobjExportSyncFile(panfrost_device_fd(dev), f->syncobj, &fd);
    assert(!ret);

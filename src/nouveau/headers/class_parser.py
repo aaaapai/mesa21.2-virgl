@@ -11,6 +11,9 @@ import subprocess
 
 from mako.template import Template
 
+import util
+
+
 METHOD_ARRAY_SIZES = {
     'BIND_GROUP_CONSTANT_BUFFER'                            : 16,
     'CALL_MME_DATA'                                         : 256,
@@ -205,7 +208,7 @@ P_DUMP_${nvcl}_MTHD_DATA(FILE *fp, uint16_t idx, uint32_t data,
         fprintf(fp, "%s.${field.name} = ", prefix);
     %if len(field.defs):
         switch (parsed) {
-      %for d in field.defs:
+      %for d in field.unique_defs:
         case ${nvcl}_${mthd.name}_${field.name}_${d}:
             fprintf(fp, "${d}${bs}n");
             break;
@@ -240,6 +243,8 @@ pub const ${version[0]}: u16 = ${version[1]};
 """)
 
 TEMPLATE_RS_MTHD = Template("""\
+use crate::Mthd;
+use crate::ArrayMthd;
 
 %if prev_mod is not None:
 use crate::classes::${prev_mod}::mthd as ${prev_mod};
@@ -269,7 +274,7 @@ pub use ${prev_mod}::${to_camel(mthd.name)};
 #[repr(u16)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ${field.rs_type(mthd)} {
-    %for def_name, def_value in field.defs.items():
+    %for def_name, def_value in field.unique_defs.items():
     ${to_camel(def_name)} = ${def_value.lower()},
     %endfor
 }
@@ -289,7 +294,7 @@ pub struct ${to_camel(mthd.name)} {
 % if not mthd.is_array:
 ## This trait lays out how the conversion to u32 happens
 impl Mthd for ${to_camel(mthd.name)} {
-    const ADDR: u16 = ${mthd.addr.replace('(', '').replace(')', '')};
+    const ADDR: u16 = ${mthd.addr_expr(None)};
     const CLASS: u16 = ${version[1].lower() if version is not None else nvcl.lower().replace("nv", "0x")};
 
 %else:
@@ -297,8 +302,7 @@ impl ArrayMthd for ${to_camel(mthd.name)} {
     const CLASS: u16 = ${version[1].lower() if version is not None else nvcl.lower().replace("nv", "0x")};
 
     fn addr(i: usize) -> u16 {
-        <% assert not ('i' in mthd.addr and 'j' in mthd.addr) %>
-        (${mthd.addr.replace('j', 'i').replace('(', '').replace(')', '')}).try_into().unwrap()
+        (${mthd.addr_expr('i')}).try_into().unwrap()
     }
 %endif
 
@@ -307,20 +311,20 @@ impl ArrayMthd for ${to_camel(mthd.name)} {
         let mut val = 0;
         %for field in mthd.fields:
             <% field_width = field.end - field.start + 1 %>
-            %if field_width == 32:
-                %if field.rs_type(mthd) == "u32":
-        val |= self.${field.rs_name};
-                %else:
-        val |= self.${field.rs_name} as u32;
-                %endif
+            %if field.rs_type(mthd) == "u32":
+        let field_u32 = self.${field.rs_name};
             %else:
-                %if field.rs_type(mthd) == "u32":
-        assert!(self.${field.rs_name} < (1 << ${field_width}));
-        val |= self.${field.rs_name} << ${field.start};
-                %else:
-        assert!((self.${field.rs_name} as u32) < (1 << ${field_width}));
-        val |= (self.${field.rs_name} as u32) << ${field.start};
-                %endif
+        let field_u32 = self.${field.rs_name} as u32;
+            %endif
+            %if field_width == 32:
+            <% assert field_width == 32 %>
+            %else:
+        assert!(field_u32 < (1 << ${field_width}));
+            %endif
+            %if field.start == 0:
+        val |= field_u32;
+            %else:
+        val |= field_u32 << ${field.start};
             %endif
         %endfor
 
@@ -337,6 +341,12 @@ def to_camel(snake_str):
     result = ''.join(word.title() for word in snake_str.split('_'))
     return result if not result[0].isdigit() else '_' + result
 
+def strip_parens(s):
+    s = s.strip()
+    while s.startswith('(') and s.endswith(')'):
+        s = s[1:-1].strip()
+    return s
+
 def glob_match(glob, name):
     if glob.endswith('*'):
         return name.startswith(glob[:-1])
@@ -350,6 +360,8 @@ class Field(object):
         self.start = int(start)
         self.end = int(end)
         self.defs = {}
+        self._values = set()
+        self.unique_defs = {}
 
     def __eq__(self, other):
         if not isinstance(other, Field):
@@ -359,6 +371,14 @@ class Field(object):
                self.start == other.start and \
                self.end == other.end and \
                self.defs == other.defs
+
+    def add_def(self, name, value):
+        assert name not in self.defs
+        self.defs[name] = value
+
+        if value not in self._values:
+            self._values.add(value)
+            self.unique_defs[name] = value
 
     @property
     def is_bool(self):
@@ -418,6 +438,25 @@ class Method(object):
                self.is_array == other.is_array and \
                self.fields == other.fields
 
+    def addr_expr(self, idx_var):
+        expr = self.addr
+        if self.is_array:
+            # We don't support multiple-indexing but the headers aren't
+            # consistent in choosing i vs. j.
+            assert idx_var is not None
+            assert not ('i' in self.addr and 'j' in self.addr)
+            expr = re.sub(r'[ij]', idx_var, expr)
+
+            # Rust doesn't like extra parens
+            expr = expr.replace('(' + idx_var + ')', idx_var)
+        else:
+            assert not 'i' in self.addr and not 'j' in self.addr
+
+        # Rust also doesn't like extra parens
+        expr = strip_parens(expr)
+
+        return expr
+
     @property
     def array_size(self):
         for (glob, value) in METHOD_ARRAY_SIZES.items():
@@ -454,11 +493,11 @@ def parse_header(nvcl, f):
             continue
 
         if line.startswith("#define"):
-            list = line.split();
+            list = [strip_parens(e) for e in line.split()]
             if "_cl_" in list[1]:
                 continue
 
-            if not list[1].startswith(nvcl):
+            if (not list[1].startswith(nvcl)) or list[1].endswith('VIDEO_DECODER'):
                 if len(list) > 2 and list[2].startswith("0x"):
                     assert version is None
                     version = (list[1], list[2])
@@ -473,7 +512,7 @@ def parse_header(nvcl, f):
                     state = 1
                 elif teststr in list[1]:
                     if not SKIP_FIELD[0] in list[1]:
-                        curfield.defs[list[1].removeprefix(teststr)] = list[2]
+                        curfield.add_def(list[1].removeprefix(teststr), list[2])
                 else:
                     state = 1
 
@@ -563,33 +602,16 @@ def main():
         'bs': '\\'
     }
 
-    try:
-        if args.out_h is not None:
-            environment['header'] = os.path.basename(args.out_h)
-            with open(args.out_h, 'w', encoding='utf-8') as f:
-                f.write(TEMPLATE_H.render(**environment))
-        if args.out_c is not None:
-            with open(args.out_c, 'w', encoding='utf-8') as f:
-                f.write(TEMPLATE_C.render(**environment))
-        if args.out_rs is not None:
-            with open(args.out_rs, 'w', encoding='utf-8') as f:
-                f.write(TEMPLATE_RS.render(**environment))
-        if args.out_rs_mthd is not None:
-            with open(args.out_rs_mthd, 'w', encoding='utf-8') as f:
-                f.write("use crate::Mthd;\n")
-                f.write("use crate::ArrayMthd;\n")
-                f.write("\n")
-                f.write(TEMPLATE_RS_MTHD.render(**environment))
+    if args.out_h is not None:
+        environment['header'] = os.path.basename(args.out_h)
+        util.write_template(args.out_h, TEMPLATE_H, environment)
+    if args.out_c is not None:
+        util.write_template(args.out_c, TEMPLATE_C, environment)
+    if args.out_rs is not None:
+        util.write_template_rs(args.out_rs, TEMPLATE_RS, environment)
+    if args.out_rs_mthd is not None:
+        util.write_template_rs(args.out_rs_mthd, TEMPLATE_RS_MTHD, environment)
 
-    except Exception:
-        # In the event there's an error, this imports some helpers from mako
-        # to print a useful stack trace and prints it, then exits with
-        # status 1, if python is run with debug; otherwise it just raises
-        # the exception
-        import sys
-        from mako import exceptions
-        print(exceptions.text_error_template().render(), file=sys.stderr)
-        sys.exit(1)
 
 if __name__ == '__main__':
     main()

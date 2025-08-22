@@ -176,7 +176,7 @@ M_LOAD(lea_image, nir_type_uint64);
       case nir_type_int32:                                                     \
          return m_##op##_image_32i(val, address);                              \
       default:                                                                 \
-         unreachable("Invalid image type");                                    \
+         UNREACHABLE("Invalid image type");                                    \
       }                                                                        \
    }
 
@@ -208,12 +208,6 @@ attach_constants(compiler_context *ctx, midgard_instruction *ins,
 {
    ins->has_constants = true;
    memcpy(&ins->constants, constants, 16);
-}
-
-static int
-glsl_type_size(const struct glsl_type *type, bool bindless)
-{
-   return glsl_count_attribute_slots(type, false);
 }
 
 static bool
@@ -371,10 +365,8 @@ lower_vec816_alu(const nir_instr *instr, const void *cb_data)
 }
 
 void
-midgard_preprocess_nir(nir_shader *nir, unsigned gpu_id)
+midgard_preprocess_nir(nir_shader *nir, UNUSED unsigned gpu_id)
 {
-   unsigned quirks = midgard_get_quirks(gpu_id);
-
    /* Ensure that halt are translated to returns and get ride of them */
    NIR_PASS(_, nir, nir_lower_halt_to_return);
    NIR_PASS(_, nir, nir_lower_returns);
@@ -398,10 +390,11 @@ midgard_preprocess_nir(nir_shader *nir, unsigned gpu_id)
    NIR_PASS(_, nir, nir_lower_global_vars_to_local);
    NIR_PASS(_, nir, nir_lower_var_copies);
    NIR_PASS(_, nir, nir_lower_vars_to_ssa);
+}
 
-   NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
-            glsl_type_size, nir_lower_io_use_interpolated_input_intrinsics);
-
+void
+midgard_postprocess_nir(nir_shader *nir, UNUSED unsigned gpu_id)
+{
    if (nir->info.stage == MESA_SHADER_VERTEX) {
       /* nir_lower[_explicit]_io is lazy and emits mul+add chains even
        * for offsets it could figure out are constant.  Do some
@@ -413,7 +406,7 @@ midgard_preprocess_nir(nir_shader *nir, unsigned gpu_id)
 
    /* Could be eventually useful for Vulkan, but we don't expect it to have
     * the support, so limit it to compute */
-   if (gl_shader_stage_is_compute(nir->info.stage)) {
+   if (mesa_shader_stage_is_compute(nir->info.stage)) {
       nir_lower_mem_access_bit_sizes_options mem_size_options = {
          .modes = nir_var_mem_ubo | nir_var_mem_ssbo |
                   nir_var_mem_constant | nir_var_mem_task_payload |
@@ -439,21 +432,20 @@ midgard_preprocess_nir(nir_shader *nir, unsigned gpu_id)
 
    NIR_PASS(_, nir, nir_lower_idiv, &idiv_options);
 
-   nir_lower_tex_options lower_tex_options = {
-      .lower_txs_lod = true,
-      .lower_txp = ~0,
-      .lower_tg4_broadcom_swizzle = true,
-      .lower_txd = true,
-      .lower_invalid_implicit_lod = true,
-   };
+   NIR_PASS(_, nir, midgard_nir_lower_algebraic_early);
+   NIR_PASS(_, nir, nir_lower_alu_to_scalar, mdg_should_scalarize, NULL);
+   NIR_PASS(_, nir, nir_lower_flrp, 16 | 32 | 64, false /* always_precise */);
+   NIR_PASS(_, nir, nir_lower_var_copies);
+}
 
-   NIR_PASS(_, nir, nir_lower_tex, &lower_tex_options);
+void midgard_lower_texture_nir(nir_shader *nir, unsigned gpu_id)
+{
    NIR_PASS(_, nir, nir_lower_image_atomics_to_global, NULL, NULL);
 
    /* TEX_GRAD fails to apply sampler descriptor settings on some
     * implementations, requiring a lowering.
     */
-   if (quirks & MIDGARD_BROKEN_LOD)
+   if (midgard_get_quirks(gpu_id) & MIDGARD_BROKEN_LOD)
       NIR_PASS(_, nir, midgard_nir_lod_errata);
 
    /* lower MSAA image operations to 3D load before coordinate lowering */
@@ -468,12 +460,8 @@ midgard_preprocess_nir(nir_shader *nir, unsigned gpu_id)
       NIR_PASS(_, nir, pan_lower_helper_invocation);
       NIR_PASS(_, nir, pan_lower_sample_pos);
    }
-
-   NIR_PASS(_, nir, midgard_nir_lower_algebraic_early);
-   NIR_PASS(_, nir, nir_lower_alu_to_scalar, mdg_should_scalarize, NULL);
-   NIR_PASS(_, nir, nir_lower_flrp, 16 | 32 | 64, false /* always_precise */);
-   NIR_PASS(_, nir, nir_lower_var_copies);
 }
+
 
 static void
 optimise_nir(nir_shader *nir, unsigned quirks, bool is_blend)
@@ -545,8 +533,9 @@ optimise_nir(nir_shader *nir, unsigned quirks, bool is_blend)
    /* Backend scheduler is purely local, so do some global optimizations
     * to reduce register pressure. */
    nir_move_options move_all = nir_move_const_undef | nir_move_load_ubo |
-                               nir_move_load_input | nir_move_comparisons |
-                               nir_move_copies | nir_move_load_ssbo;
+                               nir_move_load_input | nir_move_load_frag_coord |
+                               nir_move_comparisons | nir_move_copies |
+                               nir_move_load_ssbo;
 
    NIR_PASS(_, nir, nir_opt_sink, move_all);
    NIR_PASS(_, nir, nir_opt_move, move_all);
@@ -592,7 +581,7 @@ emit_load_const(compiler_context *ctx, nir_load_const_instr *instr)
       RAW_CONST_COPY(8);
       break;
    default:
-      unreachable("Invalid bit_size for load_const instruction\n");
+      UNREACHABLE("Invalid bit_size for load_const instruction\n");
    }
 
    /* Shifted for SSA, +1 for off-by-one */
@@ -1105,7 +1094,7 @@ emit_ubo_read(compiler_context *ctx, nir_instr *instr, unsigned dest,
    else if (bitsize <= 128)
       ins = m_ld_ubo_128(dest, 0);
    else
-      unreachable("Invalid UBO read size");
+      UNREACHABLE("Invalid UBO read size");
 
    ins.constants.u32[0] = offset;
 
@@ -1163,7 +1152,7 @@ emit_global(compiler_context *ctx, nir_instr *instr, bool is_read,
          ins = m_ld_128(srcdest, 0);
          break;
       default:
-         unreachable("Invalid global read size");
+         UNREACHABLE("Invalid global read size");
       }
 
       mir_set_intr_mask(instr, &ins, is_read);
@@ -1211,7 +1200,7 @@ emit_global(compiler_context *ctx, nir_instr *instr, bool is_read,
       else if (bitsize <= 128)
          ins = m_st_128(srcdest, 0);
       else
-         unreachable("Invalid global store size");
+         UNREACHABLE("Invalid global store size");
 
       mir_set_intr_mask(instr, &ins, is_read);
    }
@@ -1245,7 +1234,7 @@ translate_atomic_op(nir_atomic_op op)
    case nir_atomic_op_umax:    return midgard_op_atomic_umax;
    case nir_atomic_op_umin:    return midgard_op_atomic_umin;
    case nir_atomic_op_ixor:    return midgard_op_atomic_xor;
-   default: unreachable("Unexpected atomic");
+   default: UNREACHABLE("Unexpected atomic");
    }
    /* clang-format on */
 }
@@ -1364,7 +1353,7 @@ emit_varying_read(compiler_context *ctx, unsigned dest, unsigned offset,
          ins.op = midgard_op_ld_vary_16;
          break;
       default:
-         unreachable("Attempted to load unknown type");
+         UNREACHABLE("Attempted to load unknown type");
          break;
       }
    } else if (flat) {
@@ -1462,7 +1451,7 @@ emit_attr_read(compiler_context *ctx, unsigned dest, unsigned offset,
       ins.op = midgard_op_ld_attr_32;
       break;
    default:
-      unreachable("Attempted to load unknown type");
+      UNREACHABLE("Attempted to load unknown type");
       break;
    }
 
@@ -1480,7 +1469,7 @@ compute_builtin_arg(nir_intrinsic_op op)
    case nir_intrinsic_load_global_invocation_id:
       return REGISTER_LDST_GLOBAL_THREAD_ID;
    default:
-      unreachable("Invalid compute paramater loaded");
+      UNREACHABLE("Invalid compute paramater loaded");
    }
 }
 
@@ -1559,7 +1548,7 @@ vertex_builtin_arg(nir_intrinsic_op op)
    case nir_intrinsic_load_instance_id:
       return PAN_INSTANCE_ID;
    default:
-      unreachable("Invalid vertex builtin");
+      UNREACHABLE("Invalid vertex builtin");
    }
 }
 
@@ -1613,7 +1602,7 @@ output_load_rt_addr(compiler_context *ctx, nir_intrinsic_instr *instr)
    if (loc == FRAG_RESULT_STENCIL)
       return 0x1E;
 
-   unreachable("Invalid RT to load from");
+   UNREACHABLE("Invalid RT to load from");
 }
 
 static void
@@ -1641,7 +1630,8 @@ emit_intrinsic(compiler_context *ctx, nir_intrinsic_instr *instr)
 
       ins.dest_type = ins.src_types[1] = nir_type_uint | instr->def.bit_size;
 
-      ins.mask = BITFIELD_MASK(instr->def.num_components);
+      assert(instr->def.num_components <= 4);
+      ins.mask = (uint16_t)BITFIELD_MASK(instr->def.num_components);
       emit_mir_instruction(ctx, &ins);
       break;
    }
@@ -1743,7 +1733,7 @@ emit_intrinsic(compiler_context *ctx, nir_intrinsic_instr *instr)
       } else if (ctx->stage == MESA_SHADER_VERTEX) {
          emit_attr_read(ctx, reg, offset, nr_comp, t);
       } else {
-         unreachable("Unknown load");
+         UNREACHABLE("Unknown load");
       }
 
       break;
@@ -1928,7 +1918,7 @@ emit_intrinsic(compiler_context *ctx, nir_intrinsic_instr *instr)
 
          emit_mir_instruction(ctx, &st);
       } else {
-         unreachable("Unknown store");
+         UNREACHABLE("Unknown store");
       }
 
       break;
@@ -2043,7 +2033,7 @@ midgard_tex_format(enum glsl_sampler_dim dim)
       return 0;
 
    default:
-      unreachable("Unknown sampler dim type");
+      UNREACHABLE("Unknown sampler dim type");
    }
 }
 
@@ -2366,7 +2356,7 @@ emit_jump(compiler_context *ctx, nir_jump_instr *instr)
    }
 
    default:
-      unreachable("Unhandled jump");
+      UNREACHABLE("Unhandled jump");
    }
 }
 
@@ -2399,7 +2389,7 @@ emit_instr(compiler_context *ctx, struct nir_instr *instr)
       break;
 
    default:
-      unreachable("Unhandled instruction type");
+      UNREACHABLE("Unhandled instruction type");
    }
 }
 
@@ -2532,7 +2522,7 @@ reg_mode_for_bitsize(unsigned bitsize)
    case 64:
       return midgard_reg_mode_64;
    default:
-      unreachable("invalid bit size");
+      UNREACHABLE("invalid bit size");
    }
 }
 

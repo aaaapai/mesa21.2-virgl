@@ -297,7 +297,7 @@ d3d12_video_encode_supported_references_per_frame_structures(const D3D12_VIDEO_E
                                                             &capPictureControlData,
                                                             sizeof(capPictureControlData));
       if (FAILED(hr)) {
-         debug_printf("CheckFeatureSupport failed with HR %x\n", hr);
+         debug_printf("CheckFeatureSupport failed with HR %x\n", (unsigned)hr);
       }
 
       if (capPictureControlData.IsSupported) {
@@ -334,7 +334,7 @@ d3d12_video_encode_supported_references_per_frame_structures(const D3D12_VIDEO_E
                                                             &capPictureControlData,
                                                             sizeof(capPictureControlData));
       if (FAILED(hr)) {
-         debug_printf("CheckFeatureSupport failed with HR %x\n", hr);
+         debug_printf("CheckFeatureSupport failed with HR %x\n", (unsigned)hr);
       }
 
       if (capPictureControlData.IsSupported) {
@@ -372,7 +372,7 @@ d3d12_video_encode_supported_references_per_frame_structures(const D3D12_VIDEO_E
                                                             &capPictureControlData,
                                                             sizeof(capPictureControlData));
       if (FAILED(hr)) {
-         debug_printf("CheckFeatureSupport failed with HR %x\n", hr);
+         debug_printf("CheckFeatureSupport failed with HR %x\n", (unsigned)hr);
       }
 
       if (capPictureControlData.IsSupported) {
@@ -527,7 +527,7 @@ d3d12_video_encode_supported_slice_structures(const D3D12_VIDEO_ENCODER_CODEC &c
                                                        &capDataSubregionLayout,
                                                        sizeof(capDataSubregionLayout));
    if (FAILED(hr)) {
-      debug_printf("CheckFeatureSupport failed with HR %x\n", hr);
+      debug_printf("CheckFeatureSupport failed with HR %x\n", (unsigned)hr);
    } else if (capDataSubregionLayout.IsSupported) {
       /* This would be setting N subregions per frame in this D3D12 mode where N = (height/blocksize) / K */
       supportedSliceStructuresBitMask |= PIPE_VIDEO_CAP_SLICE_STRUCTURE_EQUAL_MULTI_ROWS;
@@ -545,7 +545,7 @@ d3d12_video_encode_supported_slice_structures(const D3D12_VIDEO_ENCODER_CODEC &c
                                                          &capDataSubregionLayout,
                                                          sizeof(capDataSubregionLayout));
    if (FAILED(hr)) {
-      debug_printf("CheckFeatureSupport failed with HR %x\n", hr);
+      debug_printf("CheckFeatureSupport failed with HR %x\n", (unsigned)hr);
    } else if (capDataSubregionLayout.IsSupported) {
       /* This would be setting K rows per subregions in this D3D12 mode */
       supportedSliceStructuresBitMask |= PIPE_VIDEO_CAP_SLICE_STRUCTURE_EQUAL_MULTI_ROWS;
@@ -563,7 +563,7 @@ d3d12_video_encode_supported_slice_structures(const D3D12_VIDEO_ENCODER_CODEC &c
                                                          &capDataSubregionLayout,
                                                          sizeof(capDataSubregionLayout));
    if (FAILED(hr)) {
-      debug_printf("CheckFeatureSupport failed with HR %x\n", hr);
+      debug_printf("CheckFeatureSupport failed with HR %x\n", (unsigned)hr);
    } else if (capDataSubregionLayout.IsSupported) {
       /* This would be setting K rows per subregions in this D3D12 mode */
       supportedSliceStructuresBitMask |= PIPE_VIDEO_CAP_SLICE_STRUCTURE_EQUAL_MULTI_ROWS;
@@ -582,7 +582,7 @@ d3d12_video_encode_supported_slice_structures(const D3D12_VIDEO_ENCODER_CODEC &c
                                                          &capDataSubregionLayout,
                                                          sizeof(capDataSubregionLayout));
    if (FAILED(hr)) {
-      debug_printf("CheckFeatureSupport failed with HR %x\n", hr);
+      debug_printf("CheckFeatureSupport failed with HR %x\n", (unsigned)hr);
    } else if (capDataSubregionLayout.IsSupported) {
       supportedSliceStructuresBitMask |= PIPE_VIDEO_CAP_SLICE_STRUCTURE_MAX_SLICE_SIZE;
    }
@@ -701,7 +701,7 @@ d3d12_video_encode_support_caps(const D3D12_VIDEO_ENCODER_CODEC &argTargetCodec,
          capCodecConfigData.CodecSupportLimits.DataSize = sizeof(av1CodecSupport);
          HRESULT hr = pD3D12VideoDevice->CheckFeatureSupport(D3D12_FEATURE_VIDEO_ENCODER_CODEC_CONFIGURATION_SUPPORT, &capCodecConfigData, sizeof(capCodecConfigData));
          if (FAILED(hr)) {
-            debug_printf("CheckFeatureSupport D3D12_FEATURE_VIDEO_ENCODER_CODEC_CONFIGURATION_SUPPORT failed with HR %x\n", hr);
+            debug_printf("CheckFeatureSupport D3D12_FEATURE_VIDEO_ENCODER_CODEC_CONFIGURATION_SUPPORT failed with HR %x\n", (unsigned)hr);
             return false;
          } else if (!capCodecConfigData.IsSupported) {
             debug_printf("CheckFeatureSupport D3D12_FEATURE_VIDEO_ENCODER_CODEC_CONFIGURATION_SUPPORT IsSupported is false\n");
@@ -714,7 +714,7 @@ d3d12_video_encode_support_caps(const D3D12_VIDEO_ENCODER_CODEC &argTargetCodec,
       } break;
       default:
       {
-         unreachable("Unsupported D3D12_VIDEO_ENCODER_CODEC");
+         UNREACHABLE("Unsupported D3D12_VIDEO_ENCODER_CODEC");
       } break;
    }
 
@@ -728,7 +728,7 @@ d3d12_video_encode_support_caps(const D3D12_VIDEO_ENCODER_CODEC &argTargetCodec,
                                                        sizeof(capEncoderSupportData1));
 
    if (FAILED(hr)) {
-      debug_printf("CheckFeatureSupport D3D12_FEATURE_VIDEO_ENCODER_SUPPORT2 failed with HR %x\n", hr);
+      debug_printf("CheckFeatureSupport D3D12_FEATURE_VIDEO_ENCODER_SUPPORT2 failed with HR %x\n", (unsigned)hr);
       debug_printf("Falling back to check previous query version D3D12_FEATURE_VIDEO_ENCODER_SUPPORT1...\n");
 
       // D3D12_FEATURE_DATA_VIDEO_ENCODER_SUPPORT2 extends D3D12_FEATURE_DATA_VIDEO_ENCODER_SUPPORT1
@@ -746,7 +746,7 @@ d3d12_video_encode_support_caps(const D3D12_VIDEO_ENCODER_CODEC &argTargetCodec,
 #endif
 
    if (FAILED(hr)) {
-      debug_printf("CheckFeatureSupport D3D12_FEATURE_VIDEO_ENCODER_SUPPORT1 failed with HR %x\n", hr);
+      debug_printf("CheckFeatureSupport D3D12_FEATURE_VIDEO_ENCODER_SUPPORT1 failed with HR %x\n", (unsigned)hr);
       debug_printf("Falling back to check previous query version D3D12_FEATURE_VIDEO_ENCODER_SUPPORT...\n");
 
       // D3D12_FEATURE_DATA_VIDEO_ENCODER_SUPPORT1 extends D3D12_FEATURE_DATA_VIDEO_ENCODER_SUPPORT
@@ -756,7 +756,7 @@ d3d12_video_encode_support_caps(const D3D12_VIDEO_ENCODER_CODEC &argTargetCodec,
                                                                          casted_down_cap_data,
                                                                          sizeof(D3D12_FEATURE_DATA_VIDEO_ENCODER_SUPPORT));
       if (FAILED(hr)) {
-         debug_printf("CheckFeatureSupport D3D12_FEATURE_VIDEO_ENCODER_SUPPORT failed with HR %x\n", hr);
+         debug_printf("CheckFeatureSupport D3D12_FEATURE_VIDEO_ENCODER_SUPPORT failed with HR %x\n", (unsigned)hr);
          return false;
       }
    }
@@ -2502,7 +2502,7 @@ d3d12_screen_get_video_param_encode(struct pipe_screen *pscreen,
                   return D3D12_VIDEO_ENC_AV1_MAX_TEMPORAL_LAYERS;
 #endif
                default:
-                  unreachable("Unsupported pipe_video_format");
+                  UNREACHABLE("Unsupported pipe_video_format");
             }
       } break;
       case PIPE_VIDEO_CAP_ENC_SUPPORTS_FEEDBACK_METADATA:
@@ -2818,6 +2818,23 @@ d3d12_screen_get_video_param(struct pipe_screen *pscreen,
    } else if (entrypoint == PIPE_VIDEO_ENTRYPOINT_PROCESSING) {
       return d3d12_screen_get_video_param_postproc(pscreen, profile, entrypoint, param);
    }
+
+   // Some frontends call get_video_param with PIPE_VIDEO_ENTRYPOINT_UNKNOWN
+   // to get some capabilities not entrypoint specific.
+   switch (param) {
+      case PIPE_VIDEO_CAP_SKIP_CLEAR_SURFACE:
+      {
+          // D3D12 does not require clearing the surface on creation for video
+          // as it doesn't use D3D12_HEAP_FLAG_CREATE_NOT_ZEROED
+          // Furthermore, on PIPE_CONTEXT_MEDIA_ONLY contexts, the
+          // clear_render_target function is not implemented
+         return 1;
+      } break;
+      default:
+         debug_printf("[d3d12_screen_get_video_param] unknown video param: %d\n", param);
+         return 0;
+   }
+
    return 0;
 }
 
@@ -2866,7 +2883,7 @@ is_d3d12_video_encode_format_supported(struct pipe_screen *screen,
 #endif
       default:
       {
-         unreachable("Unsupported pipe_video_format");
+         UNREACHABLE("Unsupported pipe_video_format");
       } break;
    }
    ComPtr<ID3D12VideoDevice3> spD3D12VideoDevice;

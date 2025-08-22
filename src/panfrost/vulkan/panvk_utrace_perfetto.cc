@@ -6,7 +6,12 @@
 #include "panvk_utrace_perfetto.h"
 
 #include <functional>
+
+#ifndef ANDROID_LIBPERFETTO
 #include <perfetto.h>
+#else
+#include <perfetto/tracing.h>
+#endif
 
 #include "c11/threads.h"
 #include "util/log.h"
@@ -39,9 +44,16 @@ get_stage_name(enum panvk_utrace_perfetto_stage stage)
    case PANVK_UTRACE_PERFETTO_STAGE_##x:                                       \
       return #x
       CASE(CMDBUF);
+      CASE(META);
+      CASE(RENDER);
+      CASE(DISPATCH);
+      CASE(BARRIER);
+      CASE(FLUSH_CACHE);
+      CASE(SYNC_ADD);
+      CASE(SYNC_WAIT);
 #undef CASE
    default:
-      unreachable("bad stage");
+      UNREACHABLE("bad stage");
    }
 }
 
@@ -92,10 +104,12 @@ emit_clock_snapshot_packet(struct panvk_device *dev,
 {
    const struct panvk_utrace_perfetto *utp = &dev->utrace.utp;
    const uint64_t gpu_ns = get_gpu_time_ns(dev);
-   const uint64_t cpu_ns = perfetto::base::GetBootTimeNs().count();
+   const uint32_t cpu_clock_id =
+      perfetto::protos::pbzero::BUILTIN_CLOCK_MONOTONIC_RAW;
+   const uint64_t cpu_ns = perfetto::base::GetWallTimeRawNs().count();
 
    MesaRenderpassDataSource<PanVKRenderpassDataSource, PanVKRenderpassTraits>::
-      EmitClockSync(ctx, cpu_ns, gpu_ns, utp->gpu_clock_id);
+      EmitClockSync(ctx, cpu_ns, gpu_ns, cpu_clock_id, utp->gpu_clock_id);
 }
 
 static void
@@ -239,6 +253,16 @@ panvk_utrace_perfetto_end_event(
  * (traceq) for processing.  These callbacks are called from traceq.
  */
 PANVK_UTRACE_PERFETTO_PROCESS_EVENT(cmdbuf, CMDBUF)
+PANVK_UTRACE_PERFETTO_PROCESS_EVENT(meta, META)
+PANVK_UTRACE_PERFETTO_PROCESS_EVENT(render, RENDER)
+PANVK_UTRACE_PERFETTO_PROCESS_EVENT(dispatch, DISPATCH)
+PANVK_UTRACE_PERFETTO_PROCESS_EVENT(dispatch_indirect, DISPATCH)
+PANVK_UTRACE_PERFETTO_PROCESS_EVENT(barrier, BARRIER)
+PANVK_UTRACE_PERFETTO_PROCESS_EVENT(flush_cache, FLUSH_CACHE)
+PANVK_UTRACE_PERFETTO_PROCESS_EVENT(sync32_add, SYNC_ADD)
+PANVK_UTRACE_PERFETTO_PROCESS_EVENT(sync64_add, SYNC_ADD)
+PANVK_UTRACE_PERFETTO_PROCESS_EVENT(sync32_wait, SYNC_WAIT)
+PANVK_UTRACE_PERFETTO_PROCESS_EVENT(sync64_wait, SYNC_WAIT)
 
 static uint32_t
 get_gpu_clock_id(void)
@@ -287,7 +311,11 @@ panvk_utrace_perfetto_init(struct panvk_device *dev, uint32_t queue_count)
    for (uint32_t i = 0; i < ARRAY_SIZE(utp->stage_iids); i++)
       utp->stage_iids[i] = next_iid++;
 
-   util_perfetto_init();
+   /* Mali GPU timestamps map to the system arch counter. CLOCK_MONOTONIC_RAW
+    * is therefore better for synchronization with the GPU timestamps than the
+    * default CLOCK_BOOTTIME, which drifts from the arch counter's rate
+    * slightly due to NTP adjustment. */
+   util_perfetto_set_default_clock(CLOCK_MONOTONIC_RAW);
 
    static once_flag register_ds_once = ONCE_FLAG_INIT;
    call_once(&register_ds_once, register_data_source);

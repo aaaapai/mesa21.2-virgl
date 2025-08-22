@@ -126,6 +126,7 @@ struct rendering_state {
       float offset_units;
       float offset_scale;
       float offset_clamp;
+      VkDepthBiasRepresentationEXT representation;
       bool enabled;
    } depth_bias;
    struct pipe_rasterizer_state rs_state;
@@ -283,7 +284,7 @@ static void finish_fence(struct rendering_state *state)
 }
 
 static unsigned
-get_pcbuf_size(struct rendering_state *state, enum pipe_shader_type pstage)
+get_pcbuf_size(struct rendering_state *state, mesa_shader_stage pstage)
 {
    enum lvp_pipeline_type type =
       ffs(lvp_pipeline_types_from_shader_stages(mesa_to_vk_shader_stage(pstage))) - 1;
@@ -291,8 +292,8 @@ get_pcbuf_size(struct rendering_state *state, enum pipe_shader_type pstage)
 }
 
 static void
-update_pcbuf(struct rendering_state *state, enum pipe_shader_type pstage,
-             enum pipe_shader_type api_stage)
+update_pcbuf(struct rendering_state *state, mesa_shader_stage pstage,
+             mesa_shader_stage api_stage)
 {
    unsigned size = get_pcbuf_size(state, api_stage);
    if (size) {
@@ -420,6 +421,16 @@ static void emit_state(struct rendering_state *state)
          state->rs_state.offset_tri = true;
          state->rs_state.offset_line = true;
          state->rs_state.offset_point = true;
+
+         state->rs_state.offset_units_unscaled =
+            state->depth_bias.representation == VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT ||
+            state->depth_bias.representation == VK_DEPTH_BIAS_REPRESENTATION_FLOAT_EXT;
+
+         if (state->depth_bias.representation == VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT) {
+            enum pipe_format depth_format = util_format_get_depth_only(state->depth_att.imgv->pformat);
+            const struct util_format_description *desc = util_format_description(depth_format);
+            state->rs_state.offset_units *= util_get_depth_format_mrd(desc);
+         }
       } else {
          state->rs_state.offset_units = 0.0f;
          state->rs_state.offset_scale = 0.0f;
@@ -602,7 +613,7 @@ handle_graphics_stages(struct rendering_state *state, VkShaderStageFlagBits shad
 {
    u_foreach_bit(b, shader_stages) {
       VkShaderStageFlagBits vk_stage = (1 << b);
-      gl_shader_stage stage = vk_to_mesa_shader_stage(vk_stage);
+      mesa_shader_stage stage = vk_to_mesa_shader_stage(vk_stage);
 
       state->has_pcbuf[stage] = false;
 
@@ -651,7 +662,7 @@ static void
 unbind_graphics_stages(struct rendering_state *state, VkShaderStageFlagBits shader_stages)
 {
    u_foreach_bit(vkstage, shader_stages) {
-      gl_shader_stage stage = vk_to_mesa_shader_stage(1<<vkstage);
+      mesa_shader_stage stage = vk_to_mesa_shader_stage(1<<vkstage);
       state->has_pcbuf[stage] = false;
       switch (stage) {
       case MESA_SHADER_FRAGMENT:
@@ -684,14 +695,14 @@ unbind_graphics_stages(struct rendering_state *state, VkShaderStageFlagBits shad
             state->pctx->bind_ms_state(state->pctx, NULL);
          break;
       default:
-         unreachable("what stage is this?!");
+         UNREACHABLE("what stage is this?!");
       }
       state->shaders[stage] = NULL;
    }
 }
 
 static void
-handle_graphics_pushconsts(struct rendering_state *state, gl_shader_stage stage, struct lvp_shader *shader)
+handle_graphics_pushconsts(struct rendering_state *state, mesa_shader_stage stage, struct lvp_shader *shader)
 {
    state->has_pcbuf[stage] = shader->push_constant_size > 0;
    if (!state->has_pcbuf[stage])
@@ -766,6 +777,7 @@ static void handle_graphics_pipeline(struct lvp_pipeline *pipeline,
          state->depth_bias.offset_units = ps->rs->depth_bias.constant_factor;
          state->depth_bias.offset_scale = ps->rs->depth_bias.slope_factor;
          state->depth_bias.offset_clamp = ps->rs->depth_bias.clamp;
+         state->depth_bias.representation = ps->rs->depth_bias.representation;
       }
 
       if (!BITSET_TEST(ps->dynamic, MESA_VK_DYNAMIC_RS_CULL_MODE))
@@ -948,7 +960,7 @@ static void handle_graphics_pipeline(struct lvp_pipeline *pipeline,
             state->velem.velems[a].instance_divisor = d ? d : UINT32_MAX;
             break;
          default:
-            unreachable("Invalid vertex input rate");
+            UNREACHABLE("Invalid vertex input rate");
          }
 
          if (!BITSET_TEST(ps->dynamic, MESA_VK_DYNAMIC_VI_BINDING_STRIDES)) {
@@ -1084,7 +1096,7 @@ static void
 handle_set_stage_buffer(struct rendering_state *state,
                         struct pipe_resource *bo,
                         size_t offset,
-                        gl_shader_stage stage,
+                        mesa_shader_stage stage,
                         uint32_t index)
 {
    state->const_buffer[stage][index].buffer = bo;
@@ -1101,7 +1113,7 @@ handle_set_stage_buffer(struct rendering_state *state,
 static void handle_set_stage(struct rendering_state *state,
                              struct lvp_descriptor_set *set,
                              enum lvp_pipeline_type pipeline_type,
-                             gl_shader_stage stage,
+                             mesa_shader_stage stage,
                              uint32_t index)
 {
    state->desc_sets[pipeline_type][index] = set;
@@ -1988,6 +2000,24 @@ static void handle_set_depth_bias(struct vk_cmd_queue_entry *cmd,
    state->rs_dirty = true;
 }
 
+static void handle_set_depth_bias2(struct vk_cmd_queue_entry *cmd,
+                                   struct rendering_state *state)
+{
+   VkDepthBiasInfoEXT *info = cmd->u.set_depth_bias2_ext.depth_bias_info;
+
+   state->depth_bias.offset_units = info->depthBiasConstantFactor;
+   state->depth_bias.offset_scale = info->depthBiasSlopeFactor;
+   state->depth_bias.offset_clamp = info->depthBiasClamp;
+
+   const VkDepthBiasRepresentationInfoEXT *representation_info =
+      vk_find_struct_const(info->pNext, DEPTH_BIAS_REPRESENTATION_INFO_EXT);
+   state->depth_bias.representation =
+      representation_info ? representation_info->depthBiasRepresentation
+                          : VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORMAT_EXT;
+
+   state->rs_dirty = true;
+}
+
 static void handle_set_blend_constants(struct vk_cmd_queue_entry *cmd,
                                        struct rendering_state *state)
 {
@@ -2330,7 +2360,7 @@ find_depth_format(VkFormat format, VkImageAspectFlagBits aspect)
       case VK_FORMAT_D16_UNORM_S8_UINT:
          return PIPE_FORMAT_Z16_UNORM;
       default:
-         unreachable("unsupported format/aspect combo");
+         UNREACHABLE("unsupported format/aspect combo");
       }
    }
    assert(aspect == VK_IMAGE_ASPECT_STENCIL_BIT);
@@ -2341,7 +2371,7 @@ find_depth_format(VkFormat format, VkImageAspectFlagBits aspect)
    case VK_FORMAT_S8_UINT:
       return PIPE_FORMAT_S8_UINT;
    default:
-      unreachable("unsupported format/aspect combo");
+      UNREACHABLE("unsupported format/aspect combo");
    }
 }
 
@@ -3795,7 +3825,7 @@ handle_shaders(struct vk_cmd_queue_entry *cmd, struct rendering_state *state)
    unsigned new_stages = 0;
    unsigned null_stages = 0;
    for (unsigned i = 0; i < bind->stage_count; i++) {
-      gl_shader_stage stage = vk_to_mesa_shader_stage(bind->stages[i]);
+      mesa_shader_stage stage = vk_to_mesa_shader_stage(bind->stages[i]);
       assert(stage != MESA_SHADER_NONE && stage <= MESA_SHADER_MESH);
       LVP_FROM_HANDLE(lvp_shader, shader, bind->shaders ? bind->shaders[i] : VK_NULL_HANDLE);
       if (stage == MESA_SHADER_FRAGMENT) {
@@ -3871,7 +3901,7 @@ static void handle_draw_mesh_tasks(struct vk_cmd_queue_entry *cmd,
    state->dispatch_info.grid_base[2] = 0;
    state->dispatch_info.draw_count = 1;
    state->dispatch_info.indirect = NULL;
-   state->pctx->draw_mesh_tasks(state->pctx, 0, &state->dispatch_info);
+   state->pctx->draw_mesh_tasks(state->pctx, &state->dispatch_info);
 }
 
 static void handle_draw_mesh_tasks_indirect(struct vk_cmd_queue_entry *cmd,
@@ -3882,7 +3912,7 @@ static void handle_draw_mesh_tasks_indirect(struct vk_cmd_queue_entry *cmd,
    state->dispatch_info.indirect_offset = cmd->u.draw_mesh_tasks_indirect_ext.offset;
    state->dispatch_info.indirect_stride = cmd->u.draw_mesh_tasks_indirect_ext.stride;
    state->dispatch_info.draw_count = cmd->u.draw_mesh_tasks_indirect_ext.draw_count;
-   state->pctx->draw_mesh_tasks(state->pctx, 0, &state->dispatch_info);
+   state->pctx->draw_mesh_tasks(state->pctx, &state->dispatch_info);
 }
 
 static void handle_draw_mesh_tasks_indirect_count(struct vk_cmd_queue_entry *cmd,
@@ -3895,7 +3925,7 @@ static void handle_draw_mesh_tasks_indirect_count(struct vk_cmd_queue_entry *cmd
    state->dispatch_info.draw_count = cmd->u.draw_mesh_tasks_indirect_count_ext.max_draw_count;
    state->dispatch_info.indirect_draw_count_offset = cmd->u.draw_mesh_tasks_indirect_count_ext.count_buffer_offset;
    state->dispatch_info.indirect_draw_count = lvp_buffer_from_handle(cmd->u.draw_mesh_tasks_indirect_count_ext.count_buffer)->bo;
-   state->pctx->draw_mesh_tasks(state->pctx, 0, &state->dispatch_info);
+   state->pctx->draw_mesh_tasks(state->pctx, &state->dispatch_info);
 }
 
 static VkBuffer
@@ -4011,7 +4041,7 @@ process_sequence_ext(struct rendering_state *state,
                cmd->u.bind_index_buffer2.index_type = VK_INDEX_TYPE_UINT16;
                break;
             default:
-               unreachable("unknown DXGI index type!");
+               UNREACHABLE("unknown DXGI index type!");
             }
          }
          cmd->u.bind_index_buffer2.size = data->size;
@@ -4120,7 +4150,7 @@ process_sequence_ext(struct rendering_state *state,
          break;
       }
       default:
-         unreachable("unknown token type");
+         UNREACHABLE("unknown token type");
          break;
       }
       size += lvp_ext_dgc_token_size(elayout, token);
@@ -4315,7 +4345,7 @@ handle_descriptor_buffer_offsets(struct vk_cmd_queue_entry *cmd, struct renderin
          } else {
             /* set for all stages */
             u_foreach_bit(stage, set_layout->shader_stages) {
-               gl_shader_stage pstage = vk_to_mesa_shader_stage(1<<stage);
+               mesa_shader_stage pstage = vk_to_mesa_shader_stage(1<<stage);
                handle_set_stage_buffer(state, state->desc_buffers[dbo->pBufferIndices[i]], dbo->pOffsets[i], pstage, idx);
             }
          }
@@ -4325,7 +4355,7 @@ handle_descriptor_buffer_offsets(struct vk_cmd_queue_entry *cmd, struct renderin
 }
 
 static void *
-lvp_push_internal_buffer(struct rendering_state *state, gl_shader_stage stage, uint32_t size)
+lvp_push_internal_buffer(struct rendering_state *state, mesa_shader_stage stage, uint32_t size)
 {
    if (!size)
       return NULL;
@@ -4450,17 +4480,12 @@ handle_copy_acceleration_structure(struct vk_cmd_queue_entry *cmd, struct render
 {
    struct vk_cmd_copy_acceleration_structure_khr *copy = &cmd->u.copy_acceleration_structure_khr;
 
-   VK_FROM_HANDLE(vk_acceleration_structure, src, copy->info->src);
-   VK_FROM_HANDLE(vk_acceleration_structure, dst, copy->info->dst);
+   VK_FROM_HANDLE(vk_acceleration_structure, src_accel_struct, copy->info->src);
+   VK_FROM_HANDLE(vk_acceleration_structure, dst_accel_struct, copy->info->dst);
 
-   struct pipe_box box = { 0 };
-   u_box_1d(src->offset, MIN2(src->size, dst->size), &box);
-   state->pctx->resource_copy_region(state->pctx,
-                                     lvp_buffer_from_handle(
-                                        vk_buffer_to_handle(dst->buffer))->bo, 0,
-                                     dst->offset, 0, 0,
-                                     lvp_buffer_from_handle(
-                                        vk_buffer_to_handle(src->buffer))->bo, 0, &box);
+   struct lvp_bvh_header *src = (void *)(uintptr_t)vk_acceleration_structure_get_va(src_accel_struct);
+   struct lvp_bvh_header *dst = (void *)(uintptr_t)vk_acceleration_structure_get_va(dst_accel_struct);
+   memcpy(dst, src, src->compacted_size);
 }
 
 static void
@@ -4496,7 +4521,7 @@ handle_copy_acceleration_structure_to_memory(struct vk_cmd_queue_entry *cmd, str
    lvp_device_get_cache_uuid(dst->driver_uuid);
    lvp_device_get_cache_uuid(dst->accel_struct_compat);
    dst->serialization_size = src->serialization_size;
-   dst->compacted_size = accel_struct->size;
+   dst->compacted_size = src->compacted_size;
    dst->instance_count = src->instance_count;
 
    for (uint32_t i = 0; i < src->instance_count; i++) {
@@ -4506,7 +4531,7 @@ handle_copy_acceleration_structure_to_memory(struct vk_cmd_queue_entry *cmd, str
       dst->instances[i] = node[i].bvh_ptr;
    }
 
-   memcpy(&dst->instances[dst->instance_count], src, accel_struct->size);
+   memcpy(&dst->instances[dst->instance_count], src, src->compacted_size);
 }
 
 static void
@@ -4522,25 +4547,25 @@ handle_write_acceleration_structures_properties(struct vk_cmd_queue_entry *cmd, 
    for (uint32_t i = 0; i < write->acceleration_structure_count; i++) {
       VK_FROM_HANDLE(vk_acceleration_structure, accel_struct, write->acceleration_structures[i]);
 
+      struct lvp_bvh_header *header = (void *)(uintptr_t)vk_acceleration_structure_get_va(accel_struct);
+
       switch ((uint32_t)pool->base_type) {
       case LVP_QUERY_ACCELERATION_STRUCTURE_COMPACTED_SIZE:
-         dst[i] = accel_struct->size;
+         dst[i] = header->compacted_size;
          break;
       case LVP_QUERY_ACCELERATION_STRUCTURE_SERIALIZATION_SIZE: {
-         struct lvp_bvh_header *header = (void *)(uintptr_t)vk_acceleration_structure_get_va(accel_struct);
          dst[i] = header->serialization_size;
          break;
       }
       case LVP_QUERY_ACCELERATION_STRUCTURE_SIZE:
-         dst[i] = accel_struct->size;
+         dst[i] = header->compacted_size;
          break;
       case LVP_QUERY_ACCELERATION_STRUCTURE_INSTANCE_COUNT: {
-         struct lvp_bvh_header *header = (void *)(uintptr_t)vk_acceleration_structure_get_va(accel_struct);
          dst[i] = header->instance_count;
          break;
       }
       default:
-         unreachable("Unsupported query type");
+         UNREACHABLE("Unsupported query type");
       }
    }
 }
@@ -4910,6 +4935,8 @@ void lvp_add_enqueue_cmd_entrypoints(struct vk_device_dispatch_table *disp)
    ENQUEUE_CMD(CmdTraceRaysIndirect2KHR)
    ENQUEUE_CMD(CmdTraceRaysIndirectKHR)
    ENQUEUE_CMD(CmdTraceRaysKHR)
+
+   ENQUEUE_CMD(CmdSetDepthBias2EXT)
 
 #undef ENQUEUE_CMD
 }
@@ -5318,9 +5345,12 @@ static void lvp_execute_cmd_buffer(struct list_head *cmds,
       case VK_CMD_TRACE_RAYS_KHR:
          handle_trace_rays(cmd, state);
          break;
+      case VK_CMD_SET_DEPTH_BIAS2_EXT:
+         handle_set_depth_bias2(cmd, state);
+         break;
       default:
          fprintf(stderr, "Unsupported command %s\n", vk_cmd_queue_type_names[cmd->type]);
-         unreachable("Unsupported command");
+         UNREACHABLE("Unsupported command");
          break;
       }
       did_flush = false;

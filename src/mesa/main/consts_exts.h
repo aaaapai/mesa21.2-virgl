@@ -176,6 +176,7 @@ struct gl_extensions
    GLboolean EXT_memory_object;
    GLboolean EXT_memory_object_fd;
    GLboolean EXT_memory_object_win32;
+   GLboolean EXT_mesh_shader;
    GLboolean EXT_multisampled_render_to_texture;
    GLboolean EXT_packed_float;
    GLboolean EXT_protected_textures;
@@ -287,6 +288,7 @@ struct gl_extensions
    GLboolean NV_conservative_raster_pre_snap;
    GLboolean NV_viewport_array2;
    GLboolean NV_viewport_swizzle;
+   GLboolean NV_timeline_semaphore;
    GLboolean NVX_gpu_memory_info;
    GLboolean TDFX_texture_compression_FXT1;
    GLboolean OES_EGL_image;
@@ -312,57 +314,6 @@ struct gl_extensions
     * while meta is in progress.
     */
    GLubyte Version;
-};
-
-/**
- * Compiler options for a single GLSL shaders type
- */
-struct gl_shader_compiler_options
-{
-   /** Driver-selectable options: */
-   GLboolean EmitNoCont;                  /**< Emit CONT opcode? */
-   GLboolean EmitNoMainReturn;            /**< Emit CONT/RET opcodes? */
-   GLbitfield LowerBuiltinVariablesXfb;   /**< Which builtin variables should
-                                           * be lowered for transform feedback
-                                           **/
-
-   /**
-    * If we can lower the precision of variables based on precision
-    * qualifiers
-    */
-   GLboolean LowerPrecisionFloat16;
-   GLboolean LowerPrecisionInt16;
-   GLboolean LowerPrecisionDerivatives;
-   GLboolean LowerPrecisionFloat16Uniforms;
-   GLboolean LowerPrecision16BitLoadDst;
-
-   /**
-    * This enables lowering of 16b constants.  Some drivers may not
-    * to lower constants to 16b (ie. if the hw can do automatic
-    * narrowing on constant load)
-    */
-   GLboolean LowerPrecisionConstants;
-
-   /**
-    * \name Forms of indirect addressing the driver cannot do.
-    */
-   /*@{*/
-   GLboolean EmitNoIndirectTemp;    /**< No indirect addressing of temps */
-   GLboolean EmitNoIndirectUniform; /**< No indirect addressing of constants */
-   /*@}*/
-
-   GLuint MaxIfDepth;               /**< Maximum nested IF blocks */
-
-   /** Clamp UBO and SSBO block indices so they don't go out-of-bounds. */
-   GLboolean ClampBlockIndicesToArrayBounds;
-
-   /** (driconf) Force gl_Position to be considered invariant */
-   GLboolean PositionAlwaysInvariant;
-
-   /** (driconf) Force gl_Position to be considered precise */
-   GLboolean PositionAlwaysPrecise;
-
-   const struct nir_shader_compiler_options *NirOptions;
 };
 
 /**
@@ -488,7 +439,7 @@ struct gl_constants
    } ViewportBounds;                         /**< GL_ARB_viewport_array */
    GLuint MaxWindowRectangles;               /**< GL_EXT_window_rectangles */
 
-   struct gl_program_constants Program[MESA_SHADER_STAGES];
+   struct gl_program_constants Program[MESA_SHADER_MESH_STAGES];
    GLuint MaxProgramMatrices;
    GLuint MaxProgramMatrixStackDepth;
 
@@ -509,6 +460,9 @@ struct gl_constants
       GLuint ComputeInvocations;
       GLuint ClInPrimitives;
       GLuint ClOutPrimitives;
+      GLuint TsInvocations;
+      GLuint MsInvocations;
+      GLuint MeshPrimitivesGenerated;
    } QueryCounterBits;
 
    GLuint MaxDrawBuffers;    /**< GL_ARB_draw_buffers */
@@ -895,7 +849,11 @@ struct gl_constants
    /** GL_KHR_context_flush_control */
    GLenum16 ContextReleaseBehavior;
 
-   struct gl_shader_compiler_options ShaderCompilerOptions[MESA_SHADER_STAGES];
+   /** (driconf) Force gl_Position to be considered invariant */
+   GLboolean VSPositionAlwaysInvariant;
+
+   /** (driconf) Force gl_Position to be considered precise */
+   GLboolean TESPositionAlwaysPrecise;
 
    /** GL_ARB_tessellation_shader */
    GLuint MaxPatchVertices;
@@ -1000,6 +958,9 @@ struct gl_constants
 
    /** Whether pipe_context::draw_vertex_state is supported. */
    bool HasDrawVertexState;
+
+   /* NV_timeline_semaphore */
+   GLuint64 MaxTimelineSemaphoreValueDifference;
 
    /** GL_KHR_shader_subgroup */
    GLuint ShaderSubgroupSize;

@@ -78,7 +78,7 @@ struct agx_rodata {
 };
 
 struct agx_shader_info {
-   enum pipe_shader_type stage;
+   mesa_shader_stage stage;
    uint32_t binary_size;
 
    union agx_varyings varyings;
@@ -140,6 +140,12 @@ struct agx_shader_info {
    /* Uses txf and hence needs a txf sampler mapped */
    bool uses_txf;
 
+   /* Potentially uses the sampler heap (conservative) */
+   bool uses_sampler_heap;
+
+   /* Number of texture/sampler state registers pushed by the preamble. */
+   uint8_t texture_state_count, sampler_state_count;
+
    /* Number of 16-bit registers used by the main shader and preamble
     * respectively.
     */
@@ -175,6 +181,7 @@ static inline struct agx_precompiled_kernel_info
 agx_compact_kernel_info(struct agx_shader_info *info)
 {
    assert(info->has_preamble == (info->nr_preamble_gprs > 0));
+   assert(info->texture_state_count <= 8 && "static maximum, no need to plumb");
 
    return (struct agx_precompiled_kernel_info){
       .preamble_offset = info->preamble_offset,
@@ -283,6 +290,13 @@ struct agx_shader_key {
     */
    bool promote_constants;
 
+   /* Similarly whether the driver supports promoting bindless
+    * textures/samplers.  Currently this works only if non-bindless
+    * textures/samplers are not used, but none of our drivers mix bindless /
+    * non-bindless usage.
+    */
+   bool promote_textures;
+
    /* Set if this is a non-monolithic shader that must be linked with additional
     * shader parts before the program can be used. This suppresses omission of
     * `stop` instructions, which the linker must insert instead.
@@ -300,7 +314,6 @@ struct agx_shader_key {
    };
 };
 
-struct agx_interp_info agx_gather_interp_info(nir_shader *nir);
 uint64_t agx_gather_texcoords(nir_shader *nir);
 
 void agx_preprocess_nir(nir_shader *nir);
@@ -326,6 +339,12 @@ struct agx_occupancy {
 
 struct agx_occupancy agx_occupancy_for_register_count(unsigned halfregs);
 unsigned agx_max_registers_for_occupancy(unsigned occupancy);
+
+static inline unsigned
+agx_round_registers(unsigned halfregs)
+{
+   return agx_occupancy_for_register_count(halfregs).max_registers;
+}
 
 static const nir_shader_compiler_options agx_nir_options = {
    .lower_fdiv = true,
@@ -378,11 +397,16 @@ static const nir_shader_compiler_options agx_nir_options = {
    .lower_int64_options =
       (nir_lower_int64_options) ~(nir_lower_iadd64 | nir_lower_imul_2x32_64),
    .lower_doubles_options = (nir_lower_doubles_options)(~0),
-   .support_indirect_inputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
-   .support_indirect_outputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
+   .support_indirect_inputs = BITFIELD_BIT(MESA_SHADER_TESS_CTRL) |
+                              BITFIELD_BIT(MESA_SHADER_TESS_EVAL) |
+                              BITFIELD_BIT(MESA_SHADER_FRAGMENT),
+   .support_indirect_outputs = (uint8_t)BITFIELD_MASK(MESA_SHADER_STAGES),
    .lower_fquantize2f16 = true,
    .compact_arrays = true,
    .discard_is_demote = true,
    .scalarize_ddx = true,
    .io_options = nir_io_always_interpolate_convergent_fs_inputs,
+   .subgroup_size = 32,
+   .ballot_bit_size = 32,
+   .ballot_components = 1,
 };

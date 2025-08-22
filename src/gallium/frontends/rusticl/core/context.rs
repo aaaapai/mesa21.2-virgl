@@ -10,8 +10,10 @@ use crate::core::util::*;
 use crate::impl_cl_type_trait;
 
 use mesa_rust::pipe::context::RWFlags;
+use mesa_rust::pipe::fence::FenceFd;
 use mesa_rust::pipe::resource::*;
 use mesa_rust::pipe::screen::ResourceType;
+use mesa_rust::util;
 use mesa_rust_gen::*;
 use mesa_rust_util::conversion::*;
 use mesa_rust_util::properties::Properties;
@@ -68,6 +70,12 @@ impl Drop for SVMAlloc {
                 debug_assert_eq!(0, ret);
             }
 
+            for (dev, res) in &self.alloc.get_real_resource().res {
+                if !dev.system_svm_supported() {
+                    dev.screen().resource_assign_vma(res, 0);
+                }
+            }
+
             Platform::get()
                 .vm
                 .as_ref()
@@ -106,6 +114,7 @@ pub struct Context {
     >,
     svm: Mutex<SVMContext>,
     pub gl_ctx_manager: Option<GLCtxManager>,
+    pub worker_queue: util::queue::Queue,
 }
 
 impl_cl_type_trait!(cl_context, Context, CL_INVALID_CONTEXT);
@@ -116,6 +125,9 @@ impl Context {
         properties: Properties<cl_context_properties>,
         gl_ctx_manager: Option<GLCtxManager>,
     ) -> Arc<Context> {
+        let worker_count = u32::max(util::cpu_count() / 2, 1);
+        let max_job_count = worker_count * 8;
+
         Arc::new(Self {
             base: CLObjectBase::new(RusticlTypes::Context),
             devs: devs,
@@ -126,6 +138,7 @@ impl Context {
                 svm_ptrs: TrackedPointers::new(),
             }),
             gl_ctx_manager: gl_ctx_manager,
+            worker_queue: util::queue::Queue::new(c"clctxworker", max_job_count, worker_count),
         })
     }
 
@@ -136,7 +149,7 @@ impl Context {
         copy: bool,
         bda: bool,
         res_type: ResourceType,
-    ) -> CLResult<HashMap<&'static Device, Arc<PipeResource>>> {
+    ) -> CLResult<HashMap<&'static Device, PipeResource>> {
         let adj_size: u32 = size.try_into_with_err(CL_OUT_OF_HOST_MEMORY)?;
         let mut res = HashMap::new();
         let mut pipe_flags = 0;
@@ -167,7 +180,7 @@ impl Context {
             }
 
             let resource = resource.ok_or(CL_OUT_OF_RESOURCES);
-            res.insert(dev, Arc::new(resource?));
+            res.insert(dev, resource?);
         }
 
         if !user_ptr.is_null() {
@@ -177,7 +190,9 @@ impl Context {
                     d.helper_ctx()
                         .exec(|ctx| ctx.buffer_subdata(r, 0, user_ptr, size.try_into().unwrap()))
                 })
-                .for_each(|f| f.wait());
+                .for_each(|f| {
+                    f.wait();
+                });
         }
 
         Ok(res)
@@ -190,7 +205,7 @@ impl Context {
         user_ptr: *mut c_void,
         copy: bool,
         res_type: ResourceType,
-    ) -> CLResult<HashMap<&'static Device, Arc<PipeResource>>> {
+    ) -> CLResult<HashMap<&'static Device, PipeResource>> {
         let pipe_format = format.to_pipe_format().unwrap();
 
         let width = desc.image_width.try_into_with_err(CL_OUT_OF_HOST_MEMORY)?;
@@ -235,7 +250,7 @@ impl Context {
             }
 
             let resource = resource.ok_or(CL_OUT_OF_RESOURCES);
-            res.insert(dev, Arc::new(resource?));
+            res.insert(dev, resource?);
         }
 
         if !user_ptr.is_null() {
@@ -249,7 +264,9 @@ impl Context {
                     d.helper_ctx()
                         .exec(|ctx| ctx.texture_subdata(r, &bx, user_ptr, stride, layer_stride))
                 })
-                .for_each(|f| f.wait());
+                .for_each(|f| {
+                    f.wait();
+                });
         }
 
         Ok(res)
@@ -381,7 +398,7 @@ impl Context {
                 }
             }
 
-            buffers.insert(dev, Arc::new(res));
+            buffers.insert(dev, res);
         }
 
         self.svm.lock().unwrap().svm_ptrs.insert(
@@ -400,16 +417,16 @@ impl Context {
         &self,
         ctx: &QueueContext,
         ptr: usize,
-    ) -> CLResult<Option<Arc<PipeResource>>> {
+    ) -> CLResult<Option<PipeResource>> {
         let svm = self.svm.lock().unwrap();
 
         let Some(alloc) = svm.svm_ptrs.find_alloc_precise(ptr) else {
             return Ok(None);
         };
 
-        Ok(Some(Arc::clone(
-            alloc.alloc.get_res_for_access(ctx, RWFlags::RW)?,
-        )))
+        Ok(Some(
+            alloc.alloc.get_res_for_access(ctx, RWFlags::RW)?.new_ref(),
+        ))
     }
 
     pub fn copy_svm_to_host(
@@ -502,7 +519,7 @@ impl Context {
             ctx.clear_buffer(res, &pattern, offset as u32, size as u32);
         } else {
             let slice = unsafe {
-                slice::from_raw_parts_mut(svm_ptr as *mut _, size / mem::size_of_val(&pattern))
+                slice::from_raw_parts_mut(svm_ptr as *mut _, size / size_of_val(&pattern))
             };
 
             slice.fill(pattern);
@@ -611,7 +628,7 @@ impl Context {
         gl_target: cl_GLenum,
         format: cl_image_format,
         gl_props: GLMemProps,
-    ) -> CLResult<HashMap<&'static Device, Arc<PipeResource>>> {
+    ) -> CLResult<HashMap<&'static Device, PipeResource>> {
         let mut res = HashMap::new();
         let target = cl_mem_type_to_texture_target_gl(image_type, gl_target);
         let pipe_format = if image_type == CL_MEM_OBJECT_BUFFER {
@@ -643,10 +660,15 @@ impl Context {
                 )
                 .ok_or(CL_OUT_OF_RESOURCES)?;
 
-            res.insert(*dev, Arc::new(resource));
+            res.insert(*dev, resource);
         }
 
         Ok(res)
+    }
+
+    pub fn flush_gl_mem_objects(&self, mem_objects: &[Mem]) -> CLResult<Option<FenceFd>> {
+        let gl_ctx = self.gl_ctx_manager.as_ref().ok_or(CL_INVALID_CONTEXT)?;
+        gl_ctx.flush(mem_objects)
     }
 }
 

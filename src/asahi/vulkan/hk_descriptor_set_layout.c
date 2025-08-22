@@ -43,12 +43,10 @@ hk_descriptor_stride_align_for_type(
       break;
 
    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-      *stride = *alignment = sizeof(struct hk_storage_image_descriptor);
-      break;
-
    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-      *stride = *alignment = sizeof(struct hk_buffer_view_descriptor);
+      *stride = sizeof(struct hk_storage_image_descriptor);
+      *alignment = 8;
       break;
 
    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
@@ -86,7 +84,7 @@ hk_descriptor_stride_align_for_type(
       break;
 
    default:
-      unreachable("Invalid descriptor type");
+      UNREACHABLE("Invalid descriptor type");
    }
 
    assert(*stride <= HK_MAX_DESCRIPTOR_SIZE);

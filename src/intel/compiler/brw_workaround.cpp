@@ -228,7 +228,7 @@ brw_workaround_nomask_control_flow(brw_shader &s)
              * safely omit the predication for.
              */
             if (depth && inst->force_writemask_all &&
-                is_send(inst) && !inst->predicate &&
+                inst->is_send() && !inst->predicate &&
                 !inst->has_no_mask_send_params) {
                /* We need to load the execution mask into the flag register by
                 * using a builder with channel group matching the whole shader
@@ -260,7 +260,7 @@ brw_workaround_nomask_control_flow(brw_shader &s)
                inst->predicate_trivial = true;
 
                if (save_flag)
-                  ubld.group(1, 0).at(block, inst->next).MOV(flag, tmp);
+                  ubld.group(1, 0).after(inst).MOV(flag, tmp);
 
                progress = true;
             }

@@ -38,9 +38,11 @@ lvp_image_create(VkDevice _device,
    LVP_FROM_HANDLE(lvp_device, device, _device);
    struct lvp_image *image;
    VkResult result = VK_SUCCESS;
+#ifdef HAVE_LIBDRM
    bool android_surface = false;
    const VkSubresourceLayout *layouts = NULL;
    uint64_t modifier;
+#endif
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
 
 #ifdef HAVE_LIBDRM
@@ -78,6 +80,7 @@ lvp_image_create(VkDevice _device,
    image->disjoint = image->plane_count > 1 &&
                      (pCreateInfo->flags & VK_IMAGE_CREATE_DISJOINT_BIT);
 
+#ifdef HAVE_LIBDRM
    /* This section is removed by the optimizer for non-ANDROID builds */
    VkImageDrmFormatModifierExplicitCreateInfoEXT eci;
    VkSubresourceLayout a_plane_layouts[LVP_MAX_PLANE_COUNT];
@@ -91,6 +94,7 @@ lvp_image_create(VkDevice _device,
       layouts = a_plane_layouts;
       android_surface = true;
    }
+#endif
 
    const struct vk_format_ycbcr_info *ycbcr_info =
       vk_format_get_ycbcr_info(pCreateInfo->format);
@@ -184,8 +188,10 @@ lvp_image_create(VkDevice _device,
                                                                &template,
                                                                &image->planes[p].size);
       }
-      if (!image->planes[p].bo)
-         return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+      if (!image->planes[p].bo) {
+         result = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+         goto fail;
+      }
 
       image->planes[p].size = align64(image->planes[p].size, image->alignment);
 
@@ -210,53 +216,24 @@ fail:
    return result;
 }
 
-struct lvp_image *
-lvp_swapchain_get_image(VkSwapchainKHR swapchain,
-                        uint32_t index)
-{
-   VkImage image = wsi_common_get_image(swapchain, index);
-   return lvp_image_from_handle(image);
-}
-
-static VkResult
-lvp_image_from_swapchain(VkDevice device,
-                         const VkImageCreateInfo *pCreateInfo,
-                         const VkImageSwapchainCreateInfoKHR *swapchain_info,
-                         const VkAllocationCallbacks *pAllocator,
-                         VkImage *pImage)
-{
-   ASSERTED struct lvp_image *swapchain_image = lvp_swapchain_get_image(swapchain_info->swapchain, 0);
-   assert(swapchain_image);
-
-   assert(swapchain_image->vk.image_type == pCreateInfo->imageType);
-
-   VkImageCreateInfo local_create_info;
-   local_create_info = *pCreateInfo;
-   local_create_info.pNext = NULL;
-   /* The following parameters are implictly selected by the wsi code. */
-   local_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-   local_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
-   local_create_info.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-   assert(!(local_create_info.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT));
-   return lvp_image_create(device, &local_create_info, pAllocator,
-                           pImage);
-}
-
 VKAPI_ATTR VkResult VKAPI_CALL
-lvp_CreateImage(VkDevice device,
+lvp_CreateImage(VkDevice _device,
                 const VkImageCreateInfo *pCreateInfo,
                 const VkAllocationCallbacks *pAllocator,
                 VkImage *pImage)
 {
 #if !DETECT_OS_ANDROID
+   LVP_FROM_HANDLE(lvp_device, device, _device);
    const VkImageSwapchainCreateInfoKHR *swapchain_info =
       vk_find_struct_const(pCreateInfo->pNext, IMAGE_SWAPCHAIN_CREATE_INFO_KHR);
-   if (swapchain_info && swapchain_info->swapchain != VK_NULL_HANDLE)
-      return lvp_image_from_swapchain(device, pCreateInfo, swapchain_info,
-                                      pAllocator, pImage);
+   if (swapchain_info && swapchain_info->swapchain != VK_NULL_HANDLE) {
+      return wsi_common_create_swapchain_image(&device->physical_device->wsi_device,
+                                               pCreateInfo,
+                                               swapchain_info->swapchain,
+                                               pImage);
+   }
 #endif
-   return lvp_image_create(device, pCreateInfo, pAllocator,
+   return lvp_image_create(_device, pCreateInfo, pAllocator,
                            pImage);
 }
 
@@ -366,6 +343,26 @@ lvp_create_imageview(const struct lvp_image_view *iv, VkFormat plane_format, uns
       if (view.resource->target == PIPE_TEXTURE_3D)
          view.u.tex.is_2d_view_of_3d = true;
    }
+
+   if (iv->vk.view_type == VK_IMAGE_VIEW_TYPE_1D ||
+       iv->vk.view_type == VK_IMAGE_VIEW_TYPE_2D) {
+      /*
+       * There's no target field in pipe_image_view, but
+       * there's a single_layer_view which the mesa state tracker
+       * uses for a similar purpose, although not exactly the same,
+       * here we just use it to indicate the view is of a non-array
+       * type.
+       * Note that the layered-ness must match between shader dcl
+       * and view (but not between view and resource).
+       * We ignore VK_IMAGE_VIEW_TYPE_CUBE here, should be fine
+       * since there's no difference in accessing cube and cube arrays
+       * (as layer and face combine into one var), and for size queries
+       * we fix up targets separately (always using array types).
+       */
+      assert(view.u.tex.first_layer == view.u.tex.last_layer);
+      view.u.tex.single_layer_view = 1;
+   }
+
    view.u.tex.level = iv->vk.base_mip_level;
    return view;
 }

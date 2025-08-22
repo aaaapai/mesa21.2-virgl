@@ -35,7 +35,11 @@
 #include "panfrost/util/pan_lower_framebuffer.h"
 
 void bifrost_preprocess_nir(nir_shader *nir, unsigned gpu_id);
+void bifrost_postprocess_nir(nir_shader *nir, unsigned gpu_id);
+void bifrost_lower_texture_nir(nir_shader *nir, unsigned gpu_id);
 void midgard_preprocess_nir(nir_shader *nir, unsigned gpu_id);
+void midgard_postprocess_nir(nir_shader *nir, unsigned gpu_id);
+void midgard_lower_texture_nir(nir_shader *nir, unsigned gpu_id);
 
 static unsigned
 pan_get_fixed_varying_mask(unsigned varyings_used)
@@ -51,6 +55,41 @@ pan_shader_preprocess(nir_shader *nir, unsigned gpu_id)
       bifrost_preprocess_nir(nir, gpu_id);
    else
       midgard_preprocess_nir(nir, gpu_id);
+}
+
+static inline void
+pan_shader_postprocess(nir_shader *nir, unsigned gpu_id)
+{
+   if (pan_arch(gpu_id) >= 6)
+      bifrost_postprocess_nir(nir, gpu_id);
+   else
+      midgard_postprocess_nir(nir, gpu_id);
+}
+
+static inline void
+pan_shader_lower_texture_early(nir_shader *nir, unsigned gpu_id)
+{
+   nir_lower_tex_options lower_tex_options = {
+      .lower_txs_lod = true,
+      .lower_txp = ~0,
+      .lower_tg4_offsets = true,
+      .lower_tg4_broadcom_swizzle = true,
+      .lower_txd = pan_arch(gpu_id) < 6,
+      .lower_txd_cube_map = true,
+      .lower_invalid_implicit_lod = true,
+      .lower_index_to_offset = pan_arch(gpu_id) >= 6,
+   };
+
+   NIR_PASS(_, nir, nir_lower_tex, &lower_tex_options);
+}
+
+static inline void
+pan_shader_lower_texture(nir_shader *nir, unsigned gpu_id)
+{
+   if (pan_arch(gpu_id) >= 6)
+      bifrost_lower_texture_nir(nir, gpu_id);
+   else
+      midgard_lower_texture_nir(nir, gpu_id);
 }
 
 static inline void
@@ -134,7 +173,7 @@ pan_shader_prepare_midgard_rsd(const struct pan_shader_info *info,
 #define pan_preloads(reg) (preload & BITFIELD64_BIT(reg))
 
 static void
-pan_make_preload(gl_shader_stage stage, uint64_t preload,
+pan_make_preload(mesa_shader_stage stage, uint64_t preload,
                  struct MALI_PRELOAD *out)
 {
    switch (stage) {

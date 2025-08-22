@@ -35,113 +35,6 @@
 #include "shaders/float64_spv.h"
 #include "util/u_printf.h"
 
-/**
- * Embedded sampler management.
- */
-
-static unsigned
-embedded_sampler_key_hash(const void *key)
-{
-   return _mesa_hash_data(key, sizeof(struct anv_embedded_sampler_key));
-}
-
-static bool
-embedded_sampler_key_equal(const void *a, const void *b)
-{
-   return memcmp(a, b, sizeof(struct anv_embedded_sampler_key)) == 0;
-}
-
-static void
-anv_embedded_sampler_free(struct anv_device *device,
-                          struct anv_embedded_sampler *sampler)
-{
-   anv_state_pool_free(&device->dynamic_state_pool, sampler->sampler_state);
-   anv_state_pool_free(&device->dynamic_state_pool, sampler->border_color_state);
-   vk_free(&device->vk.alloc, sampler);
-}
-
-static struct anv_embedded_sampler *
-anv_embedded_sampler_ref(struct anv_embedded_sampler *sampler)
-{
-   sampler->ref_cnt++;
-   return sampler;
-}
-
-static void
-anv_embedded_sampler_unref(struct anv_device *device,
-                           struct anv_embedded_sampler *sampler)
-{
-   simple_mtx_lock(&device->embedded_samplers.mutex);
-   if (--sampler->ref_cnt == 0) {
-      _mesa_hash_table_remove_key(device->embedded_samplers.map,
-                                  &sampler->key);
-      anv_embedded_sampler_free(device, sampler);
-   }
-   simple_mtx_unlock(&device->embedded_samplers.mutex);
-}
-
-void
-anv_device_init_embedded_samplers(struct anv_device *device)
-{
-   simple_mtx_init(&device->embedded_samplers.mutex, mtx_plain);
-   device->embedded_samplers.map =
-      _mesa_hash_table_create(NULL,
-                              embedded_sampler_key_hash,
-                              embedded_sampler_key_equal);
-}
-
-void
-anv_device_finish_embedded_samplers(struct anv_device *device)
-{
-   hash_table_foreach(device->embedded_samplers.map, entry) {
-      anv_embedded_sampler_free(device, entry->data);
-   }
-   ralloc_free(device->embedded_samplers.map);
-   simple_mtx_destroy(&device->embedded_samplers.mutex);
-}
-
-static VkResult
-anv_shader_bin_get_embedded_samplers(struct anv_device *device,
-                                     struct anv_shader_bin *shader,
-                                     const struct anv_pipeline_bind_map *bind_map)
-{
-   VkResult result = VK_SUCCESS;
-
-   simple_mtx_lock(&device->embedded_samplers.mutex);
-
-   for (uint32_t i = 0; i < bind_map->embedded_sampler_count; i++) {
-      struct hash_entry *entry =
-         _mesa_hash_table_search(device->embedded_samplers.map,
-                                 &bind_map->embedded_sampler_to_binding[i].key);
-      if (entry == NULL) {
-         shader->embedded_samplers[i] =
-            vk_zalloc(&device->vk.alloc,
-                      sizeof(struct anv_embedded_sampler), 8,
-                      VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
-         if (shader->embedded_samplers[i] == NULL) {
-            result = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
-            goto err;
-         }
-
-         anv_genX(device->info, emit_embedded_sampler)(
-            device, shader->embedded_samplers[i],
-            &bind_map->embedded_sampler_to_binding[i]);
-         _mesa_hash_table_insert(device->embedded_samplers.map,
-                                 &shader->embedded_samplers[i]->key,
-                                 shader->embedded_samplers[i]);
-      } else {
-         shader->embedded_samplers[i] = anv_embedded_sampler_ref(entry->data);
-      }
-   }
-
- err:
-   simple_mtx_unlock(&device->embedded_samplers.mutex);
-   return result;
-}
-
-/**
- *
- */
 
 static bool
 anv_shader_bin_serialize(struct vk_pipeline_cache_object *object,
@@ -205,7 +98,7 @@ anv_shader_bin_rewrite_embedded_samplers(struct anv_device *device,
 
 static struct anv_shader_bin *
 anv_shader_bin_create(struct anv_device *device,
-                      gl_shader_stage stage,
+                      mesa_shader_stage stage,
                       const void *key_data, uint32_t key_size,
                       const void *kernel_data, uint32_t kernel_size,
                       const struct brw_stage_prog_data *prog_data_in,
@@ -248,7 +141,7 @@ anv_shader_bin_create(struct anv_device *device,
 
    shader->stage = stage;
    if(INTEL_DEBUG(DEBUG_SHOW_SHADER_STAGE))
-      fprintf(stderr, "Stage: %s\n", gl_shader_stage_name(shader->stage));
+      fprintf(stderr, "Stage: %s\n", mesa_shader_stage_name(shader->stage));
 
    shader->kernel =
       anv_state_pool_alloc(&device->instruction_state_pool, kernel_size, 64);
@@ -258,7 +151,7 @@ anv_shader_bin_create(struct anv_device *device,
 
    if (bind_map->embedded_sampler_count > 0) {
       shader->embedded_samplers = embedded_samplers;
-      if (anv_shader_bin_get_embedded_samplers(device, shader, bind_map) != VK_SUCCESS) {
+      if (anv_device_get_embedded_samplers(device, embedded_samplers, bind_map) != VK_SUCCESS) {
          ANV_DMR_SP_FREE(&device->vk.base, &device->instruction_state_pool, shader->kernel);
          anv_state_pool_free(&device->instruction_state_pool, shader->kernel);
          vk_free(&device->vk.alloc, shader);
@@ -432,7 +325,7 @@ anv_shader_bin_serialize(struct vk_pipeline_cache_object *object,
 
    blob_write_uint32(blob, shader->push_desc_info.used_descriptors);
    blob_write_uint32(blob, shader->push_desc_info.fully_promoted_ubo_descriptors);
-   blob_write_uint8(blob, shader->push_desc_info.used_set_buffer);
+   blob_write_uint8(blob, shader->push_desc_info.push_set_buffer);
 
    blob_write_bytes(blob, shader->bind_map.surface_sha1,
                     sizeof(shader->bind_map.surface_sha1));
@@ -440,6 +333,7 @@ anv_shader_bin_serialize(struct vk_pipeline_cache_object *object,
                     sizeof(shader->bind_map.sampler_sha1));
    blob_write_bytes(blob, shader->bind_map.push_sha1,
                     sizeof(shader->bind_map.push_sha1));
+   blob_write_uint32(blob, shader->bind_map.layout_type);
    blob_write_uint32(blob, shader->bind_map.surface_count);
    blob_write_uint32(blob, shader->bind_map.sampler_count);
    blob_write_uint32(blob, shader->bind_map.embedded_sampler_count);
@@ -468,7 +362,7 @@ anv_shader_bin_deserialize(struct vk_pipeline_cache *cache,
    struct anv_device *device =
       container_of(cache->base.device, struct anv_device, vk);
 
-   gl_shader_stage stage = blob_read_uint32(blob);
+   mesa_shader_stage stage = blob_read_uint32(blob);
 
    uint32_t kernel_size = blob_read_uint32(blob);
    const void *kernel_data = blob_read_bytes(blob, kernel_size);
@@ -498,12 +392,13 @@ anv_shader_bin_deserialize(struct vk_pipeline_cache *cache,
    struct anv_push_descriptor_info push_desc_info = {};
    push_desc_info.used_descriptors = blob_read_uint32(blob);
    push_desc_info.fully_promoted_ubo_descriptors = blob_read_uint32(blob);
-   push_desc_info.used_set_buffer = blob_read_uint8(blob);
+   push_desc_info.push_set_buffer = blob_read_uint8(blob);
 
    struct anv_pipeline_bind_map bind_map = {};
    blob_copy_bytes(blob, bind_map.surface_sha1, sizeof(bind_map.surface_sha1));
    blob_copy_bytes(blob, bind_map.sampler_sha1, sizeof(bind_map.sampler_sha1));
    blob_copy_bytes(blob, bind_map.push_sha1, sizeof(bind_map.push_sha1));
+   bind_map.layout_type = blob_read_uint32(blob);
    bind_map.surface_count = blob_read_uint32(blob);
    bind_map.sampler_count = blob_read_uint32(blob);
    bind_map.embedded_sampler_count = blob_read_uint32(blob);
@@ -653,6 +548,7 @@ anv_load_fp64_shader(struct anv_device *device)
       .Int8 = true,
       .Int16 = true,
       .Int64 = true,
+      .Shader = true,
    };
 
    struct spirv_to_nir_options spirv_options = {
@@ -670,9 +566,9 @@ anv_load_fp64_shader(struct anv_device *device)
 
    nir_validate_shader(nir, "after spirv_to_nir");
 
-   NIR_PASS_V(nir, nir_lower_variable_initializers, nir_var_function_temp);
-   NIR_PASS_V(nir, nir_lower_returns);
-   NIR_PASS_V(nir, nir_inline_functions);
+   NIR_PASS(_, nir, nir_lower_variable_initializers, nir_var_function_temp);
+   NIR_PASS(_, nir, nir_lower_returns);
+   NIR_PASS(_, nir, nir_inline_functions);
 
    anv_device_upload_nir(device, device->internal_cache,
                          nir, sha1);

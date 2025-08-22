@@ -102,17 +102,18 @@ v3d_resource_bo_alloc(struct v3d_resource *rsc)
         struct pipe_screen *pscreen = prsc->screen;
         struct v3d_bo *bo;
 
-        /* Buffers may be read using ldunifa, which prefetches the next
-         * 4 bytes after a read. If the buffer's size is exactly a multiple
-         * of a page size and the shader reads the last 4 bytes with ldunifa
-         * the prefetching would read out of bounds and cause an MMU error,
-         * so we allocate extra space to avoid kernel error spamming.
+        /* Buffers may be read using ldunifa, which prefetches the next 4
+         * bytes after a read. If the buffer's size is exactly a multiple of a
+         * page size and the shader reads the last 4 bytes with ldunifa the
+         * prefetching would read out of bounds and cause an MMU error, so we
+         * allocate extra space to avoid kernel error spamming. We also need
+         * to add a V3D_TFU_READAHEAD padding to avoid invalid reads done by
+         * the TFU unit after the end of the last page allocated.
          */
-        uint32_t size = rsc->size;
-        if (rsc->base.target == PIPE_BUFFER && (size % 4096 == 0))
-                size += 4;
-
-        bo = v3d_bo_alloc(v3d_screen(pscreen), size, "resource");
+        uint32_t padding =
+                rsc->base.target == PIPE_BUFFER ? 4 : V3D_TFU_READAHEAD_SIZE;
+        bo = v3d_bo_alloc(v3d_screen(pscreen), rsc->size + padding,
+                          "resource");
         if (bo) {
                 v3d_bo_unreference(&rsc->bo);
                 rsc->bo = bo;
@@ -163,7 +164,7 @@ static void
 rebind_sampler_views(struct v3d_context *v3d,
                      struct v3d_resource *rsc)
 {
-        for (int st = 0; st < PIPE_SHADER_TYPES; st++) {
+        for (int st = 0; st < MESA_SHADER_STAGES; st++) {
                 struct v3d_texture_stateobj *tex = v3d->tex + st;
 
                 for (unsigned i = 0; i < tex->num_textures; i++) {
@@ -846,11 +847,13 @@ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
         if (screen->ro && (tmpl->bind & PIPE_BIND_SCANOUT)) {
                 assert(!rsc->tiled);
                 struct winsys_handle handle;
+                uint32_t scanout_height =
+                        align(rsc->size + V3D_TFU_READAHEAD_SIZE, 4096) / 4096;
                 struct pipe_resource scanout_tmpl = {
                         .target = prsc->target,
                         .format = PIPE_FORMAT_RGBA8888_UNORM,
                         .width0 = 1024, /* one page */
-                        .height0 = align(rsc->size, 4096) / 4096,
+                        .height0 = scanout_height,
                         .depth0 = 1,
                         .array_size = 1,
                 };

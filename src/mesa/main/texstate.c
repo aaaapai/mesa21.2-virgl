@@ -445,7 +445,7 @@ tex_combine_translate_mode(GLenum envMode, GLenum mode)
    case GL_MODULATE_SIGNED_ADD_ATI: return TEXENV_MODE_MODULATE_SIGNED_ADD_ATI;
    case GL_MODULATE_SUBTRACT_ATI: return TEXENV_MODE_MODULATE_SUBTRACT_ATI;
    default:
-      unreachable("Invalid TexEnv Combine mode");
+      UNREACHABLE("Invalid TexEnv Combine mode");
    }
 }
 
@@ -469,7 +469,7 @@ tex_combine_translate_source(GLenum src)
    case GL_ZERO: return TEXENV_SRC_ZERO;
    case GL_ONE: return TEXENV_SRC_ONE;
    default:
-      unreachable("Invalid TexEnv Combine argument source");
+      UNREACHABLE("Invalid TexEnv Combine argument source");
    }
 }
 
@@ -483,7 +483,7 @@ tex_combine_translate_operand(GLenum operand)
    case GL_SRC_ALPHA: return TEXENV_OPR_ALPHA;
    case GL_ONE_MINUS_SRC_ALPHA: return TEXENV_OPR_ONE_MINUS_ALPHA;
    default:
-      unreachable("Invalid TexEnv Combine argument source");
+      UNREACHABLE("Invalid TexEnv Combine argument source");
    }
 }
 
@@ -732,7 +732,7 @@ update_program_texture_state(struct gl_context *ctx, struct gl_program **prog,
 {
    int i;
 
-   for (i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       GLbitfield mask;
       GLuint s;
 
@@ -891,7 +891,7 @@ fix_missing_textures_for_atifs(struct gl_context *ctx,
 GLbitfield
 _mesa_update_texture_state(struct gl_context *ctx)
 {
-   struct gl_program *prog[MESA_SHADER_STAGES];
+   struct gl_program *prog[MESA_SHADER_MESH_STAGES];
    int i;
    int old_max_unit = ctx->Texture._MaxEnabledTexImageUnit;
    BITSET_DECLARE(enabled_texture_units, MAX_COMBINED_TEXTURE_IMAGE_UNITS);

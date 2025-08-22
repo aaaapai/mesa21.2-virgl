@@ -531,7 +531,7 @@ static GLuint material_attrib( GLuint side, GLuint property )
    case STATE_SHININESS:
       return MAT_ATTRIB_FRONT_SHININESS + side;
    default:
-      unreachable("invalid value");
+      UNREACHABLE("invalid value");
    }
 }
 
@@ -1063,7 +1063,7 @@ static void build_fog( struct tnl_program *p )
       fog = load_input(p, VERT_ATTRIB_FOG, 1);
       break;
    default:
-      unreachable("Bad fog mode in build_fog()");
+      UNREACHABLE("Bad fog mode in build_fog()");
    }
 
    store_output_float(p, VARYING_SLOT_FOGC, fog);
@@ -1374,7 +1374,7 @@ _mesa_get_fixed_func_vertex_program(struct gl_context *ctx)
          return NULL;
 
       const struct nir_shader_compiler_options *options =
-         st_get_nir_compiler_options(ctx->st, MESA_SHADER_VERTEX);
+         ctx->screen->nir_options[MESA_SHADER_VERTEX];
 
       nir_shader *s =
          create_new_program( &key, prog,

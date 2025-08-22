@@ -346,6 +346,17 @@ panvk_per_arch(CmdPipelineBarrier2)(VkCommandBuffer commandBuffer,
 
       panvk_per_arch(cmd_open_batch)(cmdbuf);
    }
+
+   for (uint32_t i = 0; i < pDependencyInfo->imageMemoryBarrierCount; i++) {
+      const VkImageMemoryBarrier2 *barrier = &pDependencyInfo->pImageMemoryBarriers[i];
+
+      panvk_per_arch(cmd_transition_image_layout)(commandBuffer, barrier);
+   }
+
+   /* If we had any layout transition dispatches, the batch will be closed at
+    * this point, therefore establishing the sync between itself and the
+    * commands that follow.
+    */
 }
 
 static void
@@ -431,7 +442,7 @@ panvk_create_cmdbuf(struct vk_command_pool *vk_pool, VkCommandBufferLevel level,
       .owns_bos = true,
       .needs_locking = false,
    };
-   panvk_pool_init(&cmdbuf->desc_pool, device, &pool->desc_bo_pool,
+   panvk_pool_init(&cmdbuf->desc_pool, device, &pool->desc_bo_pool, NULL,
                    &desc_pool_props);
 
    struct panvk_pool_properties tls_pool_props = {
@@ -443,7 +454,7 @@ panvk_create_cmdbuf(struct vk_command_pool *vk_pool, VkCommandBufferLevel level,
       .owns_bos = true,
       .needs_locking = false,
    };
-   panvk_pool_init(&cmdbuf->tls_pool, device, &pool->tls_bo_pool,
+   panvk_pool_init(&cmdbuf->tls_pool, device, &pool->tls_bo_pool, &pool->tls_big_bo_pool,
                    &tls_pool_props);
 
    struct panvk_pool_properties var_pool_props = {
@@ -455,7 +466,7 @@ panvk_create_cmdbuf(struct vk_command_pool *vk_pool, VkCommandBufferLevel level,
       .owns_bos = true,
       .needs_locking = false,
    };
-   panvk_pool_init(&cmdbuf->varying_pool, device, &pool->varying_bo_pool,
+   panvk_pool_init(&cmdbuf->varying_pool, device, &pool->varying_bo_pool, NULL,
                    &var_pool_props);
 
    list_inithead(&cmdbuf->batches);

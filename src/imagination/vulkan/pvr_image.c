@@ -44,7 +44,7 @@ static void pvr_image_init_memlayout(struct pvr_image *image)
 {
    switch (image->vk.tiling) {
    default:
-      unreachable("bad VkImageTiling");
+      UNREACHABLE("bad VkImageTiling");
    case VK_IMAGE_TILING_OPTIMAL:
       if (image->vk.wsi_legacy_scanout)
          image->memlayout = PVR_MEMLAYOUT_LINEAR;
@@ -346,7 +346,7 @@ VkResult pvr_CreateImageView(VkDevice _device,
 
    result = pvr_pack_tex_state(device,
                                &info,
-                               iview->texture_state[info.tex_state_type]);
+                               &iview->image_state[info.tex_state_type]);
    if (result != VK_SUCCESS)
       goto err_vk_image_view_destroy;
 
@@ -358,7 +358,7 @@ VkResult pvr_CreateImageView(VkDevice _device,
 
       result = pvr_pack_tex_state(device,
                                   &info,
-                                  iview->texture_state[info.tex_state_type]);
+                                  &iview->image_state[info.tex_state_type]);
       if (result != VK_SUCCESS)
          goto err_vk_image_view_destroy;
    }
@@ -389,7 +389,7 @@ VkResult pvr_CreateImageView(VkDevice _device,
 
       result = pvr_pack_tex_state(device,
                                   &info,
-                                  iview->texture_state[info.tex_state_type]);
+                                  &iview->image_state[info.tex_state_type]);
       if (result != VK_SUCCESS)
          goto err_vk_image_view_destroy;
    }
@@ -470,7 +470,7 @@ VkResult pvr_CreateBufferView(VkDevice _device,
    format_swizzle = pvr_get_format_swizzle(info.format);
    memcpy(info.swizzle, format_swizzle, sizeof(info.swizzle));
 
-   result = pvr_pack_tex_state(device, &info, bview->texture_state);
+   result = pvr_pack_tex_state(device, &info, &bview->image_state);
    if (result != VK_SUCCESS)
       goto err_vk_buffer_view_destroy;
 

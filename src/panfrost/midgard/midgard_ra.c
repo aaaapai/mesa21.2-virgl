@@ -404,7 +404,7 @@ check_read_class(unsigned *classes, unsigned tag, unsigned node)
    case REG_CLASS_WORK:
       return IS_ALU(tag);
    default:
-      unreachable("Invalid class");
+      UNREACHABLE("Invalid class");
    }
 }
 
@@ -424,7 +424,7 @@ check_write_class(unsigned *classes, unsigned tag, unsigned node)
    case REG_CLASS_WORK:
       return IS_ALU(tag) || (tag == TAG_LOAD_STORE_4);
    default:
-      unreachable("Invalid class");
+      UNREACHABLE("Invalid class");
    }
 }
 
@@ -621,6 +621,7 @@ mir_compute_interference(compiler_context *ctx, struct lcra_state *l)
             break;
       }
 
+      assert(r1w != ~0);
       mir_foreach_instr_global(ctx, ins) {
          if (ins->dest < ctx->temp_count)
             lcra_add_node_interference(l, ins->dest, mir_bytemask(ins), r1w,
@@ -734,7 +735,7 @@ mir_is_64(const midgard_instruction *ins)
 static bool
 needs_contiguous_workgroup(const compiler_context *ctx)
 {
-   return gl_shader_stage_uses_workgroup(ctx->stage);
+   return mesa_shader_stage_uses_workgroup(ctx->stage);
 }
 
 /*
@@ -1232,7 +1233,7 @@ mir_spill_register(compiler_context *ctx, unsigned spill_node,
                    unsigned spill_class, unsigned *spill_count)
 {
    if (spill_class == REG_CLASS_WORK && ctx->inputs->is_blend)
-      unreachable("Blend shader spilling is currently unimplemented");
+      UNREACHABLE("Blend shader spilling is currently unimplemented");
 
    unsigned spill_index = ctx->temp_count;
 

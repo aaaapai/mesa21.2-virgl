@@ -57,8 +57,7 @@ static void *
 asahi_blit_compute_shader(struct pipe_context *ctx, struct asahi_blit_key *key)
 {
    const nir_shader_compiler_options *options =
-      ctx->screen->get_compiler_options(ctx->screen, PIPE_SHADER_IR_NIR,
-                                        PIPE_SHADER_COMPUTE);
+      ctx->screen->nir_options[MESA_SHADER_COMPUTE];
 
    nir_builder b_ =
       nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, options, "blit_cs");
@@ -125,19 +124,10 @@ asahi_blit_compute_shader(struct pipe_context *ctx, struct asahi_blit_key *key)
             b, nir_pad_vector(b, coords_el_nd, 3), nir_u2f32(b, layer), 2);
       }
 
-      nir_tex_instr *tex = nir_tex_instr_create(b->shader, 1);
-      tex->dest_type = nir_type_uint32; /* irrelevant */
-      tex->sampler_dim = GLSL_SAMPLER_DIM_2D;
-      tex->is_array = key->array;
-      tex->op = nir_texop_tex;
-      tex->src[0] = nir_tex_src_for_ssa(nir_tex_src_coord, coords_el_nd);
-      tex->backend_flags = AGX_TEXTURE_FLAG_NO_CLAMP;
-      tex->coord_components = coords_el_nd->num_components;
-      tex->texture_index = 0;
-      tex->sampler_index = 0;
-      nir_def_init(&tex->instr, &tex->def, 4, 32);
-      nir_builder_instr_insert(b, &tex->instr);
-      colour0 = &tex->def;
+      colour0 = nir_tex(b, coords_el_nd, .texture_index = 0, .sampler_index = 0,
+                        .backend_flags = AGX_TEXTURE_FLAG_NO_CLAMP,
+                        .dim = GLSL_SAMPLER_DIM_2D, .is_array = key->array,
+                        .dest_type = nir_type_uint32);
    }
    nir_push_else(b, NULL);
    {
@@ -167,7 +157,7 @@ asahi_blit_compute_shader(struct pipe_context *ctx, struct asahi_blit_key *key)
    else if (clamp == ASAHI_BLIT_CLAMP_UINT_TO_SINT)
       color = nir_umin(b, color, nir_imm_int(b, INT32_MAX));
 
-   nir_def *local_offset = nir_imm_intN_t(b, 0, 16);
+   nir_def *local_offset = nir_imm_int(b, 0);
    nir_def *lid = nir_trim_vector(b, nir_load_local_invocation_id(b), 2);
    lid = nir_u2u16(b, lid);
 
@@ -254,7 +244,7 @@ static void
 asahi_compute_save(struct agx_context *ctx)
 {
    struct asahi_blitter *blitter = &ctx->compute_blitter;
-   struct agx_stage *stage = &ctx->stage[PIPE_SHADER_COMPUTE];
+   struct agx_stage *stage = &ctx->stage[MESA_SHADER_COMPUTE];
 
    assert(!blitter->active && "recursion detected, driver bug");
 
@@ -288,25 +278,25 @@ asahi_compute_restore(struct agx_context *ctx)
    struct asahi_blitter *blitter = &ctx->compute_blitter;
 
    if (blitter->has_saved_image) {
-      pctx->set_shader_images(pctx, PIPE_SHADER_COMPUTE, 0, 1, 0,
+      pctx->set_shader_images(pctx, MESA_SHADER_COMPUTE, 0, 1, 0,
                               &blitter->saved_image);
       pipe_resource_reference(&blitter->saved_image.resource, NULL);
    }
 
    /* take_ownership=true so do not unreference */
-   pctx->set_constant_buffer(pctx, PIPE_SHADER_COMPUTE, 0, true,
+   pctx->set_constant_buffer(pctx, MESA_SHADER_COMPUTE, 0, true,
                              &blitter->saved_cb);
    blitter->saved_cb.buffer = NULL;
 
    if (blitter->saved_sampler_view) {
-      pctx->set_sampler_views(pctx, PIPE_SHADER_COMPUTE, 0, 1, 0,
+      pctx->set_sampler_views(pctx, MESA_SHADER_COMPUTE, 0, 1, 0,
                               &blitter->saved_sampler_view);
 
       blitter->saved_sampler_view = NULL;
    }
 
    if (blitter->saved_num_sampler_states) {
-      pctx->bind_sampler_states(pctx, PIPE_SHADER_COMPUTE, 0,
+      pctx->bind_sampler_states(pctx, MESA_SHADER_COMPUTE, 0,
                                 blitter->saved_num_sampler_states,
                                 blitter->saved_sampler_states);
    }
@@ -376,7 +366,7 @@ asahi_compute_blit(struct pipe_context *ctx, const struct pipe_blit_info *info,
       .buffer_size = sizeof(data),
       .user_buffer = data,
    };
-   ctx->set_constant_buffer(ctx, PIPE_SHADER_COMPUTE, 0, false, &cb);
+   ctx->set_constant_buffer(ctx, MESA_SHADER_COMPUTE, 0, false, &cb);
 
    struct pipe_image_view image = {
       .resource = dst,
@@ -388,7 +378,7 @@ asahi_compute_blit(struct pipe_context *ctx, const struct pipe_blit_info *info,
       .u.tex.last_layer = info->dst.box.z + depth - 1,
       .u.tex.single_layer_view = !array,
    };
-   ctx->set_shader_images(ctx, PIPE_SHADER_COMPUTE, 0, 1, 0, &image);
+   ctx->set_shader_images(ctx, MESA_SHADER_COMPUTE, 0, 1, 0, &image);
 
    if (!blitter->sampler[info->filter]) {
       struct pipe_sampler_state sampler_state = {
@@ -406,7 +396,7 @@ asahi_compute_blit(struct pipe_context *ctx, const struct pipe_blit_info *info,
          ctx->create_sampler_state(ctx, &sampler_state);
    }
 
-   ctx->bind_sampler_states(ctx, PIPE_SHADER_COMPUTE, 0, 1,
+   ctx->bind_sampler_states(ctx, MESA_SHADER_COMPUTE, 0, 1,
                             &blitter->sampler[info->filter]);
 
    /* Initialize the sampler view. */
@@ -422,7 +412,7 @@ asahi_compute_blit(struct pipe_context *ctx, const struct pipe_blit_info *info,
    src_templ.u.tex.first_level = info->src.level;
    src_templ.u.tex.last_level = info->src.level;
    src_view = ctx->create_sampler_view(ctx, src, &src_templ);
-   ctx->set_sampler_views(ctx, PIPE_SHADER_COMPUTE, 0, 1, 0, &src_view);
+   ctx->set_sampler_views(ctx, MESA_SHADER_COMPUTE, 0, 1, 0, &src_view);
    ctx->sampler_view_release(ctx, src_view);
 
    struct asahi_blit_key key = {
@@ -457,9 +447,9 @@ asahi_compute_blit(struct pipe_context *ctx, const struct pipe_blit_info *info,
          },
    };
    ctx->launch_grid(ctx, &grid_info);
-   ctx->set_shader_images(ctx, PIPE_SHADER_COMPUTE, 0, 0, 1, NULL);
-   ctx->set_constant_buffer(ctx, PIPE_SHADER_COMPUTE, 0, false, NULL);
-   ctx->set_sampler_views(ctx, PIPE_SHADER_COMPUTE, 0, 0, 1, NULL);
+   ctx->set_shader_images(ctx, MESA_SHADER_COMPUTE, 0, 0, 1, NULL);
+   ctx->set_constant_buffer(ctx, MESA_SHADER_COMPUTE, 0, false, NULL);
+   ctx->set_sampler_views(ctx, MESA_SHADER_COMPUTE, 0, 0, 1, NULL);
 
    asahi_compute_restore(agx_context(ctx));
 }
@@ -469,13 +459,13 @@ agx_blitter_save(struct agx_context *ctx, struct blitter_context *blitter,
                  enum asahi_blitter_op op)
 {
    util_blitter_save_vertex_shader(blitter,
-                                   ctx->stage[PIPE_SHADER_VERTEX].shader);
+                                   ctx->stage[MESA_SHADER_VERTEX].shader);
    util_blitter_save_tessctrl_shader(blitter,
-                                     ctx->stage[PIPE_SHADER_TESS_CTRL].shader);
+                                     ctx->stage[MESA_SHADER_TESS_CTRL].shader);
    util_blitter_save_tesseval_shader(blitter,
-                                     ctx->stage[PIPE_SHADER_TESS_EVAL].shader);
+                                     ctx->stage[MESA_SHADER_TESS_EVAL].shader);
    util_blitter_save_geometry_shader(blitter,
-                                     ctx->stage[PIPE_SHADER_GEOMETRY].shader);
+                                     ctx->stage[MESA_SHADER_GEOMETRY].shader);
    util_blitter_save_so_targets(blitter, ctx->streamout.num_targets,
                                 ctx->streamout.targets, MESA_PRIM_UNKNOWN);
    util_blitter_save_vertex_buffers(blitter, ctx->vertex_buffers,
@@ -492,11 +482,11 @@ agx_blitter_save(struct agx_context *ctx, struct blitter_context *blitter,
 
       util_blitter_save_scissor(blitter, &ctx->scissor[0]);
       util_blitter_save_fragment_shader(
-         blitter, ctx->stage[PIPE_SHADER_FRAGMENT].shader);
+         blitter, ctx->stage[MESA_SHADER_FRAGMENT].shader);
 
       if (op & ASAHI_SAVE_FRAGMENT_CONSTANT) {
          util_blitter_save_fragment_constant_buffer_slot(
-            blitter, ctx->stage[PIPE_SHADER_FRAGMENT].cb);
+            blitter, ctx->stage[MESA_SHADER_FRAGMENT].cb);
       }
    }
 
@@ -506,12 +496,12 @@ agx_blitter_save(struct agx_context *ctx, struct blitter_context *blitter,
 
    if (op & ASAHI_SAVE_TEXTURES) {
       util_blitter_save_fragment_sampler_states(
-         blitter, ctx->stage[PIPE_SHADER_FRAGMENT].sampler_count,
-         (void **)(ctx->stage[PIPE_SHADER_FRAGMENT].samplers));
+         blitter, ctx->stage[MESA_SHADER_FRAGMENT].sampler_count,
+         (void **)(ctx->stage[MESA_SHADER_FRAGMENT].samplers));
 
       util_blitter_save_fragment_sampler_views(
-         blitter, ctx->stage[PIPE_SHADER_FRAGMENT].texture_count,
-         (struct pipe_sampler_view **)ctx->stage[PIPE_SHADER_FRAGMENT].textures);
+         blitter, ctx->stage[MESA_SHADER_FRAGMENT].texture_count,
+         (struct pipe_sampler_view **)ctx->stage[MESA_SHADER_FRAGMENT].textures);
    }
 
    if (!(op & ASAHI_DISABLE_RENDER_COND)) {
@@ -547,7 +537,7 @@ agx_blit(struct pipe_context *pipe, const struct pipe_blit_info *info)
       fprintf(stderr, "\n");
       util_dump_blit_info(stderr, info);
       fprintf(stderr, "\n\n");
-      unreachable("Unsupported blit");
+      UNREACHABLE("Unsupported blit");
    }
 
    /* Handle self-blits */

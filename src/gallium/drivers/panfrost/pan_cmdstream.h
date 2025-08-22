@@ -200,7 +200,7 @@ pan_draw_mode(enum mesa_prim mode)
 #undef DEFINE_CASE
 
    default:
-      unreachable("Invalid draw mode");
+      UNREACHABLE("Invalid draw mode");
    }
 }
 
@@ -249,7 +249,7 @@ panfrost_get_position_shader(struct panfrost_batch *batch,
                              const struct pipe_draw_info *info)
 {
    /* IDVS/points vertex shader */
-   uint64_t vs_ptr = batch->rsd[PIPE_SHADER_VERTEX];
+   uint64_t vs_ptr = batch->rsd[MESA_SHADER_VERTEX];
 
    /* IDVS/triangle vertex shader */
    if (vs_ptr && info->mode != MESA_PRIM_POINTS)
@@ -262,7 +262,7 @@ panfrost_get_position_shader(struct panfrost_batch *batch,
 static inline uint64_t
 panfrost_get_varying_shader(struct panfrost_batch *batch)
 {
-   return batch->rsd[PIPE_SHADER_VERTEX] + (2 * pan_size(SHADER_PROGRAM));
+   return batch->rsd[MESA_SHADER_VERTEX] + (2 * pan_size(SHADER_PROGRAM));
 }
 #endif
 
@@ -281,7 +281,7 @@ panfrost_vertex_attribute_stride(struct panfrost_compiled_shader *vs,
 
 static inline uint64_t
 panfrost_emit_resources(struct panfrost_batch *batch,
-                        enum pipe_shader_type stage)
+                        mesa_shader_stage stage)
 {
    struct panfrost_context *ctx = batch->ctx;
    struct pan_ptr T;
@@ -311,10 +311,10 @@ panfrost_emit_resources(struct panfrost_batch *batch,
    pan_make_resource_table(T, PAN_TABLE_IMAGE, batch->images[stage],
                            util_last_bit(ctx->image_mask[stage]));
 
-   if (stage == PIPE_SHADER_FRAGMENT) {
+   if (stage == MESA_SHADER_FRAGMENT) {
       pan_make_resource_table(T, PAN_TABLE_ATTRIBUTE, batch->attribs[stage],
-                              batch->nr_varying_attribs[PIPE_SHADER_FRAGMENT]);
-   } else if (stage == PIPE_SHADER_VERTEX) {
+                              batch->nr_varying_attribs[MESA_SHADER_FRAGMENT]);
+   } else if (stage == MESA_SHADER_VERTEX) {
       pan_make_resource_table(T, PAN_TABLE_ATTRIBUTE, batch->attribs[stage],
                               ctx->vertex->num_elements);
 

@@ -466,6 +466,7 @@ emit_depthstencil_clear(struct radv_cmd_buffer *cmd_buffer, VkClearDepthStencilV
                         bool can_fast_clear)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+   const struct radv_physical_device *pdev = radv_device_physical(device);
    const bool unrestricted = device->vk.enabled_extensions.EXT_depth_range_unrestricted;
    const struct radv_rendering_state *render = &cmd_buffer->state.render;
    uint32_t samples;
@@ -538,6 +539,22 @@ emit_depthstencil_clear(struct radv_cmd_buffer *cmd_buffer, VkClearDepthStencilV
    if (aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
       radv_CmdSetStencilReference(cmd_buffer_h, VK_STENCIL_FACE_FRONT_BIT, prev_reference);
    }
+
+   if (iview && iview->image->hiz_valid_offset && radv_is_clear_rect_full(iview, clear_rect, view_mask)) {
+      assert(pdev->info.gfx_level == GFX12);
+
+      const VkImageSubresourceRange range = {
+         .aspectMask = aspects,
+         .baseMipLevel = iview->vk.base_mip_level,
+         .levelCount = iview->vk.level_count,
+         .baseArrayLayer = iview->vk.base_array_layer,
+         .layerCount = iview->vk.layer_count,
+      };
+
+      radv_clear_hiz(cmd_buffer, iview->image, &range, radv_gfx12_get_hiz_initial_value());
+
+      radv_update_hiz_metadata(cmd_buffer, iview->image, &range, true);
+   }
 }
 
 static VkResult
@@ -591,6 +608,7 @@ clear_htile_mask(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *im
                  uint64_t va, uint64_t size, uint32_t htile_value, uint32_t htile_mask)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+   struct radv_cmd_stream *cs = cmd_buffer->cs;
    uint64_t block_count = DIV_ROUND_UP(size, 1024);
    struct radv_meta_saved_state saved_state;
    VkPipelineLayout layout;
@@ -603,7 +621,7 @@ clear_htile_mask(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *im
       return 0;
    }
 
-   radv_cs_add_buffer(device->ws, cmd_buffer->cs, bo);
+   radv_cs_add_buffer(device->ws, cs->b, bo);
 
    radv_meta_save(&saved_state, cmd_buffer, RADV_META_SAVE_COMPUTE_PIPELINE | RADV_META_SAVE_CONSTANTS);
 
@@ -700,7 +718,7 @@ radv_get_htile_mask(struct radv_cmd_buffer *cmd_buffer, const struct radv_image 
 
       /* Preserve VRS rates during clears but not during initialization. */
       if (is_clear && radv_image_has_vrs_htile(device, image)) {
-         mask &= ~(0x3 << 6); /* VRS X-rate */
+         mask &= ~(0x3 << 6);  /* VRS X-rate */
          mask &= ~(0x3 << 10); /* VRS Y-rate */
       }
 
@@ -1025,7 +1043,7 @@ radv_clear_dcc_comp_to_single(struct radv_cmd_buffer *cmd_buffer, struct radv_im
       format = VK_FORMAT_R32G32B32A32_UINT;
       break;
    default:
-      unreachable("Unsupported number of bytes per pixel");
+      UNREACHABLE("Unsupported number of bytes per pixel");
    }
 
    result = get_clear_dcc_comp_to_single_pipeline(device, is_msaa, &pipeline, &layout);

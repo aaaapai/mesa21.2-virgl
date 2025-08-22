@@ -56,15 +56,6 @@ si_is_compute_copy_faster(struct pipe_screen *pscreen,
    return false;
 }
 
-static const void *si_get_compiler_options(struct pipe_screen *screen, enum pipe_shader_ir ir,
-                                           enum pipe_shader_type shader)
-{
-   struct si_screen *sscreen = (struct si_screen *)screen;
-
-   assert(ir == PIPE_SHADER_IR_NIR);
-   return sscreen->nir_options;
-}
-
 static void si_get_driver_uuid(struct pipe_screen *pscreen, char *uuid)
 {
    ac_compute_driver_uuid(uuid, PIPE_UUID_SIZE);
@@ -479,7 +470,9 @@ static int si_get_video_param(struct pipe_screen *screen, enum pipe_video_profil
       return 1;
    case PIPE_VIDEO_CAP_MIN_WIDTH:
    case PIPE_VIDEO_CAP_MIN_HEIGHT:
-      return (codec == PIPE_VIDEO_FORMAT_AV1) ? 16 : 64;
+      if (codec == PIPE_VIDEO_FORMAT_VP9 || codec == PIPE_VIDEO_FORMAT_AV1)
+         return 16;
+      return 64;
    case PIPE_VIDEO_CAP_MAX_WIDTH:
       if (codec != PIPE_VIDEO_FORMAT_UNKNOWN && QUERYABLE_KERNEL)
             return KERNEL_DEC_CAP(codec, max_width);
@@ -661,61 +654,6 @@ static bool si_vid_is_format_supported(struct pipe_screen *screen, enum pipe_for
    return vl_video_buffer_is_format_supported(screen, format, profile, entrypoint);
 }
 
-static bool si_vid_is_target_buffer_supported(struct pipe_screen *screen,
-                                              enum pipe_format format,
-                                              struct pipe_video_buffer *target,
-                                              enum pipe_video_profile profile,
-                                              enum pipe_video_entrypoint entrypoint)
-{
-   struct si_screen *sscreen = (struct si_screen *)screen;
-   struct si_texture *tex = (struct si_texture *)((struct vl_video_buffer *)target)->resources[0];
-   const bool is_dcc = tex->surface.meta_offset;
-   const bool is_format_conversion = format != target->buffer_format;
-
-   switch (entrypoint) {
-   case PIPE_VIDEO_ENTRYPOINT_BITSTREAM:
-      if (is_dcc || is_format_conversion)
-         return false;
-      break;
-
-   case PIPE_VIDEO_ENTRYPOINT_ENCODE:
-      if (is_dcc)
-         return false;
-
-      /* EFC */
-      if (is_format_conversion) {
-         const bool input_8bit =
-            target->buffer_format == PIPE_FORMAT_B8G8R8A8_UNORM ||
-            target->buffer_format == PIPE_FORMAT_B8G8R8X8_UNORM ||
-            target->buffer_format == PIPE_FORMAT_R8G8B8A8_UNORM ||
-            target->buffer_format == PIPE_FORMAT_R8G8B8X8_UNORM;
-         const bool input_10bit =
-            target->buffer_format == PIPE_FORMAT_B10G10R10A2_UNORM ||
-            target->buffer_format == PIPE_FORMAT_B10G10R10X2_UNORM ||
-            target->buffer_format == PIPE_FORMAT_R10G10B10A2_UNORM ||
-            target->buffer_format == PIPE_FORMAT_R10G10B10X2_UNORM;
-
-         if (sscreen->info.vcn_ip_version < VCN_2_0_0 ||
-             sscreen->info.vcn_ip_version == VCN_2_2_0 ||
-             sscreen->debug_flags & DBG(NO_EFC))
-            return false;
-
-         if (input_8bit && format != PIPE_FORMAT_NV12)
-            return false;
-         if (input_10bit && format != PIPE_FORMAT_NV12 && format != PIPE_FORMAT_P010)
-            return false;
-      }
-      break;
-
-   default:
-      if (is_format_conversion)
-         return false;
-      break;
-   }
-
-   return si_vid_is_format_supported(screen, format, profile, entrypoint);
-}
-
 static uint64_t si_get_timestamp(struct pipe_screen *screen)
 {
    struct si_screen *sscreen = (struct si_screen *)screen;
@@ -835,7 +773,6 @@ void si_init_screen_get_functions(struct si_screen *sscreen)
    sscreen->b.is_compute_copy_faster = si_is_compute_copy_faster;
    sscreen->b.driver_thread_add_job = si_driver_thread_add_job;
    sscreen->b.get_timestamp = si_get_timestamp;
-   sscreen->b.get_compiler_options = si_get_compiler_options;
    sscreen->b.get_device_uuid = si_get_device_uuid;
    sscreen->b.get_driver_uuid = si_get_driver_uuid;
    sscreen->b.query_memory_info = si_query_memory_info;
@@ -849,7 +786,6 @@ void si_init_screen_get_functions(struct si_screen *sscreen)
        sscreen->info.ip[AMD_IP_VPE].num_queues) {
       sscreen->b.get_video_param = si_get_video_param;
       sscreen->b.is_video_format_supported = si_vid_is_format_supported;
-      sscreen->b.is_video_target_buffer_supported = si_vid_is_target_buffer_supported;
    }
 
    si_init_renderer_string(sscreen);
@@ -878,7 +814,8 @@ void si_init_screen_get_functions(struct si_screen *sscreen)
       (sscreen->info.family >= CHIP_GFX940 && !sscreen->info.has_graphics) ||
       /* fma32 is too slow for gpu < gfx9, so apply the option only for gpu >= gfx9 */
       (sscreen->info.gfx_level >= GFX9 && sscreen->options.force_use_fma32);
-   bool has_mediump = sscreen->info.gfx_level >= GFX9 && sscreen->options.mediump;
+   /* GFX8 has precision issues with 16-bit PS outputs. */
+   bool has_16bit_io = sscreen->info.gfx_level >= GFX9;
 
    nir_shader_compiler_options *options = sscreen->nir_options;
    ac_nir_set_options(&sscreen->info, !sscreen->use_aco, options);
@@ -905,10 +842,14 @@ void si_init_screen_get_functions(struct si_screen *sscreen)
     * GFX8 has precision issues with this option.
     */
    options->force_f2f16_rtz = sscreen->info.gfx_level >= GFX9;
-   options->io_options |= (!has_mediump ? nir_io_mediump_is_32bit : 0) | nir_io_has_intrinsics |
+   options->io_options |= (!has_16bit_io ? nir_io_mediump_is_32bit : 0) | nir_io_has_intrinsics |
                           (sscreen->use_ngg_culling ?
                               nir_io_compaction_groups_tes_inputs_into_pos_and_var_groups : 0);
-   options->lower_mediump_io = has_mediump ? si_lower_mediump_io : NULL;
+   if (has_16bit_io) {
+      options->lower_mediump_io = sscreen->options.mediump ? si_lower_mediump_io_option
+                                                           : si_lower_mediump_io_default;
+   }
+
    /* HW supports indirect indexing for: | Enabled in driver
     * -------------------------------------------------------
     * TCS inputs                         | Yes
@@ -923,11 +864,14 @@ void si_init_screen_get_functions(struct si_screen *sscreen)
                                       BITFIELD_BIT(MESA_SHADER_TESS_EVAL);
    options->support_indirect_outputs = BITFIELD_BIT(MESA_SHADER_TESS_CTRL);
    options->varying_expression_max_cost = si_varying_expression_max_cost;
+
+   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++)
+      sscreen->b.nir_options[i] = options;
 }
 
 void si_init_shader_caps(struct si_screen *sscreen)
 {
-   for (unsigned i = 0; i <= PIPE_SHADER_COMPUTE; i++) {
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
          (struct pipe_shader_caps *)&sscreen->b.shader_caps[i];
 
@@ -937,8 +881,8 @@ void si_init_shader_caps(struct si_screen *sscreen)
       caps->max_tex_instructions =
       caps->max_tex_indirections =
       caps->max_control_flow_depth = 16384;
-      caps->max_inputs = i == PIPE_SHADER_VERTEX ? SI_MAX_ATTRIBS : 32;
-      caps->max_outputs = i == PIPE_SHADER_FRAGMENT ? 8 : 32;
+      caps->max_inputs = i == MESA_SHADER_VERTEX ? SI_MAX_ATTRIBS : 32;
+      caps->max_outputs = i == MESA_SHADER_FRAGMENT ? 8 : 32;
       caps->max_temps = 256; /* Max native temporaries. */
       caps->max_const_buffer0_size = 1 << 26; /* 64 MB */
       caps->max_const_buffers = SI_NUM_CONST_BUFFERS;
@@ -1013,12 +957,12 @@ void si_init_compute_caps(struct si_screen *sscreen)
 
    unsigned threads = 1024;
    unsigned subgroup_size =
-      sscreen->debug_flags & DBG(W64_CS) || sscreen->info.gfx_level < GFX10 ? 64 : 32;
+      sscreen->shader_debug_flags & DBG(W64_CS) || sscreen->info.gfx_level < GFX10 ? 64 : 32;
    caps->max_subgroups = threads / subgroup_size;
 
-   if (sscreen->debug_flags & DBG(W32_CS))
+   if (sscreen->shader_debug_flags & DBG(W32_CS))
       caps->subgroup_sizes = 32;
-   else if (sscreen->debug_flags & DBG(W64_CS))
+   else if (sscreen->shader_debug_flags & DBG(W64_CS))
       caps->subgroup_sizes = 64;
    else
       caps->subgroup_sizes = sscreen->info.gfx_level < GFX10 ? 64 : 64 | 32;
@@ -1034,8 +978,7 @@ void si_init_screen_caps(struct si_screen *sscreen)
 
    /* Gfx8 (Polaris11) hangs, so don't enable this on Gfx8 and older chips. */
    bool enable_sparse =
-      sscreen->info.gfx_level >= GFX9 && sscreen->info.gfx_level < GFX12 &&
-      sscreen->info.has_sparse_vm_mappings;
+      sscreen->info.gfx_level >= GFX9 && sscreen->info.has_sparse_vm_mappings;
 
    /* Supported features (boolean caps). */
    caps->max_dual_source_render_targets = true;
@@ -1326,7 +1269,7 @@ void si_init_screen_caps(struct si_screen *sscreen)
    caps->timer_resolution = DIV_ROUND_UP(1000000, sscreen->info.clock_crystal_freq);
 
    caps->shader_subgroup_size = 64;
-   caps->shader_subgroup_supported_stages = BITFIELD_MASK(PIPE_SHADER_TYPES);
+   caps->shader_subgroup_supported_stages = BITFIELD_MASK(MESA_SHADER_STAGES);
    caps->shader_subgroup_supported_features = BITFIELD_MASK(PIPE_SHADER_SUBGROUP_NUM_FEATURES);
    caps->shader_subgroup_quad_all_stages = true;
 

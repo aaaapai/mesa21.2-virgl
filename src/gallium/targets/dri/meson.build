@@ -44,7 +44,7 @@ libgallium_dri = shared_library(
   libgallium_name,
   files('dri_target.c'),
   include_directories : [
-    inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux, inc_util, inc_gallium_drivers,
+    inc_include, inc_src, inc_mesa, inc_gallium, inc_gallium_aux, inc_util, inc_gallium_drivers,
     inc_gallium_winsys, include_directories('../../frontends/dri'),
   ],
   gnu_symbol_visibility : 'hidden',
@@ -62,7 +62,7 @@ libgallium_dri = shared_library(
     driver_kmsro, driver_v3d, driver_vc4, driver_freedreno, driver_etnaviv,
     driver_tegra, driver_i915, driver_svga, driver_virgl,
     driver_panfrost, driver_iris, driver_lima, driver_zink, driver_d3d12,
-    driver_asahi, driver_crocus
+    driver_asahi, driver_crocus, driver_rocket
   ],
   install : true,
   name_suffix : libname_suffix,

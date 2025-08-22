@@ -104,7 +104,7 @@ emit_output_copies_impl(struct lower_io_state *state, nir_function_impl *impl)
       /* For all other shader types, we need to do the copies right before
        * the jumps to the end block.
        */
-      set_foreach(impl->end_block->predecessors, block_entry) {
+      set_foreach(&impl->end_block->predecessors, block_entry) {
          struct nir_block *block = (void *)block_entry->key;
          b.cursor = nir_after_block_before_jump(block);
          emit_copies(&b, &state->new_outputs, &state->old_outputs);
@@ -184,7 +184,7 @@ emit_interp(nir_builder *b, nir_deref_instr **old_interp_deref,
       case nir_deref_type_array_wildcard:
       case nir_deref_type_ptr_as_array:
       case nir_deref_type_cast:
-         unreachable("bad deref type");
+         UNREACHABLE("bad deref type");
       }
 
       old_interp_deref++;
@@ -297,7 +297,7 @@ emit_input_copies_impl(struct lower_io_state *state, nir_function_impl *impl)
 static nir_variable *
 create_shadow_temp(struct lower_io_state *state, nir_variable *var)
 {
-   nir_variable *nvar = ralloc(state->shader, nir_variable);
+   nir_variable *nvar = nir_variable_create_zeroed(state->shader);
    memcpy(nvar, var, sizeof *nvar);
    nvar->data.cannot_coalesce = true;
 
@@ -305,13 +305,13 @@ create_shadow_temp(struct lower_io_state *state, nir_variable *var)
    nir_variable *temp = var;
 
    /* Reparent the name to the new variable */
-   ralloc_steal(nvar, nvar->name);
+   nir_variable_steal_name(state->shader, nvar, var);
 
    assert(nvar->constant_initializer == NULL && nvar->pointer_initializer == NULL);
 
    /* Give the original a new name with @<mode>-temp appended */
    const char *mode = (temp->data.mode == nir_var_shader_in) ? "in" : "out";
-   temp->name = ralloc_asprintf(var, "%s@%s-temp", mode, nvar->name);
+   nir_variable_set_namef(state->shader, temp, "%s@%s-temp", mode, nvar->name);
    temp->data.mode = nir_var_shader_temp;
    temp->data.read_only = false;
    temp->data.fb_fetch_output = false;

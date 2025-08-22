@@ -79,9 +79,7 @@ setupLoaderExtensions(struct dri_screen *screen,
                       const __DRIextension **extensions)
 {
    static const struct dri_extension_match matches[] = {
-       {__DRI_DRI2_LOADER, 1, offsetof(struct dri_screen, dri2.loader), true},
        {__DRI_IMAGE_LOOKUP, 1, offsetof(struct dri_screen, dri2.image), true},
-       {__DRI_BACKGROUND_CALLABLE, 1, offsetof(struct dri_screen, dri2.backgroundCallable), true},
        {__DRI_SWRAST_LOADER, 1, offsetof(struct dri_screen, swrast_loader), true},
        {__DRI_IMAGE_LOADER, 1, offsetof(struct dri_screen, image.loader), true},
        {__DRI_MUTABLE_RENDER_BUFFER_LOADER, 1, offsetof(struct dri_screen, mutableRenderBuffer.loader), true},
@@ -141,7 +139,7 @@ driCreateNewScreen3(int scrn, int fd,
       pscreen = dri_swrast_kms_init_screen(screen, driver_name_is_inferred);
       break;
    default:
-      unreachable("unknown dri screen type");
+      UNREACHABLE("unknown dri screen type");
    }
    if (pscreen == NULL) {
       dri_destroy_screen(screen);
@@ -423,7 +421,8 @@ driCreateContextAttribs(struct dri_screen *screen, int api,
                         unsigned num_attribs,
                         const uint32_t *attribs,
                         unsigned *error,
-                        void *data)
+                        void *data,
+                        bool thread_safe)
 {
     const struct gl_config *modes = (config != NULL) ? &config->modes : NULL;
     gl_api mesa_api;
@@ -596,27 +595,27 @@ driCreateContextAttribs(struct dri_screen *screen, int api,
 
     struct dri_context *ctx = dri_create_context(screen, mesa_api,
                                                  modes, &ctx_config, error,
-                                                 shared, data);
+                                                 shared, data, thread_safe);
     return ctx;
 }
 
 static struct dri_context *
 driCreateNewContextForAPI(struct dri_screen *screen, int api,
                           const struct dri_config *config,
-                          struct dri_context *shared, void *data)
+                          struct dri_context *shared, void *data, bool thread_safe)
 {
     unsigned error;
 
     return driCreateContextAttribs(screen, api, config, shared, 0, NULL,
-                                   &error, data);
+                                   &error, data, thread_safe);
 }
 
 struct dri_context *
 driCreateNewContext(struct dri_screen *screen, const struct dri_config *config,
-                    struct dri_context *shared, void *data)
+                    struct dri_context *shared, void *data, bool thread_safe)
 {
     return driCreateNewContextForAPI(screen, __DRI_API_OPENGL,
-                                     config, shared, data);
+                                     config, shared, data, thread_safe);
 }
 
 /**
@@ -1060,6 +1059,7 @@ bool
 dri_get_drm_device_info(const char *device_name, uint8_t *device_uuid, uint8_t *driver_uuid,
                         char **vendor_name, char **renderer_name, char **driver_name)
 {
+#ifdef HAVE_LIBDRM
    struct pipe_loader_device *pldev;
    struct pipe_screen *pscreen;
    int fd;
@@ -1097,4 +1097,7 @@ dri_get_drm_device_info(const char *device_name, uint8_t *device_uuid, uint8_t *
    close(fd);
 
    return true;
+#else
+   return false;
+#endif
 }

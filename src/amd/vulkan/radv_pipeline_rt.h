@@ -11,9 +11,9 @@
 #ifndef RADV_PIPELINE_RT_H
 #define RADV_PIPELINE_RT_H
 
+#include "util/bitset.h"
 #include "radv_pipeline_compute.h"
 #include "radv_shader.h"
-#include "util/bitset.h"
 
 struct radv_ray_tracing_pipeline {
    struct radv_compute_pipeline base;
@@ -74,6 +74,7 @@ struct radv_rt_const_arg_info {
 
 struct radv_ray_tracing_stage_info {
    bool can_inline;
+   bool has_position_fetch;
 
    BITSET_DECLARE(unused_args, AC_MAX_ARGS);
 
@@ -92,7 +93,7 @@ struct radv_ray_tracing_stage_info {
 struct radv_ray_tracing_stage {
    struct vk_pipeline_cache_object *nir;
    struct radv_shader *shader;
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
    uint32_t stack_size;
 
    struct radv_ray_tracing_stage_info info;

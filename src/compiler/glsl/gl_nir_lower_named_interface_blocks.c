@@ -269,8 +269,8 @@ lower_named_interface_blocks(struct gl_linked_shader *sh)
             const struct glsl_struct_field *field_data =
                glsl_get_struct_field_data(iface_t, i);
 
-            nir_variable *new_var = rzalloc(sh->Program->nir, nir_variable);
-            new_var->name = ralloc_strdup(new_var, field_name);
+            nir_variable *new_var = nir_variable_create_zeroed(sh->Program->nir);
+            nir_variable_set_name(sh->Program->nir, new_var, field_name);
             if (!glsl_type_is_array(var->type)) {
                new_var->type =  glsl_get_struct_field(iface_t, i);
             } else {
@@ -362,7 +362,7 @@ lower_named_interface_blocks(struct gl_linked_shader *sh)
 void
 gl_nir_lower_named_interface_blocks(struct gl_shader_program *prog)
 {
-   for (unsigned int i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned int i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       if (prog->_LinkedShaders[i] != NULL) {
          NIR_PASS(_, prog->_LinkedShaders[i]->Program->nir, nir_split_var_copies);
          lower_named_interface_blocks(prog->_LinkedShaders[i]);

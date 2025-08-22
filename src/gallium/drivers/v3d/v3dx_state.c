@@ -172,7 +172,7 @@ translate_stencil_op(enum pipe_stencil_op op)
         case PIPE_STENCIL_OP_DECR_WRAP: return V3D_STENCIL_OP_DECWRAP;
         case PIPE_STENCIL_OP_INVERT:    return V3D_STENCIL_OP_INVERT;
         }
-        unreachable("bad stencil op");
+        UNREACHABLE("bad stencil op");
 }
 
 static void *
@@ -328,6 +328,11 @@ static void
 v3d_rasterizer_state_bind(struct pipe_context *pctx, void *hwcso)
 {
         struct v3d_context *v3d = v3d_context(pctx);
+        struct v3d_rasterizer_state *rasterizer = hwcso;
+        if (v3d->rasterizer == NULL || rasterizer == NULL ||
+            v3d->rasterizer->base.scissor != rasterizer->base.scissor) {
+                v3d->dirty |= V3D_DIRTY_RASTERIZER_SCISSOR;
+        }
         v3d->rasterizer = hwcso;
         v3d->dirty |= V3D_DIRTY_RASTERIZER;
 }
@@ -478,7 +483,7 @@ v3d_vertex_state_bind(struct pipe_context *pctx, void *hwcso)
 }
 
 static void
-v3d_set_constant_buffer(struct pipe_context *pctx, enum pipe_shader_type shader, uint index,
+v3d_set_constant_buffer(struct pipe_context *pctx, mesa_shader_stage shader, uint index,
                         bool take_ownership,
                         const struct pipe_constant_buffer *cb)
 {
@@ -546,7 +551,7 @@ translate_wrap(uint32_t pipe_wrap)
         case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE:
                 return V3D_WRAP_MODE_MIRROR_ONCE;
         default:
-                unreachable("Unknown wrap mode");
+                UNREACHABLE("Unknown wrap mode");
         }
 }
 
@@ -804,7 +809,7 @@ v3d_create_sampler_state(struct pipe_context *pctx,
 
 static void
 v3d_sampler_states_bind(struct pipe_context *pctx,
-                        enum pipe_shader_type shader, unsigned start,
+                        mesa_shader_stage shader, unsigned start,
                         unsigned nr, void **hwcso)
 {
         struct v3d_context *v3d = v3d_context(pctx);
@@ -1177,7 +1182,7 @@ v3d_sampler_view_destroy(struct pipe_context *pctx,
 
 static void
 v3d_set_sampler_views(struct pipe_context *pctx,
-                      enum pipe_shader_type shader,
+                      mesa_shader_stage shader,
                       unsigned start, unsigned nr,
                       unsigned unbind_num_trailing_slots,
                       struct pipe_sampler_view **views)
@@ -1291,7 +1296,7 @@ v3d_set_stream_output_targets(struct pipe_context *pctx,
 
 static void
 v3d_set_shader_buffers(struct pipe_context *pctx,
-                       enum pipe_shader_type shader,
+                       mesa_shader_stage shader,
                        unsigned start, unsigned count,
                        const struct pipe_shader_buffer *buffers,
                        unsigned writable_bitmask)
@@ -1376,7 +1381,7 @@ v3d_create_image_view_texture_shader_state(struct v3d_context *v3d,
 
 static void
 v3d_set_shader_images(struct pipe_context *pctx,
-                      enum pipe_shader_type shader,
+                      mesa_shader_stage shader,
                       unsigned start, unsigned count,
                       unsigned unbind_num_trailing_slots,
                       const struct pipe_image_view *images)

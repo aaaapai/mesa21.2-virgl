@@ -425,23 +425,19 @@ vn_image_deferred_info_init(struct vn_image *img,
                 ((const VkImageFormatListCreateInfo *)src)->pViewFormats,
                 size);
          info->list.pViewFormats = view_formats;
-      } break;
+         break;
+      }
       case VK_STRUCTURE_TYPE_IMAGE_STENCIL_USAGE_CREATE_INFO:
          memcpy(&info->stencil, src, sizeof(info->stencil));
          pnext = &info->stencil;
          break;
       case VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID: {
-         const uint32_t drm_format =
+         const uint32_t external_format =
             (uint32_t)((const VkExternalFormatANDROID *)src)->externalFormat;
-         if (drm_format) {
-            info->create.format =
-               vn_android_drm_format_to_vk_format(drm_format);
-            info->from_external_format = true;
-         }
-      } break;
-      case VK_STRUCTURE_TYPE_IMAGE_SWAPCHAIN_CREATE_INFO_KHR:
-         img->wsi.is_wsi = true;
+         if (external_format != 0)
+            info->create.format = external_format;
          break;
+      }
       default:
          break;
       }
@@ -681,9 +677,6 @@ vn_CreateImage(VkDevice device,
     * Will have to fix more when renderer handle type is no longer dma_buf.
     */
    if (wsi_info) {
-      assert(wsi_info->blit_src ||
-             pCreateInfo->tiling == VK_IMAGE_TILING_LINEAR ||
-             external_info->handleTypes == renderer_handle_type);
       result = vn_wsi_create_image(dev, pCreateInfo, wsi_info, alloc, &img);
    } else if (anb_info) {
       result =
@@ -691,7 +684,7 @@ vn_CreateImage(VkDevice device,
    } else if (ahb_info) {
       result = vn_image_create_deferred(dev, pCreateInfo, alloc, &img);
    } else if (swapchain_info) {
-#if DETECT_OS_ANDROID
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
       result = vn_image_create_deferred(dev, pCreateInfo, alloc, &img);
 #else
       result = wsi_common_create_swapchain_image(
@@ -791,12 +784,11 @@ vn_image_bind_wsi_memory(struct vn_device *dev,
 
    for (uint32_t i = 0; i < count; i++) {
       VkBindImageMemoryInfo *info = &local_infos[i];
-      struct vn_image *img = vn_image_from_handle(info->image);
       struct vn_device_memory *mem =
          vn_device_memory_from_handle(info->memory);
 
       if (!mem) {
-#if DETECT_OS_ANDROID
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
          mem = vn_android_get_wsi_memory_from_bind_info(dev, info);
          if (!mem) {
             STACK_ARRAY_FINISH(local_infos);
@@ -806,23 +798,15 @@ vn_image_bind_wsi_memory(struct vn_device *dev,
          const VkBindImageMemorySwapchainInfoKHR *swapchain_info =
             vk_find_struct_const(info->pNext,
                                  BIND_IMAGE_MEMORY_SWAPCHAIN_INFO_KHR);
-         assert(img->wsi.is_wsi && swapchain_info);
+         assert(swapchain_info);
 
-         struct vn_image *swapchain_img =
-            vn_image_from_handle(wsi_common_get_image(
-               swapchain_info->swapchain, swapchain_info->imageIndex));
-         mem = swapchain_img->wsi.memory;
+         mem = vn_device_memory_from_handle(wsi_common_get_memory(
+            swapchain_info->swapchain, swapchain_info->imageIndex));
 #endif
          info->memory = vn_device_memory_to_handle(mem);
+         info->memoryOffset = 0;
       }
       assert(mem && info->memory != VK_NULL_HANDLE);
-
-#if DETECT_OS_ANDROID
-      assert(img->wsi.memory);
-#else
-      assert(!img->wsi.memory);
-      img->wsi.memory = mem;
-#endif
    }
 
    vn_async_vkBindImageMemory2(dev->primary_ring, vn_device_to_handle(dev),
@@ -841,8 +825,7 @@ vn_BindImageMemory2(VkDevice device,
    struct vn_device *dev = vn_device_from_handle(device);
 
    for (uint32_t i = 0; i < bindInfoCount; i++) {
-      struct vn_image *img = vn_image_from_handle(pBindInfos[i].image);
-      if (img->wsi.is_wsi)
+      if (pBindInfos[i].memory == VK_NULL_HANDLE)
          return vn_image_bind_wsi_memory(dev, bindInfoCount, pBindInfos);
    }
 
@@ -891,7 +874,7 @@ vn_image_get_aspect(struct vn_image *img, VkImageAspectFlags aspect)
    default:
       break;
    }
-   unreachable("unexpected aspect");
+   UNREACHABLE("unexpected aspect");
 }
 
 void
@@ -932,11 +915,9 @@ vn_CreateImageView(VkDevice device,
       pAllocator ? pAllocator : &dev->base.vk.alloc;
 
    VkImageViewCreateInfo local_info;
-   if (img->deferred_info && img->deferred_info->from_external_format) {
-      assert(pCreateInfo->format == VK_FORMAT_UNDEFINED);
-
+   if (pCreateInfo->format == VK_FORMAT_UNDEFINED) {
       local_info = *pCreateInfo;
-      local_info.format = img->deferred_info->create.format;
+      local_info.format = img->base.vk.format;
       pCreateInfo = &local_info;
 
       assert(pCreateInfo->format != VK_FORMAT_UNDEFINED);
@@ -1047,8 +1028,7 @@ vn_CreateSamplerYcbcrConversion(
       assert(pCreateInfo->format == VK_FORMAT_UNDEFINED);
 
       local_info = *pCreateInfo;
-      local_info.format =
-         vn_android_drm_format_to_vk_format(ext_info->externalFormat);
+      local_info.format = ext_info->externalFormat;
       local_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
       local_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
       local_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;

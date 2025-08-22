@@ -115,7 +115,7 @@
 } while (0)
 
 struct v3dv_instance;
-
+struct v3dv_image;
 struct v3d_simulator_file;
 
 /* Minimum required by the Vulkan 1.1 spec */
@@ -205,8 +205,6 @@ v3dv_device_lookup_bo(struct v3dv_physical_device *device, uint32_t handle)
 
 VkResult v3dv_wsi_init(struct v3dv_physical_device *physical_device);
 void v3dv_wsi_finish(struct v3dv_physical_device *physical_device);
-struct v3dv_image *v3dv_wsi_get_image_from_swapchain(VkSwapchainKHR swapchain,
-                                                     uint32_t index);
 
 void v3dv_meta_clear_init(struct v3dv_device *device);
 void v3dv_meta_clear_finish(struct v3dv_device *device);
@@ -348,7 +346,7 @@ struct v3dv_pipeline_cache_stats {
    uint32_t on_disk_hit;
 };
 
-/* Equivalent to gl_shader_stage, but including the coordinate shaders
+/* Equivalent to mesa_shader_stage, but including the coordinate shaders
  *
  * FIXME: perhaps move to common
  */
@@ -365,7 +363,7 @@ enum broadcom_shader_stage {
 
 /* Assumes that coordinate shaders will be custom-handled by the caller */
 static inline enum broadcom_shader_stage
-gl_shader_stage_to_broadcom(gl_shader_stage stage)
+mesa_shader_stage_to_broadcom(mesa_shader_stage stage)
 {
    switch (stage) {
    case MESA_SHADER_VERTEX:
@@ -377,11 +375,11 @@ gl_shader_stage_to_broadcom(gl_shader_stage stage)
    case MESA_SHADER_COMPUTE:
       return BROADCOM_SHADER_COMPUTE;
    default:
-      unreachable("Unknown gl shader stage");
+      UNREACHABLE("Unknown gl shader stage");
    }
 }
 
-static inline gl_shader_stage
+static inline mesa_shader_stage
 broadcom_shader_stage_to_gl(enum broadcom_shader_stage stage)
 {
    switch (stage) {
@@ -396,7 +394,7 @@ broadcom_shader_stage_to_gl(enum broadcom_shader_stage stage)
    case BROADCOM_SHADER_COMPUTE:
       return MESA_SHADER_COMPUTE;
    default:
-      unreachable("Unknown broadcom shader stage");
+      UNREACHABLE("Unknown broadcom shader stage");
    }
 }
 
@@ -433,7 +431,7 @@ broadcom_binning_shader_stage_for_render_stage(enum broadcom_shader_stage stage)
    case BROADCOM_SHADER_GEOMETRY:
       return BROADCOM_SHADER_GEOMETRY_BIN;
    default:
-      unreachable("Invalid shader stage");
+      UNREACHABLE("Invalid shader stage");
    }
 }
 
@@ -446,7 +444,7 @@ broadcom_shader_stage_name(enum broadcom_shader_stage stage)
    case BROADCOM_SHADER_GEOMETRY_BIN:
       return "MESA_SHADER_GEOMETRY_BIN";
    default:
-      return gl_shader_stage_name(broadcom_shader_stage_to_gl(stage));
+      return mesa_shader_stage_name(broadcom_shader_stage_to_gl(stage));
    }
 }
 
@@ -600,11 +598,6 @@ struct v3dv_device {
    struct util_dynarray device_address_bo_list; /* Array of struct v3dv_bo * */
 };
 
-/* TFU has readhead of 64 bytes. So to avoid the unit reading unmaped memory
- * it is needed to overallocate buffers that could be read by the TFU
- */
-#define V3D_TFU_READAHEAD_SIZE 64
-
 struct v3dv_device_memory {
    struct vk_device_memory vk;
 
@@ -672,7 +665,7 @@ static uint8_t v3dv_plane_from_aspect(VkImageAspectFlags aspect)
    case VK_IMAGE_ASPECT_MEMORY_PLANE_2_BIT_EXT:
       return 2;
    default:
-      unreachable("invalid image aspect");
+      UNREACHABLE("invalid image aspect");
    }
 }
 
@@ -2600,18 +2593,6 @@ v3dv_flag_oom(struct v3dv_cmd_buffer *cmd_buffer, struct v3dv_job *job)
    if (__job && __job->cmd_buffer && __job->cmd_buffer->state.oom)  \
       return;                                                       \
 } while(0)                                                          \
-
-static inline uint32_t
-u64_hash(const void *key)
-{
-   return _mesa_hash_data(key, sizeof(uint64_t));
-}
-
-static inline bool
-u64_compare(const void *key1, const void *key2)
-{
-   return memcmp(key1, key2, sizeof(uint64_t)) == 0;
-}
 
 /* v3d_macros from common requires v3dX and V3DX definitions. Below we need to
  * define v3dX for each version supported, because when we compile code that

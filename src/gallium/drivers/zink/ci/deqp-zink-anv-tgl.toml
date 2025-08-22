@@ -12,6 +12,8 @@ timeout = 180.0
 version_check = "GL ES 3.2.*git"
 renderer_check = "zink.*Intel.*"
 fraction = 4
+[deqp.env]
+  ZINK_DEBUG = "validation"
 
 [[deqp]]
 deqp = "/deqp-gles/modules/gles3/deqp-gles3"
@@ -25,6 +27,8 @@ deqp_args = [
 ]
 timeout = 180.0
 fraction = 4
+[deqp.env]
+  ZINK_DEBUG = "validation"
 
 [[deqp]]
 deqp = "/deqp-gles/modules/gles31/deqp-gles31"
@@ -38,6 +42,8 @@ deqp_args = [
 ]
 timeout = 180.0
 fraction = 4
+[deqp.env]
+  ZINK_DEBUG = "validation"
 
 [[deqp]]
 deqp = "/deqp-gl/external/openglcts/modules/glcts"
@@ -94,6 +100,26 @@ include = ["dEQP-GLES31.functional.shaders.multisample_interpolation.interpolate
 prefix = "noopt-"
 [deqp.env]
   ZINK_DEBUG = "nobgc,noopt,validation"
+
+[[deqp]]
+deqp = "/deqp-gles/modules/egl/deqp-egl-x11"
+caselists = ["/deqp-gles/mustpass/egl-main.txt"]
+deqp_args = [
+    "--deqp-surface-width=256", "--deqp-surface-height=256",
+    "--deqp-surface-type=pbuffer", "--deqp-visibility=hidden",
+    "--deqp-gl-config-name=rgba8888d24s8ms0",
+]
+prefix = "x11-"
+
+[[deqp]]
+deqp = "/deqp-gles/modules/egl/deqp-egl-wayland"
+caselists = ["/deqp-gles/mustpass/egl-main.txt"]
+deqp_args = [
+    "--deqp-surface-width=256", "--deqp-surface-height=256",
+    "--deqp-surface-type=pbuffer", "--deqp-visibility=hidden",
+    "--deqp-gl-config-name=rgba8888d24s8ms0",
+]
+prefix = "wayland-"
 
 [[piglit]]
 piglit_folder = "/piglit"

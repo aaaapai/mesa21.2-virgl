@@ -43,7 +43,7 @@
 #include "kopper_interface.h"
 #include "loader_dri_helper.h"
 #include "dri_util.h"
-#include "mapi/glapi/glapi.h"
+#include "mesa/glapi/glapi/glapi.h"
 #include "dispatch.h"
 
 static int xshm_error = 0;
@@ -144,7 +144,7 @@ XDestroyDrawable(struct drisw_drawable * pdp, Display * dpy, XID drawable)
  */
 
 static void
-swrastGetDrawableInfo(struct dri_drawable * draw,
+get_drawable_geometry(struct dri_drawable * draw,
                       int *x, int *y, int *w, int *h,
                       void *loaderPrivate)
 {
@@ -161,6 +161,14 @@ swrastGetDrawableInfo(struct dri_drawable * draw,
    XGetGeometry(dpy, drawable, &root, x, y, &uw, &uh, &bw, &depth);
    *w = uw;
    *h = uh;
+}
+
+static void
+swrastGetDrawableInfo(struct dri_drawable * draw,
+                      int *x, int *y, int *w, int *h,
+                      void *loaderPrivate)
+{
+   get_drawable_geometry(draw, x, y, w, h, loaderPrivate);
 }
 
 /**
@@ -391,10 +399,20 @@ kopperSetSurfaceCreateInfo(void *_draw, struct kopper_loader_info *out)
     xcb->window = draw->xDrawable;
 }
 
+static void
+kopperGetDrawableInfo(struct dri_drawable * draw,
+                      int *w, int *h,
+                      void *loaderPrivate)
+{
+   int x = 0, y = 0;
+   get_drawable_geometry(draw, &x, &y, w, h, loaderPrivate);
+}
+
 static const __DRIkopperLoaderExtension kopperLoaderExtension = {
     .base = { __DRI_KOPPER_LOADER, 1 },
 
     .SetSurfaceCreateInfo   = kopperSetSurfaceCreateInfo,
+    .GetDrawableInfo        = kopperGetDrawableInfo,
 };
 
 static const __DRIextension *loader_extensions_shm[] = {
@@ -412,7 +430,6 @@ static const __DRIextension *loader_extensions_noshm[] = {
 static const __DRIextension *kopper_extensions_noshm[] = {
    &swrastLoaderExtension.base,
    &kopperLoaderExtension.base,
-   &driBackgroundCallable.base,
    NULL
 };
 
@@ -541,12 +558,12 @@ driswSwapBuffers(__GLXDRIdrawable * pdraw,
    (void) divisor;
    (void) remainder;
 
+   if (psc->kopper)
+       return kopperSwapBuffers(pdraw->dri_drawable, flush ? __DRI2_FLUSH_CONTEXT : 0);
+
    if (flush) {
       CALL_Flush(GET_DISPATCH(), ());
    }
-
-   if (psc->kopper)
-       return kopperSwapBuffers(pdraw->dri_drawable, 0);
 
    driSwapBuffers(pdraw->dri_drawable);
 

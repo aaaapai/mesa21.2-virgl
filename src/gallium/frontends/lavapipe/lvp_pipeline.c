@@ -49,7 +49,7 @@ shader_destroy(struct lvp_device *device, struct lvp_shader *shader, bool locked
 {
    if (!shader->pipeline_nir)
       return;
-   gl_shader_stage stage = shader->pipeline_nir->nir->info.stage;
+   mesa_shader_stage stage = shader->pipeline_nir->nir->info.stage;
    cso_destroy_func destroy[] = {
       device->queue.ctx->delete_vs_state,
       device->queue.ctx->delete_tcs_state,
@@ -258,9 +258,9 @@ void
 lvp_shader_optimize(nir_shader *nir)
 {
    optimize(nir);
-   NIR_PASS_V(nir, nir_lower_var_copies);
-   NIR_PASS_V(nir, nir_remove_dead_variables, nir_var_function_temp, NULL);
-   NIR_PASS_V(nir, nir_opt_dce);
+   NIR_PASS(_, nir, nir_lower_var_copies);
+   NIR_PASS(_, nir, nir_remove_dead_variables, nir_var_function_temp, NULL);
+   NIR_PASS(_, nir, nir_opt_dce);
    nir_sweep(nir);
 }
 
@@ -279,7 +279,7 @@ compile_spirv(struct lvp_device *pdevice,
               const VkPipelineShaderStageCreateInfo *sinfo,
               nir_shader **nir)
 {
-   gl_shader_stage stage = vk_to_mesa_shader_stage(sinfo->stage);
+   mesa_shader_stage stage = vk_to_mesa_shader_stage(sinfo->stage);
    assert(stage <= LVP_SHADER_STAGES && stage != MESA_SHADER_NONE);
    VkResult result;
 
@@ -328,13 +328,13 @@ lvp_shader_lower(struct lvp_device *pdevice, nir_shader *nir, struct lvp_pipelin
                  struct vk_pipeline_robustness_state *robustness)
 {
    if (nir->info.stage != MESA_SHADER_TESS_CTRL)
-      NIR_PASS_V(nir, remove_barriers, nir->info.stage == MESA_SHADER_COMPUTE || nir->info.stage == MESA_SHADER_MESH || nir->info.stage == MESA_SHADER_TASK);
+      NIR_PASS(_, nir, remove_barriers, nir->info.stage == MESA_SHADER_COMPUTE || nir->info.stage == MESA_SHADER_MESH || nir->info.stage == MESA_SHADER_TASK);
 
    const struct nir_lower_sysvals_to_varyings_options sysvals_to_varyings = {
       .frag_coord = true,
       .point_coord = true,
    };
-   NIR_PASS_V(nir, nir_lower_sysvals_to_varyings, &sysvals_to_varyings);
+   NIR_PASS(_, nir, nir_lower_sysvals_to_varyings, &sysvals_to_varyings);
 
    struct nir_lower_subgroups_options subgroup_opts = {0};
    subgroup_opts.lower_quad = true;
@@ -343,36 +343,36 @@ lvp_shader_lower(struct lvp_device *pdevice, nir_shader *nir, struct lvp_pipelin
    subgroup_opts.ballot_bit_size = 32;
    subgroup_opts.lower_inverse_ballot = true;
    subgroup_opts.lower_rotate_to_shuffle = true;
-   NIR_PASS_V(nir, nir_lower_subgroups, &subgroup_opts);
+   NIR_PASS(_, nir, nir_lower_subgroups, &subgroup_opts);
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT)
       lvp_lower_input_attachments(nir, false);
-   NIR_PASS_V(nir, nir_lower_system_values);
-   NIR_PASS_V(nir, nir_lower_is_helper_invocation);
+   NIR_PASS(_, nir, nir_lower_system_values);
+   NIR_PASS(_, nir, nir_lower_is_helper_invocation);
 
    const struct nir_lower_compute_system_values_options compute_system_values = {0};
-   NIR_PASS_V(nir, nir_lower_compute_system_values, &compute_system_values);
+   NIR_PASS(_, nir, nir_lower_compute_system_values, &compute_system_values);
 
-   NIR_PASS_V(nir, nir_remove_dead_variables,
-              nir_var_uniform | nir_var_image, NULL);
+   NIR_PASS(_, nir, nir_remove_dead_variables,
+            nir_var_uniform | nir_var_image, NULL);
 
    optimize(nir);
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
-   NIR_PASS_V(nir, nir_lower_io_vars_to_temporaries, nir_shader_get_entrypoint(nir), true, true);
-   NIR_PASS_V(nir, nir_split_var_copies);
-   NIR_PASS_V(nir, nir_lower_global_vars_to_local);
+   NIR_PASS(_, nir, nir_lower_io_vars_to_temporaries, nir_shader_get_entrypoint(nir), true, true);
+   NIR_PASS(_, nir, nir_split_var_copies);
+   NIR_PASS(_, nir, nir_lower_global_vars_to_local);
 
-   NIR_PASS_V(nir, nir_lower_explicit_io, nir_var_mem_push_const,
-              nir_address_format_32bit_offset);
+   NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_push_const,
+            nir_address_format_32bit_offset);
 
-   NIR_PASS_V(nir, nir_lower_explicit_io,
-              nir_var_mem_ubo | nir_var_mem_ssbo,
-              nir_address_format_vec2_index_32bit_offset);
+   NIR_PASS(_, nir, nir_lower_explicit_io,
+            nir_var_mem_ubo | nir_var_mem_ssbo,
+            nir_address_format_vec2_index_32bit_offset);
 
-   NIR_PASS_V(nir, nir_lower_explicit_io,
-              nir_var_mem_global | nir_var_mem_constant,
-              nir_address_format_64bit_global);
+   NIR_PASS(_, nir, nir_lower_explicit_io,
+            nir_var_mem_global | nir_var_mem_constant,
+            nir_address_format_64bit_global);
 
    NIR_PASS(_, nir, nir_vk_lower_ycbcr_tex, lvp_ycbcr_conversion_lookup, layout);
 
@@ -388,23 +388,23 @@ lvp_shader_lower(struct lvp_device *pdevice, nir_shader *nir, struct lvp_pipelin
    if (nir->info.stage == MESA_SHADER_COMPUTE ||
        nir->info.stage == MESA_SHADER_TASK ||
        nir->info.stage == MESA_SHADER_MESH) {
-      NIR_PASS_V(nir, nir_lower_vars_to_explicit_types, nir_var_mem_shared, shared_var_info);
-      NIR_PASS_V(nir, nir_lower_explicit_io, nir_var_mem_shared, nir_address_format_32bit_offset);
+      NIR_PASS(_, nir, nir_lower_vars_to_explicit_types, nir_var_mem_shared, shared_var_info);
+      NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_shared, nir_address_format_32bit_offset);
    }
 
    if (nir->info.stage == MESA_SHADER_TASK ||
        nir->info.stage == MESA_SHADER_MESH) {
-      NIR_PASS_V(nir, nir_lower_vars_to_explicit_types, nir_var_mem_task_payload, shared_var_info);
-      NIR_PASS_V(nir, nir_lower_explicit_io, nir_var_mem_task_payload, nir_address_format_32bit_offset);
+      NIR_PASS(_, nir, nir_lower_vars_to_explicit_types, nir_var_mem_task_payload, shared_var_info);
+      NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_task_payload, nir_address_format_32bit_offset);
    }
 
-   NIR_PASS_V(nir, nir_remove_dead_variables, nir_var_shader_temp, NULL);
+   NIR_PASS(_, nir, nir_remove_dead_variables, nir_var_shader_temp, NULL);
 
    if (nir->info.stage == MESA_SHADER_VERTEX ||
        nir->info.stage == MESA_SHADER_GEOMETRY) {
-      NIR_PASS_V(nir, nir_lower_io_array_vars_to_elements_no_indirects, false);
+      NIR_PASS(_, nir, nir_lower_io_array_vars_to_elements_no_indirects, false);
    } else if (nir->info.stage == MESA_SHADER_FRAGMENT) {
-      NIR_PASS_V(nir, nir_lower_io_array_vars_to_elements_no_indirects, true);
+      NIR_PASS(_, nir, nir_lower_io_array_vars_to_elements_no_indirects, true);
    }
 
    // TODO: also optimize the tex srcs. see radeonSI for reference */
@@ -413,7 +413,7 @@ lvp_shader_lower(struct lvp_device *pdevice, nir_shader *nir, struct lvp_pipelin
       .rounding_mode = nir_rounding_mode_undef,
       .opt_tex_dest_types = nir_type_float | nir_type_uint | nir_type_int,
    };
-   NIR_PASS_V(nir, nir_opt_16bit_tex_image, &opt_16bit_options);
+   NIR_PASS(_, nir, nir_opt_16bit_tex_image, &opt_16bit_options);
 
    /* Lower texture OPs llvmpipe supports to reduce the amount of sample
     * functions that need to be pre-compiled.
@@ -427,6 +427,7 @@ lvp_shader_lower(struct lvp_device *pdevice, nir_shader *nir, struct lvp_pipelin
       .lower_txd = true,
    };
    NIR_PASS(_, nir, nir_lower_tex, &tex_options);
+   NIR_PASS(_, nir, nir_lower_int64);
 
    NIR_PASS(_, nir, lvp_nir_lower_sparse_residency);
 
@@ -475,7 +476,7 @@ static VkResult
 lvp_shader_compile_to_ir(struct lvp_pipeline *pipeline, const void *pipeline_pNext,
                          const VkPipelineShaderStageCreateInfo *sinfo)
 {
-   gl_shader_stage stage = vk_to_mesa_shader_stage(sinfo->stage);
+   mesa_shader_stage stage = vk_to_mesa_shader_stage(sinfo->stage);
    assert(stage <= LVP_SHADER_STAGES && stage != MESA_SHADER_NONE);
    nir_shader *nir;
    VkResult result = lvp_spirv_to_nir(pipeline, pipeline_pNext, sinfo, &nir);
@@ -561,7 +562,7 @@ lvp_shader_xfb_init(struct lvp_shader *shader)
 static void
 lvp_pipeline_xfb_init(struct lvp_pipeline *pipeline)
 {
-   gl_shader_stage stage = MESA_SHADER_VERTEX;
+   mesa_shader_stage stage = MESA_SHADER_VERTEX;
    if (pipeline->shaders[MESA_SHADER_GEOMETRY].pipeline_nir)
       stage = MESA_SHADER_GEOMETRY;
    else if (pipeline->shaders[MESA_SHADER_TESS_EVAL].pipeline_nir)
@@ -603,7 +604,7 @@ lvp_shader_compile_stage(struct lvp_device *device, struct lvp_shader *shader, n
       case MESA_SHADER_MESH:
          return device->queue.ctx->create_ms_state(device->queue.ctx, &shstate);
       default:
-         unreachable("illegal shader");
+         UNREACHABLE("illegal shader");
          break;
       }
    }
@@ -833,7 +834,7 @@ lvp_graphics_pipeline_init(struct lvp_pipeline *pipeline,
 
    for (uint32_t i = 0; i < pCreateInfo->stageCount; i++) {
       const VkPipelineShaderStageCreateInfo *sinfo = &pCreateInfo->pStages[i];
-      gl_shader_stage stage = vk_to_mesa_shader_stage(sinfo->stage);
+      mesa_shader_stage stage = vk_to_mesa_shader_stage(sinfo->stage);
       if (stage == MESA_SHADER_FRAGMENT) {
          if (!(pipeline->stages & VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT))
             continue;
@@ -918,7 +919,7 @@ lvp_pipeline_shaders_compile(struct lvp_pipeline *pipeline, bool locked)
       if (!pipeline->shaders[i].pipeline_nir)
          continue;
 
-      gl_shader_stage stage = i;
+      mesa_shader_stage stage = i;
       assert(stage == pipeline->shaders[i].pipeline_nir->nir->info.stage);
 
       pipeline->shaders[stage].shader_cso = lvp_shader_compile(pipeline->device, &pipeline->shaders[stage],
@@ -1136,7 +1137,7 @@ static VkShaderEXT
 create_shader_object(struct lvp_device *device, const VkShaderCreateInfoEXT *pCreateInfo, const VkAllocationCallbacks *pAllocator)
 {
    nir_shader *nir = NULL;
-   gl_shader_stage stage = vk_to_mesa_shader_stage(pCreateInfo->stage);
+   mesa_shader_stage stage = vk_to_mesa_shader_stage(pCreateInfo->stage);
    assert(stage <= LVP_SHADER_STAGES && stage != MESA_SHADER_NONE);
    if (pCreateInfo->codeType == VK_SHADER_CODE_TYPE_SPIRV_EXT) {
       VkShaderModuleCreateInfo minfo = {
@@ -1185,7 +1186,7 @@ create_shader_object(struct lvp_device *device, const VkShaderCreateInfoEXT *pCr
          return VK_NULL_HANDLE;
 
       blob_reader_init(&blob, data + SHA1_DIGEST_LENGTH + VK_UUID_SIZE, size);
-      nir = nir_deserialize(NULL, device->pscreen->get_compiler_options(device->pscreen, PIPE_SHADER_IR_NIR, stage), &blob);
+      nir = nir_deserialize(NULL, device->pscreen->nir_options[stage], &blob);
       if (!nir)
          goto fail;
    }

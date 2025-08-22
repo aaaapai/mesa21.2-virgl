@@ -30,8 +30,8 @@ use std::collections::btree_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::mem;
-use std::mem::size_of;
 use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::os::raw::c_void;
@@ -161,7 +161,7 @@ pub enum ResourceValidityEntity {
 
 /// Allocation with real GPU backing storage. Tracks on which device the content is valid on.
 pub struct ResourceAllocation {
-    pub res: HashMap<&'static Device, Arc<PipeResource>>,
+    pub res: HashMap<&'static Device, PipeResource>,
     valid_on: Mutex<Vec<ResourceValidityEntity>>,
     // it's a bit hacky, but storing the pointer as `usize` gives us `Send` and `Sync`. The
     // application is required to ensure no data races exist on the memory anyway.
@@ -213,7 +213,7 @@ impl ResourceAllocation {
     /// migrate the data to the GPU.
     /// TODO: add a map function to return a mapping to the resource of one device the data is valid
     ///       on instead of migrating if the user would simply map the resource anyway.
-    fn get_res_for_access(&self, ctx: &QueueContext, rw: RWFlags) -> CLResult<&Arc<PipeResource>> {
+    fn get_res_for_access(&self, ctx: &QueueContext, rw: RWFlags) -> CLResult<&PipeResource> {
         let dev = ctx.dev;
         let dev_entity = ResourceValidityEntity::Device(dev);
         let to_res = self.res.get(dev).ok_or(CL_OUT_OF_HOST_MEMORY)?;
@@ -442,7 +442,7 @@ pub enum Allocation {
 impl Allocation {
     /// Creates a new allocation object assuming the initial data is valid on every device.
     pub fn new(
-        res: HashMap<&'static Device, Arc<PipeResource>>,
+        res: HashMap<&'static Device, PipeResource>,
         offset: usize,
         host_ptr: *mut c_void,
     ) -> Self {
@@ -499,7 +499,7 @@ impl Allocation {
     }
 
     /// Follows the sub-allocation chain until it hits a real GPU allocation.
-    fn get_real_resource(&self) -> &ResourceAllocation {
+    pub fn get_real_resource(&self) -> &ResourceAllocation {
         match self {
             Allocation::SubAlloc(sub) => sub.mem.alloc.get_real_resource(),
             Allocation::Resource(res) => res,
@@ -508,16 +508,12 @@ impl Allocation {
     }
 
     /// Returns the resource associated with `dev` without any data migration.
-    fn get_res_of_dev(&self, dev: &Device) -> Option<&Arc<PipeResource>> {
+    fn get_res_of_dev(&self, dev: &Device) -> Option<&PipeResource> {
         self.get_real_resource().res.get(dev)
     }
 
     /// Returns the resource associated with `ctx.dev` and transparently migrate the data.
-    pub fn get_res_for_access(
-        &self,
-        ctx: &QueueContext,
-        rw: RWFlags,
-    ) -> CLResult<&Arc<PipeResource>> {
+    pub fn get_res_for_access(&self, ctx: &QueueContext, rw: RWFlags) -> CLResult<&PipeResource> {
         self.get_real_resource().get_res_for_access(ctx, rw)
     }
 
@@ -841,6 +837,8 @@ impl MemBase {
         } else {
             let res_type = if bit_check(flags, CL_MEM_ALLOC_HOST_PTR) {
                 ResourceType::Staging
+            } else if bit_check(flags, CL_MEM_IMMUTABLE_EXT) {
+                ResourceType::Immutable
             } else {
                 ResourceType::Normal
             };
@@ -964,6 +962,8 @@ impl MemBase {
 
         let res_type = if bit_check(flags, CL_MEM_ALLOC_HOST_PTR) {
             ResourceType::Staging
+        } else if bit_check(flags, CL_MEM_IMMUTABLE_EXT) {
+            ResourceType::Immutable
         } else {
             ResourceType::Normal
         };
@@ -1041,12 +1041,12 @@ impl MemBase {
     pub fn from_gl(
         context: Arc<Context>,
         flags: cl_mem_flags,
-        gl_export_manager: &GLExportManager,
+        gl_export_manager: GLExportManager,
     ) -> CLResult<cl_mem> {
-        let export_in = &gl_export_manager.export_in;
+        let export_in = gl_export_manager.export_in;
         let export_out = &gl_export_manager.export_out;
 
-        let (mem_type, gl_object_type) = target_from_gl(export_in.target)?;
+        let mem_type = mem_type_from_gl(export_in.target)?;
         let gl_mem_props = gl_export_manager.get_gl_mem_props()?;
 
         // Handle Buffers
@@ -1084,8 +1084,8 @@ impl MemBase {
                 .iter()
                 .map(|(dev, resource)| {
                     (
-                        Arc::clone(resource),
-                        Arc::clone(imported_gl_tex.get(dev).unwrap()),
+                        resource.new_ref(),
+                        imported_gl_tex.get(dev).unwrap().new_ref(),
                     )
                 })
                 .collect();
@@ -1109,9 +1109,7 @@ impl MemBase {
             size: gl_mem_props.size(),
             props: Properties::default(),
             gl_obj: Some(GLObject {
-                gl_object_target: gl_export_manager.export_in.target,
-                gl_object_type: gl_object_type,
-                gl_object_name: export_in.obj,
+                props: export_in,
                 shadow_map: shadow_map,
             }),
             cbs: Mutex::new(Vec::new()),
@@ -1167,11 +1165,7 @@ impl MemBase {
             && bit_check(self.flags, CL_MEM_USE_HOST_PTR)
     }
 
-    pub fn get_res_for_access(
-        &self,
-        ctx: &QueueContext,
-        rw: RWFlags,
-    ) -> CLResult<&Arc<PipeResource>> {
+    pub fn get_res_for_access(&self, ctx: &QueueContext, rw: RWFlags) -> CLResult<&PipeResource> {
         self.alloc.get_res_for_access(ctx, rw)
     }
 
@@ -1357,6 +1351,18 @@ impl Buffer {
                 dst.image_desc.row_pitch()? as usize,
                 dst.image_desc.slice_pitch(),
             );
+        }
+
+        if ctx.has_buffer_texture_copies() {
+            let src_res = self.get_res_for_access(ctx, RWFlags::RD)?;
+            let dst_res = dst.get_res_for_access(ctx, RWFlags::WR)?;
+
+            let src_offset = self
+                .apply_offset(src_offset)?
+                .try_into_with_err(CL_OUT_OF_HOST_MEMORY)?;
+            let bx = create_pipe_box(dst_origin, *region, dst.mem_type)?;
+            ctx.resource_copy_buffer_texture(src_res, dst_res, src_offset, &bx);
+            return Ok(());
         }
 
         let size = CLVec::calc_size(region, src_pitch);
@@ -1693,6 +1699,18 @@ impl Image {
                 dst_pitch[1],
                 dst_pitch[2],
             );
+        }
+
+        if ctx.has_buffer_texture_copies() {
+            let src_res = self.get_res_for_access(ctx, RWFlags::RD)?;
+            let dst_res = dst.get_res_for_access(ctx, RWFlags::WR)?;
+
+            let dst_offset = dst
+                .apply_offset(dst_offset)?
+                .try_into_with_err(CL_OUT_OF_HOST_MEMORY)?;
+            let bx = create_pipe_box(src_origin, *region, self.mem_type)?;
+            ctx.resource_copy_buffer_texture(src_res, dst_res, dst_offset, &bx);
+            return Ok(());
         }
 
         let tx_src = self.tx_image(
@@ -2124,7 +2142,7 @@ impl Image {
     pub fn sampler_view<'c>(&self, ctx: &'c QueueContext) -> CLResult<PipeSamplerView<'c, '_>> {
         let res = self.get_res_for_access(ctx, RWFlags::RD)?;
 
-        let template = if let Some(Mem::Buffer(parent)) = self.parent() {
+        let mut template = if let Some(Mem::Buffer(parent)) = self.parent() {
             if self.mem_type == CL_MEM_OBJECT_IMAGE2D {
                 res.pipe_sampler_view_template_2d_buffer(
                     self.pipe_format,
@@ -2144,6 +2162,13 @@ impl Image {
         } else {
             res.pipe_sampler_view_template()
         };
+
+        // Some drivers won't do it themselves.
+        if self.image_format.image_channel_order == CL_INTENSITY {
+            template.set_swizzle_g(pipe_swizzle::PIPE_SWIZZLE_X);
+            template.set_swizzle_b(pipe_swizzle::PIPE_SWIZZLE_X);
+            template.set_swizzle_a(pipe_swizzle::PIPE_SWIZZLE_X);
+        }
 
         PipeSamplerView::new(ctx, res, &template).ok_or(CL_OUT_OF_HOST_MEMORY)
     }
@@ -2271,5 +2296,40 @@ impl Sampler {
             self.filter_mode,
             self.normalized_coords,
         ))
+    }
+}
+
+/// A custom wrapper around pipe_sampler_state that implements certain Traits (e.g. Hash and
+/// PartialEq) only looking at fields we actually care about. All other fields will be ignored!
+#[repr(transparent)]
+pub struct PipeSamplerState(pipe_sampler_state);
+
+impl From<pipe_sampler_state> for PipeSamplerState {
+    fn from(value: pipe_sampler_state) -> Self {
+        Self(value)
+    }
+}
+
+impl Hash for PipeSamplerState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u32(self.0.wrap_r());
+        state.write_u32(self.0.min_img_filter());
+        state.write_u32(self.0.unnormalized_coords());
+    }
+}
+
+impl PartialEq for PipeSamplerState {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.wrap_r() == other.0.wrap_r()
+            && self.0.min_img_filter() == other.0.min_img_filter()
+            && self.0.unnormalized_coords() == other.0.unnormalized_coords()
+    }
+}
+
+impl Eq for PipeSamplerState {}
+
+impl PipeSamplerState {
+    pub fn pipe(&self) -> &pipe_sampler_state {
+        &self.0
     }
 }

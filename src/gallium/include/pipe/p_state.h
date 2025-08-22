@@ -181,6 +181,12 @@ struct pipe_rasterizer_state
    unsigned clip_halfz:1;
 
    /**
+    * When true do not scale offset_units and use same rules for unorm and
+    * float depth buffers.
+    */
+   unsigned offset_units_unscaled:1;
+
+   /**
     * Depth values output from fragment shader may be outside 0..1.
     * These have to be clamped for use with UNORM buffers.
     * Vulkan can allow this with an extension,
@@ -1042,6 +1048,12 @@ enum pipe_ml_operation_type {
    PIPE_ML_OPERATION_TYPE_SPLIT,
    PIPE_ML_OPERATION_TYPE_PAD,
    PIPE_ML_OPERATION_TYPE_FULLY_CONNECTED,
+   PIPE_ML_OPERATION_TYPE_RESHAPE,
+   PIPE_ML_OPERATION_TYPE_RELU,
+   PIPE_ML_OPERATION_TYPE_ABSOLUTE,
+   PIPE_ML_OPERATION_TYPE_LOGISTIC,
+   PIPE_ML_OPERATION_TYPE_SUBTRACT,
+   PIPE_ML_OPERATION_TYPE_TRANSPOSE,
 };
 
 /**
@@ -1107,6 +1119,9 @@ struct pipe_ml_operation
           * Whether this convolution has fused ReLU activation.
           */
          bool relu;
+
+         unsigned dilation_width_factor;
+         unsigned dilation_height_factor;
       } conv;
       struct {
          /**
@@ -1181,6 +1196,31 @@ struct pipe_ml_operation
           */
          bool relu;
       } fcon;
+
+      struct {
+         /**
+          * Dimension along which the tensors are concatenated.
+          */
+         int axis;
+      } conc;
+
+      struct {
+         /**
+          * Dimension along which the tensors are split.
+          */
+         int axis;
+      } split;
+
+      struct {
+         /**
+          * Shape of the output tensor.
+          */
+         unsigned shape[4];
+      } reshape;
+
+      struct {
+         unsigned perm[4];
+      } transpose;
    };
 };
 

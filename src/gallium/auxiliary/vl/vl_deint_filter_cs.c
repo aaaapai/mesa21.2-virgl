@@ -13,7 +13,8 @@ static inline nir_def *
 texture(nir_builder *b, nir_def *pos, nir_variable *sampler)
 {
    nir_deref_instr *tex_deref = nir_build_deref_var(b, sampler);
-   return nir_tex_deref(b, tex_deref, tex_deref, nir_channels(b, pos, 0x3));
+   return nir_tex(b, nir_channels(b, pos, 0x3),
+                  .texture_deref = tex_deref, .sampler_deref = tex_deref);
 }
 
 static inline void
@@ -32,8 +33,7 @@ create_deint_shader(struct vl_deint_filter *filter, unsigned field)
       glsl_sampler_type(GLSL_SAMPLER_DIM_RECT, false, false, GLSL_TYPE_FLOAT);
    const struct glsl_type *image_type =
       glsl_image_type(GLSL_SAMPLER_DIM_2D, false, GLSL_TYPE_FLOAT);
-   const nir_shader_compiler_options *options =
-      filter->pipe->screen->get_compiler_options(filter->pipe->screen, PIPE_SHADER_IR_NIR, PIPE_SHADER_COMPUTE);
+   const nir_shader_compiler_options *options = filter->pipe->screen->nir_options[MESA_SHADER_COMPUTE];
 
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, options, "vl:deint");
    b.shader->info.workgroup_size[0] = 8;
@@ -213,7 +213,7 @@ vl_deint_filter_cs_render(struct vl_deint_filter *filter,
    prev_sv = prev->get_sampler_view_planes(prev);
    next_sv = next->get_sampler_view_planes(next);
 
-   filter->pipe->bind_sampler_states(filter->pipe, PIPE_SHADER_COMPUTE,
+   filter->pipe->bind_sampler_states(filter->pipe, MESA_SHADER_COMPUTE,
                                      0, 4, filter->sampler);
 
    for (unsigned i = 0; i < 2; i++) {
@@ -224,7 +224,7 @@ vl_deint_filter_cs_render(struct vl_deint_filter *filter,
       sampler_views[1] = prev_sv[i];
       sampler_views[2] = cur_sv[i];
       sampler_views[3] = next_sv[i];
-      filter->pipe->set_sampler_views(filter->pipe, PIPE_SHADER_COMPUTE,
+      filter->pipe->set_sampler_views(filter->pipe, MESA_SHADER_COMPUTE,
                                       0, 4, 0, sampler_views);
 
       /* Bind the image */
@@ -234,7 +234,7 @@ vl_deint_filter_cs_render(struct vl_deint_filter *filter,
          .shader_access = PIPE_IMAGE_ACCESS_WRITE,
          .format = dst->texture->format,
       };
-      filter->pipe->set_shader_images(filter->pipe, PIPE_SHADER_COMPUTE,
+      filter->pipe->set_shader_images(filter->pipe, MESA_SHADER_COMPUTE,
                                       0, 1, 0, &image);
 
       /* Bind compute shader */

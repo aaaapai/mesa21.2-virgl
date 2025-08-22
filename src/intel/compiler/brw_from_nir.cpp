@@ -33,8 +33,6 @@
 #include "util/bitscan.h"
 #include "compiler/glsl_types.h"
 
-#include <vector>
-
 struct brw_bind_info {
    bool valid;
    bool bindless;
@@ -155,7 +153,7 @@ brw_from_nir_setup_uniforms(brw_shader &s)
 
    s.uniforms = s.nir->num_uniforms / 4;
 
-   if (gl_shader_stage_is_compute(s.stage) && devinfo->verx10 < 125) {
+   if (mesa_shader_stage_is_compute(s.stage) && devinfo->verx10 < 125) {
       /* Add uniforms for builtins after regular NIR uniforms. */
       assert(s.uniforms == s.prog_data->nr_params);
 
@@ -175,7 +173,7 @@ emit_work_group_id_setup(nir_to_brw_state &ntb)
    brw_shader &s = ntb.s;
    const brw_builder &bld = ntb.bld.scalar_group();
 
-   assert(gl_shader_stage_is_compute(s.stage));
+   assert(mesa_shader_stage_is_compute(s.stage));
 
    brw_reg id = bld.vgrf(BRW_TYPE_UD, 3);
 
@@ -206,22 +204,22 @@ emit_system_values_block(nir_to_brw_state &ntb, nir_block *block)
       switch (intrin->intrinsic) {
       case nir_intrinsic_load_vertex_id:
       case nir_intrinsic_load_base_vertex:
-         unreachable("should be lowered by nir_lower_system_values().");
+         UNREACHABLE("should be lowered by nir_lower_system_values().");
 
       case nir_intrinsic_load_vertex_id_zero_base:
       case nir_intrinsic_load_is_indexed_draw:
       case nir_intrinsic_load_first_vertex:
       case nir_intrinsic_load_instance_id:
       case nir_intrinsic_load_base_instance:
-         unreachable("should be lowered by brw_nir_lower_vs_inputs().");
+         UNREACHABLE("should be lowered by brw_nir_lower_vs_inputs().");
          break;
 
       case nir_intrinsic_load_draw_id:
          /* For Task/Mesh, draw_id will be handled later in
           * nir_emit_mesh_task_intrinsic().
           */
-         if (!gl_shader_stage_is_mesh(s.stage))
-            unreachable("should be lowered by brw_nir_lower_vs_inputs().");
+         if (!mesa_shader_stage_is_mesh(s.stage))
+            UNREACHABLE("should be lowered by brw_nir_lower_vs_inputs().");
          break;
 
       case nir_intrinsic_load_invocation_id:
@@ -257,9 +255,9 @@ emit_system_values_block(nir_to_brw_state &ntb, nir_block *block)
          break;
 
       case nir_intrinsic_load_workgroup_id:
-         if (gl_shader_stage_is_mesh(s.stage))
-            unreachable("should be lowered by nir_lower_compute_system_values().");
-         assert(gl_shader_stage_is_compute(s.stage));
+         if (mesa_shader_stage_is_mesh(s.stage))
+            UNREACHABLE("should be lowered by nir_lower_compute_system_values().");
+         assert(mesa_shader_stage_is_compute(s.stage));
          reg = &ntb.system_values[SYSTEM_VALUE_WORKGROUP_ID];
          if (reg->file == BAD_FILE)
             *reg = emit_work_group_id_setup(ntb);
@@ -376,7 +374,7 @@ brw_from_nir_emit_cf_list(nir_to_brw_state &ntb, exec_list *list)
          break;
 
       default:
-         unreachable("Invalid CFG node block");
+         UNREACHABLE("Invalid CFG node block");
       }
    }
 }
@@ -426,8 +424,8 @@ brw_from_nir_emit_if(nir_to_brw_state &ntb, nir_if *if_stmt)
            jump->opcode == BRW_OPCODE_CONTINUE)) {
          jump->predicate = iff->predicate;
          jump->predicate_inverse = iff->predicate_inverse;
-         iff->exec_node::remove();
-         endif->exec_node::remove();
+         iff->brw_exec_node::remove();
+         endif->brw_exec_node::remove();
       }
    }
 }
@@ -451,7 +449,7 @@ brw_from_nir_emit_loop(nir_to_brw_state &ntb, nir_loop *loop)
        peep_break->predicate != BRW_PREDICATE_NONE) {
       peep_while->predicate = peep_break->predicate;
       peep_while->predicate_inverse = !peep_break->predicate_inverse;
-      peep_break->exec_node::remove();
+      peep_break->brw_exec_node::remove();
    }
 }
 
@@ -487,7 +485,7 @@ optimize_extract_to_float(nir_to_brw_state &ntb, const brw_builder &bld,
       return false;
 
    nir_alu_instr *src0 =
-      nir_instr_as_alu(instr->src[0].src.ssa->parent_instr);
+      nir_def_as_alu(instr->src[0].src.ssa);
 
    unsigned bytes;
    bool is_signed;
@@ -714,7 +712,7 @@ brw_rnd_mode_from_nir_op (const nir_op op) {
    case nir_op_f2f16_rtne:
       return BRW_RND_MODE_RTNE;
    default:
-      unreachable("Operation doesn't support rounding mode");
+      UNREACHABLE("Operation doesn't support rounding mode");
    }
 }
 
@@ -1144,7 +1142,7 @@ brw_from_nir_emit_alu(nir_to_brw_state &ntb, nir_alu_instr *instr,
       break;
 
    case nir_op_fsign:
-      unreachable("Should have been lowered by brw_nir_lower_fsign.");
+      UNREACHABLE("Should have been lowered by brw_nir_lower_fsign.");
 
    case nir_op_frcp:
       bld.RCP(result, op[0]);
@@ -1275,10 +1273,10 @@ brw_from_nir_emit_alu(nir_to_brw_state &ntb, nir_alu_instr *instr,
       break;
 
    case nir_op_uadd_carry:
-      unreachable("Should have been lowered by carry_to_arith().");
+      UNREACHABLE("Should have been lowered by carry_to_arith().");
 
    case nir_op_usub_borrow:
-      unreachable("Should have been lowered by borrow_to_arith().");
+      UNREACHABLE("Should have been lowered by borrow_to_arith().");
 
    case nir_op_umod:
    case nir_op_irem:
@@ -1443,7 +1441,7 @@ brw_from_nir_emit_alu(nir_to_brw_state &ntb, nir_alu_instr *instr,
             return;
 
          default:
-            unreachable("impossible opcode");
+            UNREACHABLE("impossible opcode");
          }
       }
       op[0] = resolve_source_modifiers(bld, op[0]);
@@ -1479,10 +1477,10 @@ brw_from_nir_emit_alu(nir_to_brw_state &ntb, nir_alu_instr *instr,
    case nir_op_b32any_inequal3:
    case nir_op_b32any_fnequal4:
    case nir_op_b32any_inequal4:
-      unreachable("Lowered by nir_lower_alu_reductions");
+      UNREACHABLE("Lowered by nir_lower_alu_reductions");
 
    case nir_op_ldexp:
-      unreachable("not reached: should be handled by ldexp_to_arith()");
+      UNREACHABLE("not reached: should be handled by ldexp_to_arith()");
 
    case nir_op_fsqrt:
       bld.SQRT(result, op[0]);
@@ -1531,7 +1529,7 @@ brw_from_nir_emit_alu(nir_to_brw_state &ntb, nir_alu_instr *instr,
    case nir_op_unpack_unorm_4x8:
    case nir_op_unpack_half_2x16:
    case nir_op_pack_half_2x16:
-      unreachable("not reached: should be handled by lower_packing_builtins");
+      UNREACHABLE("not reached: should be handled by lower_packing_builtins");
 
    case nir_op_unpack_half_2x16_split_x:
       bld.MOV(result, subscript(op[0], BRW_TYPE_HF, 0));
@@ -1620,7 +1618,7 @@ brw_from_nir_emit_alu(nir_to_brw_state &ntb, nir_alu_instr *instr,
 
    case nir_op_ubitfield_extract:
    case nir_op_ibitfield_extract:
-      unreachable("should have been lowered");
+      UNREACHABLE("should have been lowered");
    case nir_op_ubfe:
    case nir_op_ibfe:
       assert(instr->def.bit_size < 64);
@@ -1645,7 +1643,7 @@ brw_from_nir_emit_alu(nir_to_brw_state &ntb, nir_alu_instr *instr,
       break;
 
    case nir_op_bitfield_insert:
-      unreachable("not reached: should have been lowered");
+      UNREACHABLE("not reached: should have been lowered");
 
    /* With regards to implicit masking of the shift counts for 8- and 16-bit
     * types, the PRMs are **incorrect**. They falsely state that on Gen9+ only
@@ -1845,7 +1843,7 @@ brw_from_nir_emit_alu(nir_to_brw_state &ntb, nir_alu_instr *instr,
       break;
 
    default:
-      unreachable("unhandled instruction");
+      UNREACHABLE("unhandled instruction");
    }
 }
 
@@ -1892,7 +1890,7 @@ brw_from_nir_emit_load_const(nir_to_brw_state &ntb,
       break;
 
    default:
-      unreachable("Invalid bit size");
+      UNREACHABLE("Invalid bit size");
    }
 
    bld.VEC(reg, comps, instr->def.num_components);
@@ -2471,9 +2469,7 @@ brw_shader::gs_urb_channel_mask(const brw_reg &dword_index)
    /* Set the channel masks to 1 << (dword_index % 4), so that we'll
     * write to the appropriate DWORD within the OWORD.
     */
-   brw_reg channel = ubld.AND(dword_index, brw_imm_ud(3u));
-   /* Then the channel masks need to be in bits 23:16. */
-   return ubld.SHL(intexp2(ubld, channel), brw_imm_ud(16u));
+   return intexp2(ubld, ubld.AND(dword_index, brw_imm_ud(3u)));
 }
 
 void
@@ -2879,7 +2875,7 @@ brw_from_nir_emit_vs_intrinsic(nir_to_brw_state &ntb,
    switch (instr->intrinsic) {
    case nir_intrinsic_load_vertex_id:
    case nir_intrinsic_load_base_vertex:
-      unreachable("should be lowered by nir_lower_system_values()");
+      UNREACHABLE("should be lowered by nir_lower_system_values()");
 
    case nir_intrinsic_load_input: {
       assert(instr->def.bit_size == 32);
@@ -2897,7 +2893,7 @@ brw_from_nir_emit_vs_intrinsic(nir_to_brw_state &ntb,
    case nir_intrinsic_load_draw_id:
    case nir_intrinsic_load_first_vertex:
    case nir_intrinsic_load_is_indexed_draw:
-      unreachable("lowered by brw_nir_lower_vs_inputs");
+      UNREACHABLE("lowered by brw_nir_lower_vs_inputs");
 
    default:
       brw_from_nir_emit_intrinsic(ntb, bld, instr);
@@ -3034,7 +3030,7 @@ emit_barrier(nir_to_brw_state &ntb)
    brw_shader &s = ntb.s;
 
    /* We are getting the barrier ID from the compute shader header */
-   assert(gl_shader_stage_uses_workgroup(s.stage));
+   assert(mesa_shader_stage_uses_workgroup(s.stage));
 
    /* Zero-initialize the payload */
    brw_reg payload = hbld.MOV(brw_imm_ud(0u));
@@ -3042,7 +3038,7 @@ emit_barrier(nir_to_brw_state &ntb)
    if (devinfo->verx10 >= 125) {
       setup_barrier_message_payload_gfx125(bld, payload);
    } else {
-      assert(gl_shader_stage_is_compute(s.stage));
+      assert(mesa_shader_stage_is_compute(s.stage));
 
       brw_reg barrier_id_mask =
          brw_imm_ud(devinfo->ver == 9 ? 0x8f000000u : 0x7f000000u);
@@ -3135,7 +3131,7 @@ brw_from_nir_emit_tcs_intrinsic(nir_to_brw_state &ntb,
       break;
 
    case nir_intrinsic_load_input:
-      unreachable("nir_lower_io should never give us these.");
+      UNREACHABLE("nir_lower_io should never give us these.");
       break;
 
    case nir_intrinsic_load_per_vertex_input: {
@@ -3288,7 +3284,7 @@ brw_from_nir_emit_tcs_intrinsic(nir_to_brw_state &ntb,
 
       brw_reg mask_reg;
       if (mask != WRITEMASK_XYZW)
-         mask_reg = brw_imm_ud(mask << 16);
+         mask_reg = brw_imm_ud(mask);
 
       brw_reg sources[4];
 
@@ -3453,7 +3449,7 @@ brw_from_nir_emit_gs_intrinsic(nir_to_brw_state &ntb,
       break;
 
    case nir_intrinsic_load_input:
-      unreachable("load_input intrinsics are invalid for the GS stage");
+      UNREACHABLE("load_input intrinsics are invalid for the GS stage");
 
    case nir_intrinsic_load_per_vertex_input:
       emit_gs_input_load(ntb, dest, instr->src[0], nir_intrinsic_base(instr),
@@ -3790,7 +3786,7 @@ alloc_frag_output(nir_to_brw_state &ntb, unsigned location)
                              &s.outputs[l - FRAG_RESULT_DATA0], 1);
 
    else
-      unreachable("Invalid location");
+      UNREACHABLE("Invalid location");
 }
 
 static void
@@ -3813,11 +3809,11 @@ emit_is_helper_invocation(nir_to_brw_state &ntb, brw_reg result)
 
       brw_inst *mov = b.MOV(offset(result, b, i), brw_imm_ud(~0));
 
-      /* The at() ensures that any code emitted to get the predicate happens
+      /* The before() ensures that any code emitted to get the predicate happens
        * before the mov right above.  This is not an issue elsewhere because
        * lowering code already set up the builder this way.
        */
-      brw_emit_predicate_on_sample_mask(b.at(NULL, mov), mov);
+      brw_emit_predicate_on_sample_mask(b.before(mov), mov);
       mov->predicate_inverse = true;
    }
 }
@@ -4630,7 +4626,6 @@ static void
 set_memory_address(nir_to_brw_state &ntb,
                    const brw_builder &bld,
                    nir_intrinsic_instr *instr,
-                   bool is_store,
                    brw_reg *srcs)
 {
    const intel_device_info *devinfo = ntb.devinfo;
@@ -4677,7 +4672,7 @@ set_memory_address(nir_to_brw_state &ntb,
 static unsigned
 brw_workgroup_size(brw_shader &s)
 {
-   assert(gl_shader_stage_uses_workgroup(s.stage));
+   assert(mesa_shader_stage_uses_workgroup(s.stage));
    assert(!s.nir->info.workgroup_size_variable);
    const struct brw_cs_prog_data *cs = brw_cs_prog_data(s.prog_data);
    return cs->local_size[0] * cs->local_size[1] * cs->local_size[2];
@@ -4691,7 +4686,7 @@ brw_from_nir_emit_cs_intrinsic(nir_to_brw_state &ntb,
    const brw_builder &bld = ntb.bld;
    brw_shader &s = ntb.s;
 
-   assert(gl_shader_stage_uses_workgroup(s.stage));
+   assert(mesa_shader_stage_uses_workgroup(s.stage));
    struct brw_cs_prog_data *cs_prog_data = brw_cs_prog_data(s.prog_data);
 
    brw_reg dest;
@@ -4790,7 +4785,7 @@ brw_from_nir_emit_cs_intrinsic(nir_to_brw_state &ntb,
       /* Should have been lowered by brw_nir_lower_cs_intrinsics() or
        * iris_setup_uniforms() for the variable group size case.
        */
-      unreachable("Should have been lowered");
+      UNREACHABLE("Should have been lowered");
       break;
    }
 
@@ -4886,10 +4881,14 @@ brw_from_nir_emit_cs_intrinsic(nir_to_brw_state &ntb,
       const unsigned elems = src_components * src_packing_factor;
 
       brw_builder bldn = bld.exec_all();
-      const brw_reg src = retype(get_nir_src(ntb, instr->src[0], 0), src_type);
+      brw_reg src = retype(get_nir_src(ntb, instr->src[0], 0), src_type);
       const brw_reg dst = retype(dest, dst_type);
 
       assert(dst_cmat_desc.use == src_cmat_desc.use);
+
+      const bool needs_intermediate =
+         (src.type == BRW_TYPE_BF && dst.type != BRW_TYPE_F) ||
+         (dst.type == BRW_TYPE_BF && src.type != BRW_TYPE_F);
 
       switch (src_cmat_desc.use) {
       case GLSL_CMAT_USE_B:
@@ -4899,6 +4898,16 @@ brw_from_nir_emit_cs_intrinsic(nir_to_brw_state &ntb,
       case GLSL_CMAT_USE_A:
       case GLSL_CMAT_USE_ACCUMULATOR: {
          const unsigned width = bldn.dispatch_width();
+
+         if (needs_intermediate) {
+            brw_reg tmp = bldn.vgrf(BRW_TYPE_F, elems);
+            for (unsigned c = 0; c < elems; c++) {
+               bldn.MOV(suboffset(tmp, c * width),
+                        suboffset(src, c * width));
+            }
+            src = tmp;
+         }
+
          for (unsigned c = 0; c < elems; c++) {
             bldn.MOV(suboffset(dst, c * width),
                      suboffset(src, c * width));
@@ -4906,7 +4915,7 @@ brw_from_nir_emit_cs_intrinsic(nir_to_brw_state &ntb,
          break;
       }
       default:
-         unreachable("not reached");
+         UNREACHABLE("not reached");
       }
       break;
    }
@@ -4926,10 +4935,13 @@ emit_rt_lsc_fence(const brw_builder &bld,
 
    const brw_builder ubld = bld.exec_all().group(8, 0);
    brw_reg tmp = ubld.vgrf(BRW_TYPE_UD);
-   brw_inst *send = ubld.emit(SHADER_OPCODE_SEND, tmp,
-                             brw_imm_ud(0) /* desc */,
-                             brw_imm_ud(0) /* ex_desc */,
-                             brw_vec8_grf(0, 0) /* payload */);
+   brw_reg srcs[SEND_NUM_SRCS] = {
+      [SEND_SRC_DESC]     = brw_imm_ud(0),
+      [SEND_SRC_EX_DESC]  = brw_imm_ud(0),
+      [SEND_SRC_PAYLOAD1] = brw_vec8_grf(0, 0),
+      [SEND_SRC_PAYLOAD2] = brw_reg(),
+   };
+   brw_inst *send = ubld.emit(SHADER_OPCODE_SEND, tmp, srcs, SEND_NUM_SRCS);
    send->sfid = BRW_SFID_UGM;
    send->desc = lsc_fence_msg_desc(devinfo, scope, flush_type, true);
    send->mlen = reg_unit(devinfo); /* g0 header */
@@ -4995,7 +5007,7 @@ brw_reduce_op_for_nir_reduction_op(nir_op op)
    case nir_op_ior:  return BRW_REDUCE_OP_OR;
    case nir_op_ixor: return BRW_REDUCE_OP_XOR;
    default:
-      unreachable("Invalid reduction operation");
+      UNREACHABLE("Invalid reduction operation");
    }
 }
 
@@ -5264,7 +5276,7 @@ emit_urb_direct_vec4_write(const brw_builder &bld,
 
       brw_reg srcs[URB_LOGICAL_NUM_SRCS];
       srcs[URB_LOGICAL_SRC_HANDLE] = urb_handle;
-      srcs[URB_LOGICAL_SRC_CHANNEL_MASK] = brw_imm_ud(mask << 16);
+      srcs[URB_LOGICAL_SRC_CHANNEL_MASK] = brw_imm_ud(mask);
       srcs[URB_LOGICAL_SRC_DATA] =
          retype(brw_allocate_vgrf_units(*bld.shader, length), BRW_TYPE_F);
       srcs[URB_LOGICAL_SRC_COMPONENTS] = brw_imm_ud(length);
@@ -5334,7 +5346,7 @@ emit_urb_direct_vec4_write_xe2(const brw_builder &bld,
 
       brw_reg srcs[URB_LOGICAL_NUM_SRCS];
       srcs[URB_LOGICAL_SRC_HANDLE] = urb_handle;
-      srcs[URB_LOGICAL_SRC_CHANNEL_MASK] = brw_imm_ud(mask << 16);
+      srcs[URB_LOGICAL_SRC_CHANNEL_MASK] = brw_imm_ud(mask);
       srcs[URB_LOGICAL_SRC_DATA] =
          retype(brw_allocate_vgrf_units(*bld.shader, comps * runit), BRW_TYPE_F);
       srcs[URB_LOGICAL_SRC_COMPONENTS] = brw_imm_ud(comps);
@@ -5397,7 +5409,7 @@ emit_urb_indirect_vec4_write(const brw_builder &bld,
       brw_reg srcs[URB_LOGICAL_NUM_SRCS];
       srcs[URB_LOGICAL_SRC_HANDLE] = urb_handle;
       srcs[URB_LOGICAL_SRC_PER_SLOT_OFFSETS] = off;
-      srcs[URB_LOGICAL_SRC_CHANNEL_MASK] = brw_imm_ud(mask << 16);
+      srcs[URB_LOGICAL_SRC_CHANNEL_MASK] = brw_imm_ud(mask);
       srcs[URB_LOGICAL_SRC_DATA] =
          retype(brw_allocate_vgrf_units(*bld.shader, length), BRW_TYPE_F);
       srcs[URB_LOGICAL_SRC_COMPONENTS] = brw_imm_ud(length);
@@ -5468,7 +5480,7 @@ emit_urb_indirect_writes_xe2(const brw_builder &bld, nir_intrinsic_instr *instr,
 
       brw_reg srcs[URB_LOGICAL_NUM_SRCS];
       srcs[URB_LOGICAL_SRC_HANDLE] = addr;
-      srcs[URB_LOGICAL_SRC_CHANNEL_MASK] = brw_imm_ud(mask << 16);
+      srcs[URB_LOGICAL_SRC_CHANNEL_MASK] = brw_imm_ud(mask);
       srcs[URB_LOGICAL_SRC_DATA] =
          retype(brw_allocate_vgrf_units(*bld.shader, comps * runit), BRW_TYPE_F);
       srcs[URB_LOGICAL_SRC_COMPONENTS] = brw_imm_ud(comps);
@@ -5515,8 +5527,7 @@ emit_urb_indirect_writes(const brw_builder &bld, nir_intrinsic_instr *instr,
             bld8.ADD(quarter(retype(offset_src, BRW_TYPE_UD), q),
                      brw_imm_ud(c + base_in_dwords));
          brw_reg m = bld8.AND(off, brw_imm_ud(0x3));
-         brw_reg t = bld8.SHL(bld8.MOV(brw_imm_ud(1)), m);
-         brw_reg mask = bld8.SHL(t, brw_imm_ud(16));
+         brw_reg mask = bld8.SHL(bld8.MOV(brw_imm_ud(1)), m);
          brw_reg final_offset = bld8.SHR(off, brw_imm_ud(2));
 
          brw_reg payload_srcs[4];
@@ -5820,7 +5831,7 @@ brw_from_nir_emit_task_mesh_intrinsic(nir_to_brw_state &ntb, const brw_builder &
       break;
 
    case nir_intrinsic_load_local_invocation_id:
-      unreachable("local invocation id should have been lowered earlier");
+      UNREACHABLE("local invocation id should have been lowered earlier");
       break;
 
    case nir_intrinsic_load_local_invocation_index:
@@ -6101,14 +6112,14 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
          break;
 
       default:
-         unreachable("invalid intrinsic");
+         UNREACHABLE("invalid intrinsic");
       }
 
       if (opcode == BRW_OPCODE_NOP)
          break;
 
       if (s.nir->info.shared_size > 0) {
-         assert(gl_shader_stage_uses_workgroup(s.stage));
+         assert(mesa_shader_stage_uses_workgroup(s.stage));
       } else {
          slm_fence = false;
       }
@@ -6592,7 +6603,7 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
    case nir_intrinsic_load_subgroup_gt_mask:
    case nir_intrinsic_load_subgroup_le_mask:
    case nir_intrinsic_load_subgroup_lt_mask:
-      unreachable("not reached");
+      UNREACHABLE("not reached");
 
    case nir_intrinsic_ddx_fine:
       bld.emit(FS_OPCODE_DDX_FINE, retype(dest, BRW_TYPE_F),
@@ -6749,7 +6760,7 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
       case nir_intrinsic_quad_swap_horizontal: dir = BRW_SWAP_HORIZONTAL; break;
       case nir_intrinsic_quad_swap_vertical:   dir = BRW_SWAP_VERTICAL;   break;
       case nir_intrinsic_quad_swap_diagonal:   dir = BRW_SWAP_DIAGONAL;   break;
-      default: unreachable("invalid quad swap");
+      default: UNREACHABLE("invalid quad swap");
       }
 
       bld.emit(SHADER_OPCODE_QUAD_SWAP, retype(dest, value.type),
@@ -6944,7 +6955,7 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
          break;
       }
       default:
-         unreachable("Invalid topology id type");
+         UNREACHABLE("Invalid topology id type");
       }
       break;
    }
@@ -7039,7 +7050,7 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
       assert(instr->intrinsic < nir_num_intrinsics);
       fprintf(stderr, "intrinsic: %s\n", nir_intrinsic_infos[instr->intrinsic].name);
 #endif
-      unreachable("unknown intrinsic");
+      UNREACHABLE("unknown intrinsic");
    }
 }
 
@@ -7052,7 +7063,7 @@ lsc_bits_to_data_size(unsigned bit_size)
    case 4:  return LSC_DATA_SIZE_D32;
    case 8:  return LSC_DATA_SIZE_D64;
    default:
-      unreachable("Unsupported data size.");
+      UNREACHABLE("Unsupported data size.");
    }
 }
 
@@ -7088,8 +7099,16 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
    const bool is_load = !is_store && !is_atomic;
    const bool include_helpers = nir_intrinsic_has_access(instr) &&
       (nir_intrinsic_access(instr) & ACCESS_INCLUDE_HELPERS);
+   const bool volatile_access = nir_intrinsic_has_access(instr) &&
+      (nir_intrinsic_access(instr) & ACCESS_VOLATILE);
+   const bool coherent_access = nir_intrinsic_has_access(instr) &&
+      (nir_intrinsic_access(instr) & ACCESS_COHERENT);
    const unsigned align =
       nir_intrinsic_has_align(instr) ? nir_intrinsic_align(instr) : 0;
+   const unsigned logical_flags =
+      (include_helpers ? MEMORY_FLAG_INCLUDE_HELPERS : 0) |
+      (volatile_access ? MEMORY_FLAG_VOLATILE_ACCESS : 0) |
+      (coherent_access ? MEMORY_FLAG_COHERENT_ACCESS : 0);
    bool no_mask_handle = false;
    int data_src = -1;
 
@@ -7098,8 +7117,7 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
    srcs[MEMORY_LOGICAL_COORD_COMPONENTS] = brw_imm_ud(1);
    srcs[MEMORY_LOGICAL_ALIGNMENT] = brw_imm_ud(align);
    /* DATA_SIZE and CHANNELS are handled below the switch */
-   srcs[MEMORY_LOGICAL_FLAGS] =
-      brw_imm_ud(include_helpers ? MEMORY_FLAG_INCLUDE_HELPERS : 0);
+   srcs[MEMORY_LOGICAL_FLAGS] = brw_imm_ud(logical_flags);
    /* DATA0 and DATA1 are handled below */
 
    /* Set the default address offset to 0 */
@@ -7165,7 +7183,7 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
                     LSC_ADDR_SURFTYPE_BSS : LSC_ADDR_SURFTYPE_BTI);
       srcs[MEMORY_LOGICAL_BINDING] =
          get_nir_buffer_intrinsic_index(ntb, bld, instr, &no_mask_handle);
-      set_memory_address(ntb, bld, instr, is_store, srcs);
+      set_memory_address(ntb, bld, instr, srcs);
       data_src = is_atomic ? 2 : 0;
       break;
    case nir_intrinsic_load_shared:
@@ -7177,7 +7195,7 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
    case nir_intrinsic_load_shared_uniform_block_intel: {
       srcs[MEMORY_LOGICAL_MODE] = brw_imm_ud(MEMORY_MODE_SHARED_LOCAL);
       srcs[MEMORY_LOGICAL_BINDING_TYPE] = brw_imm_ud(LSC_ADDR_SURFTYPE_FLAT);
-      set_memory_address(ntb, bld, instr, is_store, srcs);
+      set_memory_address(ntb, bld, instr, srcs);
       data_src = is_atomic ? 1 : 0;
       no_mask_handle = true;
       break;
@@ -7236,13 +7254,13 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
    case nir_intrinsic_store_global_block_intel:
       srcs[MEMORY_LOGICAL_MODE] = brw_imm_ud(MEMORY_MODE_UNTYPED);
       srcs[MEMORY_LOGICAL_BINDING_TYPE] = brw_imm_ud(LSC_ADDR_SURFTYPE_FLAT);
-      set_memory_address(ntb, bld, instr, is_store, srcs);
+      set_memory_address(ntb, bld, instr, srcs);
       data_src = is_atomic ? 1 : 0;
       no_mask_handle = srcs[MEMORY_LOGICAL_ADDRESS].is_scalar;
       break;
 
    default:
-      unreachable("unknown memory intrinsic");
+      UNREACHABLE("unknown memory intrinsic");
    }
 
    unsigned components = is_store ? instr->src[data_src].ssa->num_components
@@ -7512,7 +7530,7 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
          break;
 
       case nir_tex_src_projector:
-         unreachable("should be lowered");
+         UNREACHABLE("should be lowered");
 
       case nir_tex_src_texture_offset: {
          assert(srcs[TEX_LOGICAL_SRC_SURFACE].file == BAD_FILE);
@@ -7582,7 +7600,7 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
          break;
 
       default:
-         unreachable("unknown texture source");
+         UNREACHABLE("unknown texture source");
       }
    }
 
@@ -7698,7 +7716,7 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
       return;
    }
    default:
-      unreachable("unknown texture opcode");
+      UNREACHABLE("unknown texture opcode");
    }
 
    if (instr->op == nir_texop_tg4) {
@@ -7832,7 +7850,7 @@ brw_from_nir_emit_jump(nir_to_brw_state &ntb, nir_jump_instr *instr)
       break;
    case nir_jump_return:
    default:
-      unreachable("unknown jump");
+      UNREACHABLE("unknown jump");
    }
 }
 
@@ -7852,7 +7870,7 @@ brw_from_nir_emit_instr(nir_to_brw_state &ntb, nir_instr *instr)
       break;
 
    case nir_instr_type_deref:
-      unreachable("All derefs should've been lowered");
+      UNREACHABLE("All derefs should've been lowered");
       break;
 
    case nir_instr_type_intrinsic:
@@ -7891,7 +7909,7 @@ brw_from_nir_emit_instr(nir_to_brw_state &ntb, nir_instr *instr)
          brw_from_nir_emit_mesh_intrinsic(ntb, nir_instr_as_intrinsic(instr));
          break;
       default:
-         unreachable("unsupported shader stage");
+         UNREACHABLE("unsupported shader stage");
       }
       break;
 
@@ -7915,7 +7933,7 @@ brw_from_nir_emit_instr(nir_to_brw_state &ntb, nir_instr *instr)
       break;
 
    default:
-      unreachable("unknown instruction type");
+      UNREACHABLE("unknown instruction type");
    }
 }
 
@@ -7996,7 +8014,7 @@ static UNUSED void
 brw_test_dispatch_packing(const brw_builder &bld)
 {
    const brw_shader *shader = bld.shader;
-   const gl_shader_stage stage = shader->stage;
+   const mesa_shader_stage stage = shader->stage;
    const bool uses_vmask =
       stage == MESA_SHADER_FRAGMENT &&
       brw_wm_prog_data(shader->prog_data)->uses_vmask;

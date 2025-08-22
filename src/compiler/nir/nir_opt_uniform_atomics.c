@@ -133,7 +133,7 @@ match_invocation_comparison(nir_scalar scalar)
       if (!nir_scalar_chase_alu_src(scalar, 1).def->divergent)
          return get_dim(nir_scalar_chase_alu_src(scalar, 0));
    } else if (scalar.def->parent_instr->type == nir_instr_type_intrinsic) {
-      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(scalar.def->parent_instr);
+      nir_intrinsic_instr *intrin = nir_def_as_intrinsic(scalar.def);
       if (intrin->intrinsic == nir_intrinsic_elect) {
          return 0x8;
       } else if (intrin->intrinsic == nir_intrinsic_inverse_ballot) {
@@ -173,7 +173,7 @@ is_atomic_already_optimized(nir_shader *shader, nir_intrinsic_instr *instr)
       }
    }
 
-   if (gl_shader_stage_uses_workgroup(shader->info.stage)) {
+   if (mesa_shader_stage_uses_workgroup(shader->info.stage)) {
       unsigned dims_needed = 0;
       for (unsigned i = 0; i < 3; i++)
          dims_needed |= (shader->info.workgroup_size_variable ||
@@ -324,7 +324,7 @@ nir_opt_uniform_atomics(nir_shader *shader, bool fs_atomics_predicated)
    /* A 1x1x1 workgroup only ever has one active lane, so there's no point in
     * optimizing any atomics.
     */
-   if (gl_shader_stage_uses_workgroup(shader->info.stage) &&
+   if (mesa_shader_stage_uses_workgroup(shader->info.stage) &&
        !shader->info.workgroup_size_variable &&
        shader->info.workgroup_size[0] == 1 && shader->info.workgroup_size[1] == 1 &&
        shader->info.workgroup_size[2] == 1)

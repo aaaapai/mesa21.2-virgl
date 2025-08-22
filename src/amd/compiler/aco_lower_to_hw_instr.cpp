@@ -952,7 +952,7 @@ emit_reduction(lower_context* ctx, aco_opcode op, ReduceOp reduce_op, unsigned c
                      false, identity);
       }
       break;
-   default: unreachable("Invalid reduction mode");
+   default: UNREACHABLE("Invalid reduction mode");
    }
 
    if (op == aco_opcode::p_reduce) {
@@ -1119,6 +1119,35 @@ emit_bpermute_shared_vgpr(Builder& bld, aco_ptr<Instruction>& instr)
    bld.sop1(aco_opcode::s_mov_b64, Definition(exec, s2), Operand(tmp_exec.physReg(), s2));
 
    adjust_bpermute_dst(bld, dst, input_data);
+}
+
+void
+emit_permlane64_shared_vgpr(Builder& bld, aco_ptr<Instruction>& instr)
+{
+   /* Manually swap the data between the two halves using two shared VGPRs. */
+   Operand input_data = instr->operands[0];
+   Definition dst = instr->definitions[0];
+   assert(input_data.size() == 1 && input_data.physReg().byte() == 0);
+   assert(dst.size() == 1 && dst.physReg().byte() == 0);
+
+   assert(bld.program->gfx_level >= GFX10 && bld.program->gfx_level <= GFX10_3);
+   assert(bld.program->wave_size == 64);
+
+   unsigned shared_vgpr_reg_0 = align(bld.program->config->num_vgprs, 4) + 256;
+   PhysReg shared_vgpr_lo(shared_vgpr_reg_0);
+   PhysReg shared_vgpr_hi(shared_vgpr_reg_0 + 1);
+
+   /* Copy low and high parts to separate shared vgprs. */
+   bld.vop1_dpp(aco_opcode::v_mov_b32, Definition(shared_vgpr_lo, v1), input_data,
+                dpp_quad_perm(0, 1, 2, 3), 0x3, 0xf, false);
+   bld.vop1_dpp(aco_opcode::v_mov_b32, Definition(shared_vgpr_hi, v1), input_data,
+                dpp_quad_perm(0, 1, 2, 3), 0xc, 0xf, false);
+
+   /* Copy data back to the opposite half. */
+   bld.vop1_dpp(aco_opcode::v_mov_b32, dst, Operand(shared_vgpr_lo, v1), dpp_quad_perm(0, 1, 2, 3),
+                0xc, 0xf, false);
+   bld.vop1_dpp(aco_opcode::v_mov_b32, dst, Operand(shared_vgpr_hi, v1), dpp_quad_perm(0, 1, 2, 3),
+                0x3, 0xf, false);
 }
 
 void
@@ -1389,7 +1418,7 @@ do_copy(lower_context* ctx, Builder& bld, const copy_operation& copy, bool* pres
       } else if (def.regClass().is_subdword()) {
          bld.vop1_sdwa(aco_opcode::v_mov_b32, def, op);
       } else {
-         unreachable("unsupported copy");
+         UNREACHABLE("unsupported copy");
       }
 
       did_copy = true;
@@ -2124,53 +2153,22 @@ handle_operands_linear_vgpr(std::map<PhysReg, copy_operation>& copy_map, lower_c
 }
 
 void
-emit_set_mode(Builder& bld, float_mode new_mode, bool set_round, bool set_denorm)
-{
-   if (bld.program->gfx_level >= GFX10) {
-      if (set_round)
-         bld.sopp(aco_opcode::s_round_mode, new_mode.round);
-      if (set_denorm)
-         bld.sopp(aco_opcode::s_denorm_mode, new_mode.denorm);
-   } else if (set_round || set_denorm) {
-      /* "((size - 1) << 11) | register" (MODE is encoded as register 1) */
-      bld.sopk(aco_opcode::s_setreg_imm32_b32, Operand::literal32(new_mode.val), (7 << 11) | 1);
-   }
-}
-
-void
-emit_set_mode_from_block(Builder& bld, Program& program, Block* block)
-{
-   float_mode initial;
-   initial.val = program.config->float_mode;
-
-   bool inital_unknown =
-      (program.info.merged_shader_compiled_separately && program.stage.sw == SWStage::GS) ||
-      (program.info.merged_shader_compiled_separately && program.stage.sw == SWStage::TCS);
-   bool is_start = block->index == 0;
-   bool set_round = is_start && (inital_unknown || block->fp_mode.round != initial.round);
-   bool set_denorm = is_start && (inital_unknown || block->fp_mode.denorm != initial.denorm);
-   if (block->kind & block_kind_top_level) {
-      for (unsigned pred : block->linear_preds) {
-         if (program.blocks[pred].fp_mode.round != block->fp_mode.round)
-            set_round = true;
-         if (program.blocks[pred].fp_mode.denorm != block->fp_mode.denorm)
-            set_denorm = true;
-      }
-   }
-   /* only allow changing modes at top-level blocks so this doesn't break
-    * the "jump over empty blocks" optimization */
-   assert((!set_round && !set_denorm) || (block->kind & block_kind_top_level));
-   emit_set_mode(bld, block->fp_mode, set_round, set_denorm);
-}
-
-void
 lower_image_sample(lower_context* ctx, aco_ptr<Instruction>& instr)
 {
    Operand linear_vgpr = instr->operands[3];
 
+   bool disable_wqm = instr->mimg().disable_wqm;
+   Operand exact_mask;
+   Operand wqm_mask;
+   if (disable_wqm) {
+      exact_mask = instr_exact_mask(instr.get());
+      wqm_mask = instr_wqm_mask(instr.get());
+   }
+
    unsigned nsa_size = ctx->program->dev.max_nsa_vgprs;
    unsigned vaddr_size = linear_vgpr.size();
-   unsigned num_copied_vgprs = instr->operands.size() - 4;
+   unsigned non_mask_operands = instr->operands.size() - (2 * disable_wqm);
+   unsigned num_copied_vgprs = non_mask_operands - 4;
    nsa_size = num_copied_vgprs > 0 && (ctx->program->gfx_level >= GFX11 || vaddr_size <= nsa_size)
                  ? nsa_size
                  : 0;
@@ -2191,7 +2189,7 @@ lower_image_sample(lower_context* ctx, aco_ptr<Instruction>& instr)
    } else {
       PhysReg reg = linear_vgpr.physReg();
       std::map<PhysReg, copy_operation> copy_operations;
-      for (unsigned i = 4; i < instr->operands.size(); i++) {
+      for (unsigned i = 4; i < non_mask_operands; i++) {
          Operand arg = instr->operands[i];
          Definition def(reg, RegClass::get(RegType::vgpr, arg.bytes()));
          copy_operations[def.physReg()] = {arg, def, def.bytes()};
@@ -2204,10 +2202,11 @@ lower_image_sample(lower_context* ctx, aco_ptr<Instruction>& instr)
    }
 
    instr->mimg().strict_wqm = false;
+   unsigned new_op_count = 3 + num_vaddr + (2 * disable_wqm);
 
-   if ((3 + num_vaddr) > instr->operands.size()) {
+   if (new_op_count > instr->operands.size()) {
       Instruction* new_instr =
-         create_instruction(instr->opcode, Format::MIMG, 3 + num_vaddr, instr->definitions.size());
+         create_instruction(instr->opcode, Format::MIMG, new_op_count, instr->definitions.size());
       std::copy(instr->definitions.cbegin(), instr->definitions.cend(),
                 new_instr->definitions.begin());
       new_instr->operands[0] = instr->operands[0];
@@ -2217,10 +2216,15 @@ lower_image_sample(lower_context* ctx, aco_ptr<Instruction>& instr)
              sizeof(MIMG_instruction) - sizeof(Instruction));
       instr.reset(new_instr);
    } else {
-      while (instr->operands.size() > (3 + num_vaddr))
+      while (instr->operands.size() > new_op_count)
          instr->operands.pop_back();
    }
    std::copy(vaddr, vaddr + num_vaddr, std::next(instr->operands.begin(), 3));
+
+   if (disable_wqm) {
+      instr_exact_mask(instr.get()) = exact_mask;
+      instr_wqm_mask(instr.get()) = wqm_mask;
+   }
 }
 
 } /* end namespace */
@@ -2278,8 +2282,6 @@ lower_to_hw_instr(Program* program)
       ctx.block = block;
       ctx.instructions.reserve(block->instructions.size());
       Builder bld(program, &ctx.instructions);
-
-      emit_set_mode_from_block(bld, *program, block);
 
       for (size_t instr_idx = 0; instr_idx < block->instructions.size(); instr_idx++) {
          aco_ptr<Instruction>& instr = block->instructions[instr_idx];
@@ -2536,6 +2538,10 @@ lower_to_hw_instr(Program* program)
                emit_bpermute_permlane(bld, instr);
                break;
             }
+            case aco_opcode::p_permlane64_shared_vgpr: {
+               emit_permlane64_shared_vgpr(bld, instr);
+               break;
+            };
             case aco_opcode::p_constaddr: {
                unsigned id = instr->definitions[0].tempId();
                PhysReg reg = instr->definitions[0].physReg();
@@ -2814,10 +2820,16 @@ lower_to_hw_instr(Program* program)
                assert(clobber_vcc.regClass() == bld.lm && clobber_vcc.physReg() == vcc);
                assert(clobber_scc.isFixed() && clobber_scc.physReg() == scc);
 
-               bld.sop1(Builder::s_mov, Definition(exec_tmp.physReg(), bld.lm),
-                        Operand(exec, bld.lm));
-               bld.sop1(Builder::s_wqm, Definition(exec, bld.lm), clobber_scc,
-                        Operand(exec, bld.lm));
+               bool disable_wqm = instr_disables_wqm(instr.get());
+               assert(instr->operands.size() == (disable_wqm ? 10 : 8));
+
+               /* If WQM was already ended, manually re-enable it. */
+               if (!disable_wqm) {
+                  bld.sop1(Builder::s_mov, Definition(exec_tmp.physReg(), bld.lm),
+                           Operand(exec, bld.lm));
+                  bld.sop1(Builder::s_wqm, Definition(exec, bld.lm), clobber_scc,
+                           Operand(exec, bld.lm));
+               }
 
                uint8_t enabled_channels = 0;
                Operand mrt0[4], mrt1[4];
@@ -2858,17 +2870,31 @@ lower_to_hw_instr(Program* program)
                   dst1 = dst1.advance(4);
                }
 
-               bld.sop1(Builder::s_mov, Definition(exec, bld.lm),
-                        Operand(exec_tmp.physReg(), bld.lm));
+               if (!disable_wqm) {
+                  bld.sop1(Builder::s_mov, Definition(exec, bld.lm),
+                           Operand(exec_tmp.physReg(), bld.lm));
+               }
 
                /* Force export all channels when everything is undefined. */
                if (!enabled_channels)
                   enabled_channels = 0xf;
 
-               bld.exp(aco_opcode::exp, mrt0[0], mrt0[1], mrt0[2], mrt0[3], enabled_channels,
-                       V_008DFC_SQ_EXP_MRT + 21, false);
-               bld.exp(aco_opcode::exp, mrt1[0], mrt1[1], mrt1[2], mrt1[3], enabled_channels,
-                       V_008DFC_SQ_EXP_MRT + 22, false);
+               Instruction* exp[2];
+
+               exp[0] =
+                  bld.exp(aco_opcode::exp, mrt0[0], mrt0[1], mrt0[2], mrt0[3], enabled_channels,
+                          V_008DFC_SQ_EXP_MRT + 21, false, false, false, disable_wqm);
+               exp[1] =
+                  bld.exp(aco_opcode::exp, mrt1[0], mrt1[1], mrt1[2], mrt1[3], enabled_channels,
+                          V_008DFC_SQ_EXP_MRT + 22, false, false, false, disable_wqm);
+
+               if (disable_wqm) {
+                  for (unsigned i = 0; i < 2; i++) {
+                     instr_exact_mask(exp[i]) = instr_exact_mask(instr.get());
+                     instr_wqm_mask(exp[i]) = instr_wqm_mask(instr.get());
+                  }
+               }
+
                break;
             }
             case aco_opcode::p_end_with_regs: {
@@ -2927,35 +2953,6 @@ lower_to_hw_instr(Program* program)
             } else if (emit_s_barrier) {
                bld.sopp(aco_opcode::s_barrier);
             }
-         } else if (instr->opcode == aco_opcode::p_v_cvt_f16_f32_rtne ||
-                    instr->opcode == aco_opcode::p_s_cvt_f16_f32_rtne) {
-            float_mode new_mode = block->fp_mode;
-            new_mode.round16_64 = fp_round_ne;
-            bool set_round = new_mode.round != block->fp_mode.round;
-
-            emit_set_mode(bld, new_mode, set_round, false);
-
-            if (instr->opcode == aco_opcode::p_v_cvt_f16_f32_rtne)
-               instr->opcode = aco_opcode::v_cvt_f16_f32;
-            else
-               instr->opcode = aco_opcode::s_cvt_f16_f32;
-            ctx.instructions.emplace_back(std::move(instr));
-
-            emit_set_mode(bld, block->fp_mode, set_round, false);
-         } else if (instr->opcode == aco_opcode::p_v_cvt_pk_fp8_f32_ovfl) {
-            /* FP8/BF8 uses FP16_OVFL(1) to clamp to max finite result. Temporarily set it for the
-             * instruction.
-             * "((size - 1) << 11 | (offset << 6) | register" (MODE is encoded as register 1, we
-             * want to set a single bit at offset 23)
-             */
-            bld.sopk(aco_opcode::s_setreg_imm32_b32, Operand::literal32(1),
-                     (0 << 11) | (23 << 6) | 1);
-
-            instr->opcode = aco_opcode::v_cvt_pk_fp8_f32;
-            ctx.instructions.emplace_back(std::move(instr));
-
-            bld.sopk(aco_opcode::s_setreg_imm32_b32, Operand::literal32(0),
-                     (0 << 11) | (23 << 6) | 1);
          } else if (instr->isMIMG() && instr->mimg().strict_wqm) {
             lower_image_sample(&ctx, instr);
             ctx.instructions.emplace_back(std::move(instr));

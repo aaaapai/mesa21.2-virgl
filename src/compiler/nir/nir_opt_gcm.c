@@ -118,7 +118,7 @@ get_loop_instr_count(struct exec_list *cf_list)
          break;
       }
       default:
-         unreachable("Invalid CF node type");
+         UNREACHABLE("Invalid CF node type");
       }
    }
 
@@ -157,7 +157,7 @@ gcm_build_block_info(struct exec_list *cf_list, struct gcm_state *state,
          break;
       }
       default:
-         unreachable("Invalid CF node type");
+         UNREACHABLE("Invalid CF node type");
       }
    }
 }
@@ -378,7 +378,7 @@ gcm_pin_instructions(nir_function_impl *impl, struct gcm_state *state)
             break;
 
          default:
-            unreachable("Invalid instruction type in GCM");
+            UNREACHABLE("Invalid instruction type in GCM");
          }
 
          if (!(instr->pass_flags & GCM_INSTR_PLACED)) {
@@ -668,9 +668,9 @@ gcm_schedule_late_def(nir_def *def, void *void_state)
    }
 
    if (def->parent_instr->pass_flags & GCM_INSTR_SCHEDULE_EARLIER_ONLY &&
-       lca != def->parent_instr->block &&
-       nir_block_dominates(def->parent_instr->block, lca)) {
-      lca = def->parent_instr->block;
+       lca != nir_def_block(def) &&
+       nir_block_dominates(nir_def_block(def), lca)) {
+      lca = nir_def_block(def);
    }
 
    /* We now have the LCA of all of the uses.  If our invariants hold,
@@ -681,7 +681,7 @@ gcm_schedule_late_def(nir_def *def, void *void_state)
    nir_block *best_block =
       gcm_choose_block_for_instr(def->parent_instr, early_block, lca, state);
 
-   if (def->parent_instr->block != best_block)
+   if (nir_def_block(def) != best_block)
       state->progress = true;
 
    def->parent_instr->block = best_block;
@@ -831,18 +831,20 @@ opt_gcm_impl(nir_shader *shader, nir_function_impl *impl, bool value_number)
     * on both sides of the same if/else block, we allow them to be moved.
     * This cleans up a lot of mess without being -too- aggressive.
     */
-   struct set *gvn_set = nir_instr_set_create(NULL);
+   struct set gvn_set;
+   nir_instr_set_init(&gvn_set, NULL);
+
    foreach_list_typed_safe(nir_instr, instr, node, &state.instrs) {
       if (instr->pass_flags & GCM_INSTR_PINNED)
          continue;
 
-      if (nir_instr_set_add_or_rewrite(gvn_set, instr,
+      if (nir_instr_set_add_or_rewrite(&gvn_set, instr,
                                        value_number ? NULL : weak_gvn)) {
          state.progress = true;
          nir_instr_remove(instr);
       }
    }
-   nir_instr_set_destroy(gvn_set);
+   nir_instr_set_fini(&gvn_set);
 
    foreach_list_typed(nir_instr, instr, node, &state.instrs)
       gcm_schedule_early_instr(instr, &state);

@@ -88,6 +88,7 @@ struct vk_video_session {
    VkFormat ref_format;
    uint32_t max_dpb_slots;
    uint32_t max_active_ref_pics;
+   VkVideoEncodeIntraRefreshModeFlagBitsKHR intra_refresh_mode;
 
    struct {
       VkVideoEncodeUsageFlagsKHR video_usage_hints;
@@ -110,6 +111,9 @@ struct vk_video_session {
       } vp9;
    };
 };
+
+VK_DEFINE_NONDISP_HANDLE_CASTS(vk_video_session, base, VkVideoSessionKHR,
+                               VK_OBJECT_TYPE_VIDEO_SESSION_KHR);
 
 struct vk_video_session_parameters {
    struct vk_object_base base;
@@ -177,21 +181,27 @@ struct vk_video_session_parameters {
    };
 };
 
+VK_DEFINE_NONDISP_HANDLE_CASTS(vk_video_session_parameters, base,
+                               VkVideoSessionParametersKHR,
+                               VK_OBJECT_TYPE_VIDEO_SESSION_PARAMETERS_KHR);
+
 VkResult vk_video_session_init(struct vk_device *device,
                                struct vk_video_session *vid,
                                const VkVideoSessionCreateInfoKHR *create_info);
 
-VkResult vk_video_session_parameters_init(struct vk_device *device,
-                                          struct vk_video_session_parameters *params,
-                                          const struct vk_video_session *vid,
-                                          const struct vk_video_session_parameters *templ,
-                                          const VkVideoSessionParametersCreateInfoKHR *create_info);
+void vk_video_session_finish(struct vk_video_session *vid);
+
+void *vk_video_session_parameters_create(struct vk_device *device,
+                                         const VkVideoSessionParametersCreateInfoKHR *create_info,
+                                         const VkAllocationCallbacks *alloc,
+                                         size_t size);
 
 VkResult vk_video_session_parameters_update(struct vk_video_session_parameters *params,
                                             const VkVideoSessionParametersUpdateInfoKHR *update);
 
-void vk_video_session_parameters_finish(struct vk_device *device,
-                                        struct vk_video_session_parameters *params);
+void vk_video_session_parameters_destroy(struct vk_device *device,
+                                         const VkAllocationCallbacks *alloc,
+                                         struct vk_video_session_parameters *params);
 
 void vk_video_derive_h264_scaling_list(const StdVideoH264SequenceParameterSet *sps,
                                        const StdVideoH264PictureParameterSet *pps,

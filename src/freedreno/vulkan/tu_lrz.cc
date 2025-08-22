@@ -210,6 +210,14 @@ tu_lrz_init_state(struct tu_cmd_buffer *cmd,
    if (!has_gpu_tracking && !clears_depth)
       return;
 
+   /* Reusing previous state doesn't work with FDM offset because the LRZ
+    * image is offsetted.
+    */
+   if ((view->image->vk.create_flags &
+        VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_EXT) &&
+       !clears_depth)
+      return;
+
    /* We need to always have an LRZ view just to disable it if there is a
     * depth attachment, there are any secondaries, and GPU tracking is
     * enabled, in order not to rely on loadOp state which doesn't exist with
@@ -761,7 +769,8 @@ tu6_calculate_lrz_state(struct tu_cmd_buffer *cmd,
    gras_lrz_cntl.enable = true;
    gras_lrz_cntl.lrz_write =
       z_write_enable &&
-      !(fs->fs.lrz.status & TU_LRZ_FORCE_DISABLE_WRITE);
+      !(fs->fs.lrz.status & TU_LRZ_FORCE_DISABLE_WRITE) &&
+      !cmd->vk.dynamic_graphics_state.ms.alpha_to_coverage_enable;
    gras_lrz_cntl.z_write_enable = z_write_enable;
    gras_lrz_cntl.z_bounds_enable = z_bounds_enable;
    gras_lrz_cntl.fc_enable = cmd->state.lrz.fast_clear;
@@ -874,7 +883,7 @@ tu6_calculate_lrz_state(struct tu_cmd_buffer *cmd,
       gras_lrz_cntl.dir = LRZ_DIR_LE;
       break;
    default:
-      unreachable("bad VK_COMPARE_OP value or uninitialized");
+      UNREACHABLE("bad VK_COMPARE_OP value or uninitialized");
       break;
    };
 
@@ -962,6 +971,23 @@ tu6_calculate_lrz_state(struct tu_cmd_buffer *cmd,
          tu_lrz_write_disable_reason(cmd, "Depth write + blending");
          cmd->state.lrz.disable_write_for_rp = true;
       }
+   }
+
+   /* If the stencil test behavior depends on the result of the depth test, we
+    * have to skip LRZ for the rest of the RP for basically the same reason as
+    * the blending case above (LRZ testing enabled on previous draws may result
+    * in skipping their Z changes which feed into this draw, so we can't let
+    * later Z writes affect any of them).
+    *
+    * Because the LRZ test runs first, failing the LRZ test may result in
+    * skipping the stencil test and subsequent stencil write. This is ok if
+    * stencil is only written when the depth test passes, because then the LRZ
+    * test will also pass, but if it may be written when the depth or stencil
+    * test fails then we need to disable the LRZ test for the draw as well.
+    */
+   if (cmd->state.stencil_written_based_on_depth_test) {
+      tu_lrz_write_disable_reason(cmd, "stencil write based on depth test");
+      cmd->state.lrz.disable_write_for_rp = true;
    }
 
    if (disable_lrz)

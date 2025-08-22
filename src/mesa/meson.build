@@ -1,6 +1,7 @@
 # Copyright © 2017 Intel Corporation
 # SPDX-License-Identifier: MIT
 
+subdir('glapi')
 subdir('program')
 
 if _shader_replacement != ''
@@ -9,7 +10,8 @@ if _shader_replacement != ''
     input: [files(_shader_replacement + '/process_shaders.py')],
     output: 'shader_replacement.h',
     command: [prog_python, '@INPUT0@', _shader_replacement, '@OUTPUT@'],
-    build_always: true,
+    build_by_default : true,
+    build_always_stale : true,
   )
 endif
 
@@ -133,6 +135,7 @@ files_libmesa = files(
   'main/matrix.h',
   'main/menums.h',
   'main/mesa_private.h',
+  'main/mesh_shader.c',
   'main/mipmap.c',
   'main/mipmap.h',
   'main/mtypes.h',
@@ -384,11 +387,6 @@ files_libmesa = files(
 )
 
 inc_libmesa_asm = []
-if with_asm_arch == 'x86'
-  files_libmesa += files(
-    'x86/assyntax.h',
-  )
-endif
 
 format_fallback_c = custom_target(
   'format_fallback.c',
@@ -400,7 +398,7 @@ format_fallback_c = custom_target(
 
 get_hash_h = custom_target(
   'get_hash.h',
-  input : ['main/get_hash_generator.py', '../mapi/glapi/gen/gl_and_es_API.xml'],
+  input : ['main/get_hash_generator.py', 'glapi/glapi/gen/gl_and_es_API.xml'],
   output : 'get_hash.h',
   command : [prog_python, '@INPUT0@', '-f', '@INPUT1@'],
   depend_files : files('main/get_hash_params.py') + glapi_xml_py_deps,
@@ -442,7 +440,7 @@ if with_sse41
     'mesa_sse41',
     files('main/sse_minmax.c'),
     c_args : [c_msvc_compat_args, sse41_args],
-    include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
+    include_directories : [inc_include, inc_src, inc_mesa, inc_gallium, inc_gallium_aux],
     gnu_symbol_visibility : 'hidden',
   )
 else
@@ -463,7 +461,7 @@ libmesa = static_library(
   cpp_args : [cpp_msvc_compat_args, _mesa_windows_args],
   gnu_symbol_visibility : 'hidden',
   include_directories : [
-    inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux,
+    inc_include, inc_src, inc_mesa, inc_gallium, inc_gallium_aux,
     inc_libmesa_asm, include_directories('main'),
   ],
   link_with : [libmesa_sse41],

@@ -151,7 +151,7 @@ etna_screen_get_device_vendor(struct pipe_screen *pscreen)
 }
 
 static void
-etna_init_single_shader_caps(struct etna_screen *screen, enum pipe_shader_type shader)
+etna_init_single_shader_caps(struct etna_screen *screen, mesa_shader_stage shader)
 {
    struct pipe_shader_caps *caps =
       (struct pipe_shader_caps *)&screen->base.shader_caps[shader];
@@ -171,7 +171,7 @@ etna_init_single_shader_caps(struct etna_screen *screen, enum pipe_shader_type s
     * of vertex elements - each element defines one vertex shader
     * input register.  For the fragment shader, this is the number
     * of varyings. */
-   caps->max_inputs = shader == PIPE_SHADER_FRAGMENT ?
+   caps->max_inputs = shader == MESA_SHADER_FRAGMENT ?
       screen->specs.max_varyings : screen->specs.vertex_max_elements;
    caps->max_outputs = screen->specs.max_vs_outputs;
    caps->max_temps = 64; /* Max native temporaries. */
@@ -183,13 +183,13 @@ etna_init_single_shader_caps(struct etna_screen *screen, enum pipe_shader_type s
    caps->integers = screen->info->halti >= 2;
 
    caps->max_texture_samplers =
-   caps->max_sampler_views = shader == PIPE_SHADER_FRAGMENT
+   caps->max_sampler_views = shader == MESA_SHADER_FRAGMENT
       ? screen->specs.fragment_sampler_count
       : screen->specs.vertex_sampler_count;
 
    caps->max_const_buffer0_size =
       ubo_enable ? 16384 /* 16384 so state tracker enables UBOs */ :
-      (shader == PIPE_SHADER_FRAGMENT
+      (shader == MESA_SHADER_FRAGMENT
        ? screen->specs.max_ps_uniforms * sizeof(float[4])
        : screen->specs.max_vs_uniforms * sizeof(float[4]));
 
@@ -201,8 +201,8 @@ etna_init_single_shader_caps(struct etna_screen *screen, enum pipe_shader_type s
 static void
 etna_init_shader_caps(struct etna_screen *screen)
 {
-   etna_init_single_shader_caps(screen, PIPE_SHADER_VERTEX);
-   etna_init_single_shader_caps(screen, PIPE_SHADER_FRAGMENT);
+   etna_init_single_shader_caps(screen, MESA_SHADER_VERTEX);
+   etna_init_single_shader_caps(screen, MESA_SHADER_FRAGMENT);
 }
 
 static void
@@ -950,13 +950,6 @@ etna_screen_bo_from_handle(struct pipe_screen *pscreen,
    return bo;
 }
 
-static const void *
-etna_get_compiler_options(struct pipe_screen *pscreen,
-                          enum pipe_shader_ir ir, enum pipe_shader_type shader)
-{
-   return etna_compiler_get_options(etna_screen(pscreen)->compiler);
-}
-
 static struct disk_cache *
 etna_get_disk_shader_cache(struct pipe_screen *pscreen)
 {
@@ -1036,7 +1029,6 @@ etna_screen_create(struct etna_device *dev, struct etna_gpu *gpu,
 
    pscreen->destroy = etna_screen_destroy;
    pscreen->get_screen_fd = etna_screen_get_fd;
-   pscreen->get_compiler_options = etna_get_compiler_options;
    pscreen->get_disk_shader_cache = etna_get_disk_shader_cache;
 
    pscreen->get_name = etna_screen_get_name;

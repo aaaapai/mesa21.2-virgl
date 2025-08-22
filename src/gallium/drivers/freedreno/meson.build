@@ -223,7 +223,6 @@ freedreno_tracepoints = custom_target(
 files_libfreedreno += freedreno_tracepoints
 
 freedreno_includes = [
-  inc_mesa, inc_mapi,
   inc_src, inc_include, inc_gallium, inc_gallium_aux,
   inc_freedreno, include_directories('ir3'),
 ]
@@ -295,27 +294,6 @@ driver_freedreno = declare_dependency(
     idep_nir,
     idep_xmlconfig,
   ],
-)
-
-ir3_compiler = executable(
-  'ir3_compiler',
-  ['ir3/ir3_cmdline.c', freedreno_xml_header_files],
-  include_directories : freedreno_includes,
-  dependencies : [
-    idep_nir,
-    idep_vtn,
-    idep_mesautil,
-  ],
-  link_with : [
-    libfreedreno,
-    libfreedreno_drm,
-    libfreedreno_ir3,
-    libfreedreno_layout,
-    libgallium,
-    libglsl_standalone,
-  ],
-  build_by_default : with_tools.contains('freedreno'),
-  install : false,
 )
 
 gmemtool = executable(

@@ -27,7 +27,6 @@ use std::convert::TryInto;
 use std::ffi::CStr;
 use std::fmt::Debug;
 use std::fmt::Display;
-use std::ops::Deref;
 use std::ops::Index;
 use std::ops::Not;
 use std::os::raw::c_void;
@@ -454,7 +453,7 @@ impl NirKernelBuilds {
 
 pub struct NirKernelBuild {
     nir_or_cso: KernelDevStateVariant,
-    constant_buffer: Option<Arc<PipeResource>>,
+    constant_buffer: Option<PipeResource>,
     info: pipe_compute_state_object_info,
     shared_size: u64,
     printf_info: Option<NirPrintfInfo>,
@@ -492,7 +491,7 @@ impl NirKernelBuild {
         }
     }
 
-    fn create_nir_constant_buffer(dev: &Device, nir: &NirShader) -> Option<Arc<PipeResource>> {
+    fn create_nir_constant_buffer(dev: &Device, nir: &NirShader) -> Option<PipeResource> {
         let buf = nir.get_constant_buffer();
         let len = buf.len() as u32;
 
@@ -500,14 +499,14 @@ impl NirKernelBuild {
             // TODO bind as constant buffer
             let res = dev
                 .screen()
-                .resource_create_buffer(len, ResourceType::Normal, PIPE_BIND_GLOBAL, 0)
+                .resource_create_buffer(len, ResourceType::Immutable, PIPE_BIND_GLOBAL, 0)
                 .unwrap();
 
             dev.helper_ctx()
                 .exec(|ctx| ctx.buffer_subdata(&res, 0, buf.as_ptr().cast(), len))
                 .wait();
 
-            Some(Arc::new(res))
+            Some(res)
         } else {
             None
         }
@@ -554,7 +553,7 @@ impl CompilationResult {
         let nir = NirShader::deserialize(
             reader,
             d.screen()
-                .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE),
+                .nir_shader_compiler_options(mesa_shader_stage::MESA_SHADER_COMPUTE),
         )?;
         let compiled_args = CompiledKernelArg::deserialize(reader)?;
 
@@ -574,7 +573,7 @@ fn opt_nir(nir: &mut NirShader, dev: &Device, has_explicit_types: bool) {
     let nir_options = unsafe {
         &*dev
             .screen
-            .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE)
+            .nir_shader_compiler_options(mesa_shader_stage::MESA_SHADER_COMPUTE)
     };
 
     while {
@@ -591,7 +590,7 @@ fn opt_nir(nir: &mut NirShader, dev: &Device, has_explicit_types: bool) {
                 nir_options.lower_to_scalar_filter,
                 ptr::null(),
             );
-            nir_pass!(nir, nir_lower_phis_to_scalar, false);
+            nir_pass!(nir, nir_lower_phis_to_scalar, None, ptr::null());
         }
 
         progress |= nir_pass!(nir, nir_opt_deref);
@@ -814,7 +813,7 @@ fn compile_nir_variant(
     let nir_options = unsafe {
         &*dev
             .screen
-            .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE)
+            .nir_shader_compiler_options(mesa_shader_stage::MESA_SHADER_COMPUTE)
     };
 
     if variant == NirKernelVariant::Optimized {
@@ -1176,21 +1175,22 @@ impl SPIRVToNirResult {
 }
 
 pub(super) fn convert_spirv_to_nir(
-    build: &ProgramBuild,
+    build: &DeviceProgramBuild,
     name: &str,
     args: &[spirv::SPIRVKernelArg],
+    spec_constants: &HashMap<u32, nir_const_value>,
     dev: &'static Device,
 ) -> SPIRVToNirResult {
     let cache = dev.screen().shader_cache();
-    let key = build.hash_key(dev, name);
-    let spirv_info = build.spirv_info(name, dev).unwrap();
+    let key = build.hash_key(cache.as_ref(), name, spec_constants);
+    let spirv_info = build.kernel_info(name).unwrap();
 
     cache
         .as_ref()
         .and_then(|cache| cache.get(&mut key?))
         .and_then(|entry| SPIRVToNirResult::deserialize(&entry, dev, spirv_info))
         .unwrap_or_else(|| {
-            let nir = build.to_nir(name, dev);
+            let nir = build.to_nir(name, dev, spec_constants);
 
             if Platform::dbg().nir {
                 eprintln!("=== Printing nir for '{name}' after spirv_to_nir");
@@ -1239,7 +1239,7 @@ impl Kernel {
     pub fn new(name: String, prog: Arc<Program>, prog_build: &ProgramBuild) -> Arc<Kernel> {
         let kernel_info = Arc::clone(prog_build.kernel_info.get(&name).unwrap());
         let builds = prog_build
-            .builds
+            .builds_by_device
             .iter()
             .filter_map(|(&dev, b)| b.kernels.get(&name).map(|k| (dev, Arc::clone(k))))
             .collect();
@@ -1532,7 +1532,7 @@ impl Kernel {
                                     iviews.push(image.image_view(ctx, true)?);
                                     (&mut img_formats, &mut img_orders)
                                 } else {
-                                    sviews.push(image.sampler_view(ctx)?);
+                                    sviews.push(image.sampler_view(ctx.ctx)?);
                                     (&mut tex_formats, &mut tex_orders)
                                 };
 
@@ -1626,7 +1626,7 @@ impl Kernel {
 
             let mut bdas: Vec<_> = bdas
                 .iter()
-                .map(|buffer| Ok(buffer.get_res_for_access(ctx, RWFlags::RW)?.deref()))
+                .map(|buffer| buffer.get_res_for_access(ctx, RWFlags::RW))
                 .collect::<CLResult<_>>()?;
 
             let svms_new = svms
@@ -1642,11 +1642,6 @@ impl Kernel {
             // subtract the shader local_size as we only request something on top of that.
             variable_local_size -= static_local_size;
 
-            let samplers: Vec<_> = samplers
-                .iter()
-                .map(|s| ctx.create_sampler_state(s))
-                .collect();
-
             let mut resources = Vec::with_capacity(resource_info.len());
             let mut globals: Vec<*mut u32> = Vec::with_capacity(resource_info.len());
             for (res, offset) in resource_info {
@@ -1654,11 +1649,10 @@ impl Kernel {
                 globals.push(unsafe { input.as_mut_ptr().byte_add(offset) }.cast());
             }
 
-            let sviews_len = sviews.len();
             ctx.bind_kernel(&nir_kernel_builds, variant)?;
-            ctx.bind_sampler_states(&samplers);
-            ctx.set_sampler_views(sviews);
-            ctx.set_shader_images(&iviews);
+            ctx.bind_sampler_states(samplers);
+            ctx.bind_sampler_views(sviews);
+            ctx.bind_shader_images(&iviews);
             ctx.set_global_binding(resources.as_slice(), &mut globals);
 
             for z in 0..grid[2].div_ceil(hw_max_grid[2]) {
@@ -1702,12 +1696,8 @@ impl Kernel {
             }
 
             ctx.clear_global_binding(globals.len() as u32);
-            ctx.clear_sampler_views(sviews_len as u32);
-            ctx.clear_sampler_states(samplers.len() as u32);
 
             ctx.memory_barrier(PIPE_BARRIER_GLOBAL_BUFFER);
-
-            samplers.iter().for_each(|s| ctx.delete_sampler_state(*s));
 
             if let Some(printf_buf) = &printf_buf {
                 let tx = ctx
@@ -1853,7 +1843,7 @@ impl Kernel {
         self.prog.devs.iter().any(|dev| dev.api_svm_supported())
     }
 
-    pub fn subgroup_sizes(&self, dev: &Device) -> impl ExactSizeIterator<Item = usize> {
+    pub fn subgroup_sizes(&self, dev: &Device) -> impl ExactSizeIterator<Item = usize> + use<> {
         SetBitIndices::from_msb(self.builds.get(dev).unwrap().info.simd_sizes).map(|bit| 1 << bit)
     }
 

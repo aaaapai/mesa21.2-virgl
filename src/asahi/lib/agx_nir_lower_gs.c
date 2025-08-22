@@ -272,7 +272,7 @@ vertex_id_for_topology_class(nir_builder *b, nir_def *vert, enum mesa_prim cls)
                                                 flatshade_first);
 
    default:
-      unreachable("invalid topology class");
+      UNREACHABLE("invalid topology class");
    }
 }
 
@@ -693,7 +693,7 @@ agx_nir_create_gs_rast_shader(const nir_shader *gs,
    }
 
    default:
-      unreachable("invalid shape");
+      UNREACHABLE("invalid shape");
    }
 
    u_foreach_bit64(slot, shader->info.outputs_written) {
@@ -1342,9 +1342,6 @@ agx_nir_lower_gs(nir_shader *gs, nir_shader **gs_count, nir_shader **gs_copy,
    /* All those variables we created should've gone away by now */
    NIR_PASS(_, gs, nir_remove_dead_variables, nir_var_function_temp, NULL);
 
-   NIR_PASS(_, gs, nir_opt_sink, ~0);
-   NIR_PASS(_, gs, nir_opt_move, ~0);
-
    NIR_PASS(_, gs, nir_shader_intrinsics_pass, lower_id,
             nir_metadata_control_flow, NULL);
 
@@ -1367,6 +1364,14 @@ agx_nir_lower_gs(nir_shader *gs, nir_shader **gs_count, nir_shader **gs_copy,
       for (unsigned i = 0; i < 4; ++i) {
          key.buffer_to_stream[i] = xfb->buffer_to_stream[i];
          key.stride[i] = xfb->buffers[i].stride;
+      }
+
+      /* Any buffer that is written is treated as writing at least 1 byte. If
+       * nothing is actually written, this ensures correctness with XFB queries.
+       * See dEQP-VK.transform_feedback.simple.multiquery_omit_write_3.
+       */
+      u_foreach_bit(b, xfb->buffers_written) {
+         key.output_end[b] = 1;
       }
 
       for (unsigned i = 0; i < xfb->output_count; ++i) {

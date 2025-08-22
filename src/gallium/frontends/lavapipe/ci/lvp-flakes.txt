@@ -4,8 +4,13 @@ nir-stress=dEQP-VK.draw.dynamic_rendering.multiple_interpolation.structured.no_s
 
 dEQP-VK.dynamic_rendering.graphics_pipeline_library.dedicated_allocation.formats..*.input.load.dont_care.draw
 dEQP-VK.dynamic_rendering.graphics_pipeline_library.suballocation.formats..*.input.load.dont_care.draw
+dEQP-VK.dynamic_rendering.graphics_pipeline_library.suballocation.formats.a8b8g8r8_unorm_pack32.input.load.store.self_dep_clear_draw
+dEQP-VK.dynamic_rendering.partial_secondary_cmd_buff.suballocation.subpass_dependencies.separate_channels.r8g8b8a8_unorm
 dEQP-VK.dynamic_rendering.primary_cmd_buff.dedicated_allocation.formats..*.input.load.dont_care.draw
+dEQP-VK.dynamic_rendering.primary_cmd_buff.dedicated_allocation.formats.r8g8b8a8_unorm.input.load.store.self_dep_draw
 dEQP-VK.dynamic_rendering.primary_cmd_buff.suballocation.formats..*.input.load.dont_care.draw
+dEQP-VK.dynamic_rendering.primary_cmd_buff.suballocation.formats.r8g8b8a8_unorm.input.dont_care.store.self_dep_draw
+dEQP-VK.dynamic_rendering.primary_cmd_buff.suballocation.formats.r8g8b8a8_unorm.input.dont_care.store.self_dep_draw
 
 dEQP-VK.rasterization.culling.front_triangle_fan_point
 dEQP-VK.rasterization.primitives.dynamic_stipple.smooth_lines_with_adjacency_wide
@@ -59,6 +64,7 @@ dEQP-VK.sparse_resources.image_sparse_binding.multiple_sparse_image_opaque_memor
 dEQP-VK.sparse_resources.image_sparse_binding.multiple_sparse_image_opaque_memory_bind_info.2d_array.g10x6_b10x6r10x6_2plane_420_unorm_3pack16.1024_128_8
 dEQP-VK.sparse_resources.image_sparse_binding.multiple_sparse_image_opaque_memory_bind_info.2d_array.g12x4_b12x4_r12x4_3plane_420_unorm_3pack16.512_256_6
 dEQP-VK.sparse_resources.image_sparse_binding.multiple_sparse_memory_bind.1d.r16i.512_1_1
+dEQP-VK.sparse_resources.image_sparse_binding.multiple_sparse_memory_bind.1d.r64ui.512_1_1
 dEQP-VK.sparse_resources.image_sparse_binding.multiple_sparse_memory_bind.1d.rg16_snorm.512_1_1
 dEQP-VK.sparse_resources.image_sparse_binding.multiple_sparse_memory_bind.1d.rg8i.1024_1_1
 dEQP-VK.sparse_resources.image_sparse_binding.multiple_sparse_memory_bind.1d.rgba16ui.512_1_1
@@ -93,7 +99,11 @@ dEQP-VK.sparse_resources.shader_intrinsics.2d_array_sparse_gather.rgba8_snorm.51
 dEQP-VK.sparse_resources.shader_intrinsics.2d_sparse_gather.r12x4g12x4b12x4a12x4_unorm_4pack16.128_128_1
 dEQP-VK.sparse_resources.transfer_queue.2d.r10x6g10x6_unorm_2pack16.1024_128_1
 
+dEQP-VK.synchronization.implicit.timeline_semaphore.write_ssbo_vertex_read_ssbo_vertex.buffer_16384.3033
 dEQP-VK.synchronization2.basic.timeline_semaphore.one_queue
+dEQP-VK.synchronization2.implicit.timeline_semaphore.write_ssbo_vertex_read_copy_buffer.buffer_16384.2001
+dEQP-VK.synchronization2.implicit.timeline_semaphore.write_ssbo_vertex_read_ssbo_vertex.buffer_16384.3113
+dEQP-VK.synchronization2.implicit.timeline_semaphore.write_ssbo_vertex_read_ssbo_vertex.buffer_16384.3212
 dEQP-VK.synchronization2.op.single_queue.fence.write_ssbo_geometry_read_ubo_fragment.buffer_16384_specialized_access_flag
 dEQP-VK.synchronization2.op.single_queue.fence.write_ssbo_tess_control_read_ssbo_geometry.buffer_262144
 dEQP-VK\.synchronization2?\.timeline_semaphore\..*
@@ -101,9 +111,11 @@ dEQP-VK\.synchronization2?\.timeline_semaphore\..*
 dEQP-VK.tessellation.invariance.one_minus_tess_coord_component.isolines_fractional_even_spacing_ccw_point_mode
 dEQP-VK.tessellation.invariance.one_minus_tess_coord_component.triangles_equal_spacing_ccw
 dEQP-VK.tessellation.invariance.outer_edge_division.quads_fractional_odd_spacing
+dEQP-VK.tessellation.invariance.outer_edge_division.triangles_equal_spacing
 dEQP-VK.tessellation.invariance.primitive_set.isolines_fractional_even_spacing_ccw
 dEQP-VK.tessellation.invariance.primitive_set.triangles_fractional_odd_spacing_cw
 dEQP-VK.tessellation.invariance.tess_coord_component_range.quads_fractional_odd_spacing_cw_point_mode
+dEQP-VK.tessellation.limits.max_tessellation_patch_size
 dEQP-VK.tessellation.misc_draw.fill_cover_triangles_equal_spacing
 dEQP-VK.tessellation.primitive_discard.isolines_fractional_odd_spacing_cw
 dEQP-VK.tessellation.primitive_discard.quads_equal_spacing_ccw

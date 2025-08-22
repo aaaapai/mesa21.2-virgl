@@ -589,8 +589,10 @@ create_iview(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_surf *s
  * to/from by a compute shader. Here we will perform a buffer copy to copy the
  * texels that the hardware missed.
  *
- * GFX10 will not use this workaround because it can be fixed by adjusting its
+ * GFX10+ will not use this workaround because it can be fixed by adjusting its
  * image view descriptors instead.
+ *
+ * GFX12+ is not affected (see NO_EDGE_CLAMP).
  */
 static void
 fixup_gfx9_cs_copy(struct radv_cmd_buffer *cmd_buffer, const struct radv_meta_blit2d_buffer *buf_bsurf,
@@ -606,9 +608,14 @@ fixup_gfx9_cs_copy(struct radv_cmd_buffer *cmd_buffer, const struct radv_meta_bl
    struct ac_surf_info surf_info = radv_get_ac_surf_info(device, image);
    enum radv_copy_flags img_copy_flags = 0, mem_copy_flags = 0;
 
+   if (gpu_info->gfx_level < GFX9 || gpu_info->gfx_level >= GFX12)
+      return;
+
+   if (image->vk.mip_levels == 1 || !vk_format_is_block_compressed(image->vk.format))
+      return;
+
    /* GFX10 will use a different workaround unless this is not a 2D image */
-   if (gpu_info->gfx_level < GFX9 || (gpu_info->gfx_level >= GFX10 && image->vk.image_type == VK_IMAGE_TYPE_2D) ||
-       image->vk.mip_levels == 1 || !vk_format_is_block_compressed(image->vk.format))
+   if (gpu_info->gfx_level >= GFX10 && image->vk.image_type == VK_IMAGE_TYPE_2D)
       return;
 
    /* The physical extent of the base mip */
@@ -1060,6 +1067,7 @@ radv_meta_clear_image_cs_r32g32b32(struct radv_cmd_buffer *cmd_buffer, struct ra
                                    const VkClearColorValue *clear_color)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+   struct radv_cmd_stream *cs = cmd_buffer->cs;
    VkPipelineLayout layout;
    VkPipeline pipeline;
    unsigned stride;
@@ -1071,7 +1079,7 @@ radv_meta_clear_image_cs_r32g32b32(struct radv_cmd_buffer *cmd_buffer, struct ra
       return;
    }
 
-   radv_cs_add_buffer(device->ws, cmd_buffer->cs, dst->image->bindings[0].bo);
+   radv_cs_add_buffer(device->ws, cs->b, dst->image->bindings[0].bo);
 
    radv_meta_bind_descriptors(cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 1,
                               (VkDescriptorGetInfoEXT[]){{

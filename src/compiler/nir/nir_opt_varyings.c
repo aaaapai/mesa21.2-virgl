@@ -498,6 +498,7 @@
 #include "util/u_memory.h"
 #include "nir.h"
 #include "nir_builder.h"
+#include "nir_xfb_info.h"
 
 /* nir_opt_varyings works at scalar 16-bit granularity across all varyings.
  *
@@ -629,7 +630,7 @@ struct scalar_slot {
        * computing the stored value. Used by constant and uniform propagation
        * to the next shader.
        */
-      nir_instr *value;
+      nir_scalar value;
    } producer;
 
    struct {
@@ -659,8 +660,8 @@ struct linkage_info {
    bool always_interpolate_convergent_fs_inputs;
    bool group_tes_inputs_into_pos_var_groups;
 
-   gl_shader_stage producer_stage;
-   gl_shader_stage consumer_stage;
+   mesa_shader_stage producer_stage;
+   mesa_shader_stage consumer_stage;
    nir_builder producer_builder;
    nir_builder consumer_builder;
    unsigned max_varying_expression_cost;
@@ -968,7 +969,7 @@ color_uses_shade_model(struct linkage_info *linkage, unsigned i)
       assert(iter->instr->intrinsic == nir_intrinsic_load_interpolated_input);
 
       nir_intrinsic_instr *baryc =
-         nir_instr_as_intrinsic(iter->instr->src[0].ssa->parent_instr);
+         nir_def_as_intrinsic(iter->instr->src[0].ssa);
       if (nir_intrinsic_interp_mode(baryc) == INTERP_MODE_NONE)
          return true;
    }
@@ -984,7 +985,7 @@ get_interp_vec4_type(struct linkage_info *linkage, unsigned slot,
    assert(load->intrinsic == nir_intrinsic_load_interpolated_input);
 
    nir_intrinsic_instr *baryc =
-      nir_instr_as_intrinsic(load->src[0].ssa->parent_instr);
+      nir_def_as_intrinsic(load->src[0].ssa);
    enum fs_vec4_type base;
 
    if (color_uses_shade_model(linkage, slot))
@@ -994,7 +995,7 @@ get_interp_vec4_type(struct linkage_info *linkage, unsigned slot,
    else if (load->def.bit_size == 16)
       base = FS_VEC4_TYPE_INTERP_FP16_PERSP_PIXEL;
    else
-      unreachable("invalid load_interpolated_input type");
+      UNREACHABLE("invalid load_interpolated_input type");
 
    bool linear = nir_intrinsic_interp_mode(baryc) == INTERP_MODE_NOPERSPECTIVE;
 
@@ -1011,7 +1012,7 @@ get_interp_vec4_type(struct linkage_info *linkage, unsigned slot,
    case nir_intrinsic_load_barycentric_sample:
       return base + 2;
    default:
-      unreachable("unexpected barycentric intrinsic");
+      UNREACHABLE("unexpected barycentric intrinsic");
    }
 }
 
@@ -1037,7 +1038,7 @@ build_convert_inf_to_nan(nir_builder *b, nir_def *x)
 {
    /* Do x*0 + x. The multiplication by 0 can't be optimized out. */
    nir_def *fma = nir_ffma_imm1(b, x, 0, x);
-   nir_instr_as_alu(fma->parent_instr)->exact = true;
+   nir_def_as_alu(fma)->exact = true;
    return fma;
 }
 
@@ -1052,7 +1053,7 @@ is_sysval(nir_instr *instr, gl_system_value sysval)
 
       if (intr->intrinsic == nir_intrinsic_load_deref) {
          nir_deref_instr *deref =
-            nir_instr_as_deref(intr->src[0].ssa->parent_instr);
+            nir_def_as_deref(intr->src[0].ssa);
 
          return nir_deref_mode_is_one_of(deref, nir_var_system_value) &&
                 nir_deref_instr_get_variable(deref)->data.location == sysval;
@@ -1322,13 +1323,13 @@ gather_inputs(struct nir_builder *builder, nir_intrinsic_instr *intr, void *cb_d
             else if (intr->def.bit_size == 16)
                fs_vec4_type = FS_VEC4_TYPE_INTERP_FP16;
             else
-               unreachable("invalid load_interpolated_input type");
+               UNREACHABLE("invalid load_interpolated_input type");
          } else {
             fs_vec4_type = get_interp_vec4_type(linkage, slot, intr);
          }
          break;
       default:
-         unreachable("unexpected input load intrinsic");
+         UNREACHABLE("unexpected input load intrinsic");
       }
 
       linkage->fs_vec4_type[sem.location] = fs_vec4_type;
@@ -1420,7 +1421,7 @@ gather_inputs(struct nir_builder *builder, nir_intrinsic_instr *intr, void *cb_d
          break;
 
       case FS_VEC4_TYPE_NONE:
-         unreachable("unexpected fs_vec4_type");
+         UNREACHABLE("unexpected fs_vec4_type");
       }
 
       if (!linkage->has_flexible_interp &&
@@ -1460,7 +1461,7 @@ gather_inputs(struct nir_builder *builder, nir_intrinsic_instr *intr, void *cb_d
       else if (intr->def.bit_size == 16)
          BITSET_SET(linkage->flat16_mask, slot);
       else
-         unreachable("invalid load_input type");
+         UNREACHABLE("invalid load_input type");
 
       if (linkage->consumer_stage == MESA_SHADER_TESS_CTRL &&
           intr->intrinsic == nir_intrinsic_load_per_vertex_input) {
@@ -1473,7 +1474,7 @@ gather_inputs(struct nir_builder *builder, nir_intrinsic_instr *intr, void *cb_d
             else if (intr->def.bit_size == 16)
                BITSET_SET(linkage->cross_invoc16_mask, slot);
             else
-               unreachable("invalid load_input type");
+               UNREACHABLE("invalid load_input type");
          }
       }
    }
@@ -1564,7 +1565,7 @@ gather_outputs(struct nir_builder *builder, nir_intrinsic_instr *intr, void *cb_
             else if (intr->src[0].ssa->bit_size == 16)
                BITSET_SET(linkage->xfb16_only_mask, slot);
             else
-               unreachable("invalid load_input type");
+               UNREACHABLE("invalid load_input type");
          }
       }
    } else {
@@ -1594,9 +1595,9 @@ gather_outputs(struct nir_builder *builder, nir_intrinsic_instr *intr, void *cb_
       return false;
 
    if (is_store) {
-      nir_def *value = intr->src[0].ssa;
+      nir_scalar value = nir_scalar_resolved(intr->src[0].ssa, 0);
 
-      const bool constant = value->parent_instr->type == nir_instr_type_load_const;
+      const bool constant = nir_scalar_is_const(value);
 
       /* If the store instruction is executed in a divergent block, the value
        * that's stored in the output becomes divergent.
@@ -1609,38 +1610,38 @@ gather_outputs(struct nir_builder *builder, nir_intrinsic_instr *intr, void *cb_
                              intr->instr.block->divergent ||
                              nir_src_is_divergent(&intr->src[0]);
 
-      if (!out->producer.value) {
+      if (!out->producer.value.def) {
          /* This is the first store to this output. */
          BITSET_SET(linkage->output_equal_mask, slot);
-         out->producer.value = value->parent_instr;
+         out->producer.value = value;
 
          /* Set whether the value is convergent. Such varyings can be
           * promoted to flat regardless of their original interpolation
           * mode.
           */
          if (linkage->consumer_stage == MESA_SHADER_FRAGMENT && !divergent) {
-            if (value->bit_size == 32)
+            if (value.def->bit_size == 32)
                BITSET_SET(linkage->convergent32_mask, slot);
-            else if (value->bit_size == 16)
+            else if (value.def->bit_size == 16)
                BITSET_SET(linkage->convergent16_mask, slot);
             else
-               unreachable("invalid store_output type");
+               UNREACHABLE("invalid store_output type");
          }
       } else {
          /* There are multiple stores to the same output. If they store
           * different values, clear the mask.
           */
-         if (out->producer.value != value->parent_instr)
+         if (!nir_scalar_equal(out->producer.value, value))
             BITSET_CLEAR(linkage->output_equal_mask, slot);
 
          /* Update divergence information. */
          if (linkage->consumer_stage == MESA_SHADER_FRAGMENT && divergent) {
-            if (value->bit_size == 32)
+            if (value.def->bit_size == 32)
                BITSET_CLEAR(linkage->convergent32_mask, slot);
-            else if (value->bit_size == 16)
+            else if (value.def->bit_size == 16)
                BITSET_CLEAR(linkage->convergent16_mask, slot);
             else
-               unreachable("invalid store_output type");
+               UNREACHABLE("invalid store_output type");
          }
       }
 
@@ -1650,12 +1651,12 @@ gather_outputs(struct nir_builder *builder, nir_intrinsic_instr *intr, void *cb_
          nir_instr *vertex_index_instr = vertex_index_src->ssa->parent_instr;
 
          if (!is_sysval(vertex_index_instr, SYSTEM_VALUE_INVOCATION_ID)) {
-            if (value->bit_size == 32)
+            if (value.def->bit_size == 32)
                BITSET_SET(linkage->cross_invoc32_mask, slot);
-            else if (value->bit_size == 16)
+            else if (value.def->bit_size == 16)
                BITSET_SET(linkage->cross_invoc16_mask, slot);
             else
-               unreachable("invalid store_output type");
+               UNREACHABLE("invalid store_output type");
          }
       }
    } else {
@@ -1675,7 +1676,7 @@ gather_outputs(struct nir_builder *builder, nir_intrinsic_instr *intr, void *cb_
       else if (intr->def.bit_size == 16)
          BITSET_SET(linkage->flat16_mask, slot);
       else
-         unreachable("invalid load_input type");
+         UNREACHABLE("invalid load_input type");
    }
    return false;
 }
@@ -1958,7 +1959,7 @@ remove_all_stores(struct linkage_info *linkage, unsigned i,
                else if (iter->instr->src[0].ssa->bit_size == 16)
                   BITSET_SET(linkage->xfb16_only_mask, i);
                else
-                  unreachable("invalid load_input type");
+                  UNREACHABLE("invalid load_input type");
             }
          }
       }
@@ -2186,7 +2187,7 @@ find_per_vertex_load_for_tes_interp(nir_instr *instr)
    }
 
    default:
-      unreachable("unexpected instruction type");
+      UNREACHABLE("unexpected instruction type");
    }
 }
 
@@ -2229,7 +2230,7 @@ clone_ssa_impl(struct linkage_info *linkage, nir_builder *b, nir_def *ssa)
    switch (ssa->parent_instr->type) {
    case nir_instr_type_load_const:
       clone = nir_build_imm(b, ssa->num_components, ssa->bit_size,
-                            nir_instr_as_load_const(ssa->parent_instr)->value);
+                            nir_def_as_load_const(ssa)->value);
       break;
 
    case nir_instr_type_undef:
@@ -2237,7 +2238,7 @@ clone_ssa_impl(struct linkage_info *linkage, nir_builder *b, nir_def *ssa)
       break;
 
    case nir_instr_type_alu: {
-      nir_alu_instr *alu = nir_instr_as_alu(ssa->parent_instr);
+      nir_alu_instr *alu = nir_def_as_alu(ssa);
 
       if (alu->instr.pass_flags & FLAG_ALU_IS_TES_INTERP_LOAD) {
          /* We are cloning an interpolated TES load in the producer for
@@ -2255,7 +2256,7 @@ clone_ssa_impl(struct linkage_info *linkage, nir_builder *b, nir_def *ssa)
          src[i] = clone_ssa_impl(linkage, b, alu->src[i].src.ssa);
 
       clone = nir_build_alu(b, alu->op, src[0], src[1], src[2], src[3]);
-      nir_alu_instr *alu_clone = nir_instr_as_alu(clone->parent_instr);
+      nir_alu_instr *alu_clone = nir_def_as_alu(clone);
 
       alu_clone->exact = alu->exact;
       alu_clone->no_signed_wrap = alu->no_signed_wrap;
@@ -2274,12 +2275,12 @@ clone_ssa_impl(struct linkage_info *linkage, nir_builder *b, nir_def *ssa)
       /* Clone load_deref of uniform or ubo. It's the only thing that can
        * occur here.
        */
-      nir_intrinsic_instr *intr = nir_instr_as_intrinsic(ssa->parent_instr);
+      nir_intrinsic_instr *intr = nir_def_as_intrinsic(ssa);
 
       switch (intr->intrinsic) {
       case nir_intrinsic_load_deref: {
          nir_def *ssa = clone_ssa_impl(linkage, b, intr->src[0].ssa);
-         clone = nir_load_deref(b, nir_instr_as_deref(ssa->parent_instr));
+         clone = nir_load_deref(b, nir_def_as_deref(ssa));
          break;
       }
 
@@ -2297,13 +2298,13 @@ clone_ssa_impl(struct linkage_info *linkage, nir_builder *b, nir_def *ssa)
       }
 
       default:
-         unreachable("unexpected intrinsic");
+         UNREACHABLE("unexpected intrinsic");
       }
       break;
    }
 
    case nir_instr_type_deref: {
-      nir_deref_instr *deref = nir_instr_as_deref(ssa->parent_instr);
+      nir_deref_instr *deref = nir_def_as_deref(ssa);
       assert(nir_deref_mode_is_one_of(deref, nir_var_uniform | nir_var_mem_ubo));
 
       /* Get the uniform from the original shader. */
@@ -2322,8 +2323,7 @@ clone_ssa_impl(struct linkage_info *linkage, nir_builder *b, nir_def *ssa)
       } else {
          nir_deref_instr *parent_orig = nir_deref_instr_parent(deref);
          nir_deref_instr *parent_clone =
-            nir_instr_as_deref(clone_ssa_impl(linkage, b, &parent_orig->def)
-                                  ->parent_instr);
+            nir_def_as_deref(clone_ssa_impl(linkage, b, &parent_orig->def));
 
          switch (deref->deref_type) {
          case nir_deref_type_array: {
@@ -2337,14 +2337,14 @@ clone_ssa_impl(struct linkage_info *linkage, nir_builder *b, nir_def *ssa)
                         ->def;
             break;
          default:
-            unreachable("invalid deref type");
+            UNREACHABLE("invalid deref type");
          }
       }
       break;
    }
 
    default:
-      unreachable("unexpected instruction type");
+      UNREACHABLE("unexpected instruction type");
    }
 
    _mesa_hash_table_insert(linkage->clones_ht, ssa->parent_instr, clone);
@@ -2352,12 +2352,15 @@ clone_ssa_impl(struct linkage_info *linkage, nir_builder *b, nir_def *ssa)
 }
 
 static nir_def *
-clone_ssa(struct linkage_info *linkage, nir_builder *b, nir_def *ssa)
+clone_ssa(struct linkage_info *linkage, nir_builder *b, nir_scalar scalar)
 {
    assert(!linkage->clones_ht);
    linkage->clones_ht = _mesa_pointer_hash_table_create(NULL);
 
-   nir_def *clone = clone_ssa_impl(linkage, b, ssa);
+   nir_def *clone = clone_ssa_impl(linkage, b, scalar.def);
+
+   if (clone->num_components > 1)
+      clone = nir_channel(b, clone, scalar.comp);
 
    _mesa_hash_table_destroy(linkage->clones_ht, NULL);
    linkage->clones_ht = NULL;
@@ -2440,7 +2443,8 @@ is_uniform_expression(nir_instr *instr, struct is_uniform_expr_state *state)
  */
 static void
 propagate_uniform_expressions(struct linkage_info *linkage,
-                              nir_opt_varyings_progress *progress)
+                              nir_opt_varyings_progress *progress,
+                              bool *consumer_progress)
 {
    unsigned i;
 
@@ -2465,7 +2469,7 @@ propagate_uniform_expressions(struct linkage_info *linkage,
        */
       nir_shader_clear_pass_flags(linkage->producer_builder.shader);
 
-      if (!is_uniform_expression(slot->producer.value, &state))
+      if (!is_uniform_expression(slot->producer.value.def->parent_instr, &state))
          continue;
 
       if (state.cost > linkage->max_varying_expression_cost)
@@ -2476,9 +2480,9 @@ propagate_uniform_expressions(struct linkage_info *linkage,
        * no effect.
        */
       if (is_interpolated_color(linkage, i) &&
-          (slot->producer.value->type != nir_instr_type_load_const ||
-           nir_instr_as_load_const(slot->producer.value)->value[0].f32 < 0 ||
-           nir_instr_as_load_const(slot->producer.value)->value[0].f32 > 1))
+          (!nir_scalar_is_const(slot->producer.value) ||
+           nir_scalar_as_float(slot->producer.value) < 0 ||
+           nir_scalar_as_float(slot->producer.value) > 1))
          continue;
 
       /* TEXn.zw can be propagated only if it's equal to (0, 1) because it's
@@ -2489,11 +2493,10 @@ propagate_uniform_expressions(struct linkage_info *linkage,
 
          if (i % 8 == 0 || /* TEXn.x */
              i % 8 == 2 || /* TEXn.y */
-             slot->producer.value->type != nir_instr_type_load_const)
+             !nir_scalar_is_const(slot->producer.value))
             continue;
 
-         float value =
-            nir_instr_as_load_const(slot->producer.value)->value[0].f32;
+         float value = nir_scalar_as_float(slot->producer.value);
 
          /* This ignores signed zeros, but those are destroyed by
           * interpolation, so it doesn't matter.
@@ -2516,8 +2519,7 @@ propagate_uniform_expressions(struct linkage_info *linkage,
             b->cursor = nir_before_instr(&loadi->instr);
 
             /* Copy the uniform expression before the load. */
-            nir_def *clone = clone_ssa(linkage, b,
-                                       nir_instr_def(slot->producer.value));
+            nir_def *clone = clone_ssa(linkage, b, slot->producer.value);
 
             /* Interpolation converts Infs to NaNs. If we skip it, we need to
              * convert Infs to NaNs manually.
@@ -2529,6 +2531,7 @@ propagate_uniform_expressions(struct linkage_info *linkage,
             /* Replace the original load. */
             nir_def_replace(&loadi->def, clone);
             *progress |= list_index ? nir_progress_producer : nir_progress_consumer;
+            *consumer_progress |= list_index == 0; /* 0 means consumer loads */
          }
       }
 
@@ -2638,7 +2641,7 @@ get_input_qualifier(struct linkage_info *linkage, unsigned i)
        baryc->intrinsic == nir_intrinsic_load_barycentric_at_sample) {
       list_for_each_entry(struct list_node, iter, &slot->consumer.loads, head) {
          nir_intrinsic_instr *bar =
-            nir_instr_as_intrinsic(iter->instr->src[0].ssa->parent_instr);
+            nir_def_as_intrinsic(iter->instr->src[0].ssa);
 
          if (bar->intrinsic != nir_intrinsic_load_barycentric_centroid &&
              bar->intrinsic != nir_intrinsic_load_barycentric_at_offset &&
@@ -2668,7 +2671,7 @@ get_input_qualifier(struct linkage_info *linkage, unsigned i)
       /* Don't deduplicate outputs that are interpolated at offset/sample. */
       return QUAL_SKIP;
    default:
-      unreachable("unexpected barycentric src");
+      UNREACHABLE("unexpected barycentric src");
    }
 
    switch (nir_intrinsic_interp_mode(baryc)) {
@@ -2682,7 +2685,7 @@ get_input_qualifier(struct linkage_info *linkage, unsigned i)
       qual = is_color ? QUAL_COLOR_LINEAR_PIXEL : QUAL_VAR_LINEAR_PIXEL;
       break;
    default:
-      unreachable("unexpected interp mode");
+      UNREACHABLE("unexpected interp mode");
    }
 
    /* The ordering of the "qual" enum was carefully chosen to make this
@@ -2703,9 +2706,28 @@ get_input_qualifier(struct linkage_info *linkage, unsigned i)
    return qual + pixel_location;
 }
 
+static uint32_t
+nir_ht_scalar_hash(const void *key)
+{
+   nir_scalar s;
+   static_assert(offsetof(nir_scalar, def) == 0, "known layout");
+   static_assert(offsetof(nir_scalar, comp) == sizeof(s.def), "no padding");
+   static_assert(sizeof(s.comp) == sizeof(unsigned), "known layout");
+
+   /* Don't include structure padding of nir_scalar. */
+   return _mesa_hash_data(key, offsetof(nir_scalar, comp) + sizeof(unsigned));
+}
+
+static bool
+nir_ht_scalar_equal(const void *a, const void *b)
+{
+   return nir_scalar_equal(*(nir_scalar*)a, *(nir_scalar*)b);
+}
+
 static void
 deduplicate_outputs(struct linkage_info *linkage,
-                    nir_opt_varyings_progress *progress)
+                    nir_opt_varyings_progress *progress,
+                    bool *consumer_progress)
 {
    struct hash_table *tables[NUM_DEDUP_QUALIFIERS] = { NULL };
    unsigned i;
@@ -2738,13 +2760,14 @@ deduplicate_outputs(struct linkage_info *linkage,
 
       struct hash_table **table = &tables[qualifier];
       if (!*table)
-         *table = _mesa_pointer_hash_table_create(NULL);
+         *table = _mesa_hash_table_create(NULL, nir_ht_scalar_hash,
+                                          nir_ht_scalar_equal);
 
-      nir_instr *value = slot->producer.value;
+      nir_scalar value = slot->producer.value;
 
-      struct hash_entry *entry = _mesa_hash_table_search(*table, value);
+      struct hash_entry *entry = _mesa_hash_table_search(*table, &value);
       if (!entry) {
-         _mesa_hash_table_insert(*table, value, (void *)(uintptr_t)i);
+         _mesa_hash_table_insert(*table, &value, (void *)(uintptr_t)i);
          continue;
       }
 
@@ -2792,6 +2815,7 @@ deduplicate_outputs(struct linkage_info *linkage,
             list_inithead(src_loads);
 
             *progress |= list_index ? nir_progress_producer : nir_progress_consumer;
+            *consumer_progress |= list_index == 0; /* 0 means consumer loads */
          }
       }
 
@@ -3379,7 +3403,7 @@ gather_used_input_loads(nir_instr *instr,
 
       default:
          printf("%u\n", intr->intrinsic);
-         unreachable("unexpected intrinsic");
+         UNREACHABLE("unexpected intrinsic");
       }
    }
 
@@ -3401,12 +3425,12 @@ gather_used_input_loads(nir_instr *instr,
          return;
 
       default:
-         unreachable("unexpected deref type");
+         UNREACHABLE("unexpected deref type");
       }
    }
 
    default:
-      unreachable("unexpected instr type");
+      UNREACHABLE("unexpected instr type");
    }
 }
 
@@ -3614,7 +3638,7 @@ try_move_postdominator(struct linkage_info *linkage,
          remap = remap_wuv;
          break;
       default:
-         unreachable("invalid TES interpolation mode");
+         UNREACHABLE("invalid TES interpolation mode");
       }
 
       nir_def *tesscoord = slot->consumer.tes_load_tess_coord;
@@ -3725,7 +3749,8 @@ try_move_postdominator(struct linkage_info *linkage,
     */
    b = &linkage->producer_builder;
    b->cursor = nir_after_block_before_jump(block);
-   nir_def *producer_clone = clone_ssa(linkage, b, postdom_def);
+   nir_def *producer_clone = clone_ssa(linkage, b,
+                                       nir_get_scalar(postdom_def, 0));
 
    /* Boolean post-dominators are upcast in the producer because we can't
     * use 1-bit outputs.
@@ -3986,7 +4011,7 @@ backward_inter_shader_code_motion(struct linkage_info *linkage,
             /* Inter-shader code motion is unimplemented these. */
             continue;
          default:
-            unreachable("unexpected load intrinsic");
+            UNREACHABLE("unexpected load intrinsic");
          }
       }
 
@@ -4091,7 +4116,7 @@ backward_inter_shader_code_motion(struct linkage_info *linkage,
 
                bit_size = intr->def.bit_size;
             } else {
-               unreachable("unexpected instr type");
+               UNREACHABLE("unexpected instr type");
             }
 
             /* Skip unsupported bit sizes and keep searching. */
@@ -4362,7 +4387,7 @@ relocate_slot(struct linkage_info *linkage, struct scalar_slot *slot,
                                                       .interp_mode = INTERP_MODE_NONE);
                   break;
                default:
-                  unreachable("invalid qualifier");
+                  UNREACHABLE("invalid qualifier");
                }
 
                nir_src_rewrite(&intr->src[0], baryc);
@@ -5176,7 +5201,7 @@ default_varying_estimate_instr_cost(nir_instr *instr)
          return 2 * num_dst_dwords;
 
       default:
-         unreachable("unexpected intrinsic");
+         UNREACHABLE("unexpected intrinsic");
       }
 
    case nir_instr_type_deref: {
@@ -5194,12 +5219,12 @@ default_varying_estimate_instr_cost(nir_instr *instr)
          return nir_src_is_const(deref->arr.index) ? 0 : 128;
 
       default:
-         unreachable("unexpected deref type");
+         UNREACHABLE("unexpected deref type");
       }
    }
 
    default:
-      unreachable("unexpected instr type");
+      UNREACHABLE("unexpected instr type");
    }
 }
 
@@ -5281,7 +5306,8 @@ print_shader_linkage(nir_shader *producer, nir_shader *consumer)
  */
 nir_opt_varyings_progress
 nir_opt_varyings(nir_shader *producer, nir_shader *consumer, bool spirv,
-                 unsigned max_uniform_components, unsigned max_ubos_per_stage)
+                 unsigned max_uniform_components, unsigned max_ubos_per_stage,
+                 bool debug_no_algebraic /* don't set to true, only for nir_tests */)
 {
    /* Task -> Mesh I/O uses payload variables and not varying slots,
     * so this pass can't do anything about it.
@@ -5308,19 +5334,37 @@ nir_opt_varyings(nir_shader *producer, nir_shader *consumer, bool spirv,
    /* Part 1: Run optimizations that only remove varyings. (they can move
     * instructions between shaders)
     */
-   propagate_uniform_expressions(linkage, &progress);
+   bool prop_dedup_consumer_progress = false;
+   propagate_uniform_expressions(linkage, &progress,
+                                 &prop_dedup_consumer_progress);
 
    /* Part 2: Deduplicate outputs. */
-   deduplicate_outputs(linkage, &progress);
-
-   /* Run CSE on the consumer after output deduplication because duplicated
-    * loads can prevent finding the post-dominator for inter-shader code
-    * motion.
-    */
-   NIR_PASS(_, consumer, nir_opt_cse);
-
-   /* Re-gather linkage info after CSE. */
+   deduplicate_outputs(linkage, &progress, &prop_dedup_consumer_progress);
    free_linkage(linkage);
+
+   /* The consumer must be optimized before continuing because:
+    * - constant propagation can propagate 0, which can lead to elimination of
+    *   input loads after algebraic opts
+    * - output deduplication doesn't remove the corresponding loads
+    *   in the consumer, but backward inter-shader code motion requires
+    *   that there is exactly 1 load per input
+    */
+   if (prop_dedup_consumer_progress) {
+      bool opts_progress;
+      do {
+         opts_progress = false;
+         NIR_PASS(opts_progress, consumer, nir_opt_dce);
+         NIR_PASS(opts_progress, consumer, nir_opt_cse);
+         if (!debug_no_algebraic)
+            NIR_PASS(opts_progress, consumer, nir_opt_algebraic);
+         NIR_PASS(opts_progress, consumer, nir_opt_constant_folding);
+         /* We may also consider eliminating dead control flow (such as
+          * "if false:") if that ever happens.
+          */
+      } while (opts_progress);
+   }
+
+   /* Re-gather linkage info after optimizations. */
    init_linkage(producer, consumer, spirv, max_uniform_components,
                 max_ubos_per_stage, linkage, &progress);
 
@@ -5386,4 +5430,150 @@ nir_opt_varyings(nir_shader *producer, nir_shader *consumer, bool spirv,
       assert(consumer->info.prev_stage == producer->info.stage);
 
    return progress;
+}
+
+unsigned
+nir_varying_var_mask(nir_shader *nir)
+{
+   return (nir->info.stage != MESA_SHADER_VERTEX ? nir_var_shader_in : 0) |
+          (nir->info.stage != MESA_SHADER_FRAGMENT ? nir_var_shader_out : 0);
+}
+
+static nir_opt_varyings_progress
+optimize_varyings(nir_shader *producer, nir_shader *consumer, bool spirv,
+                  unsigned max_uniform_comps, unsigned max_ubos,
+                  void (*optimize)(nir_shader *))
+{
+   nir_opt_varyings_progress progress =
+      nir_opt_varyings(producer, consumer, spirv, max_uniform_comps,
+                       max_ubos, false);
+
+   if (progress & nir_progress_producer)
+      optimize(producer);
+   if (progress & nir_progress_consumer)
+      optimize(consumer);
+
+   return progress;
+}
+
+/*
+ * Full service varying optimizer. This takes a list of shaders to link in order
+ * of stage and a driver-specific optimization callback for a single stage. It
+ * then calls nir_opt_varyings and associated passes across all the shaders in
+ * the pipeline to optimize. This is a convenience helper for drivers.
+ */
+void
+nir_opt_varyings_bulk(nir_shader **shaders, uint32_t num_shaders, bool spirv,
+                      unsigned max_uniform_comps, unsigned max_ubos,
+                      void (*optimize)(nir_shader *))
+{
+   /* There is nothing to link for only 1 shader. */
+   if (num_shaders == 1) {
+      nir_shader *nir = shaders[0];
+
+      /* Even with a separate shader, it's still worth to re-vectorize IO from
+       * scratch because the original shader might not be vectorized optimally.
+       */
+      NIR_PASS(_, nir, nir_lower_io_to_scalar, nir_varying_var_mask(nir),
+               NULL, NULL);
+      NIR_PASS(_, nir, nir_opt_vectorize_io, nir_varying_var_mask(nir), false);
+
+      /* Regather shader info so we have consistent behaviour for
+       * linked/unlinked code paths. Honeykrisp depends on this.
+       */
+      nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+      return;
+   }
+
+   for (unsigned i = 0; i < num_shaders; i++) {
+      nir_shader *nir = shaders[i];
+
+      /* Inter-shader code motion in nir_opt_varyings requires that each input
+       * load is loaded only once when possible, so move all input loads
+       * to the entry block, so that CSE can deduplicate them.
+       *
+       * We only do that for FS. Moving input loads to the beginning could
+       * increase register usage for other shaders too much.
+       */
+      if (nir->info.stage == MESA_SHADER_FRAGMENT) {
+         NIR_PASS(_, nir, nir_opt_move_to_top,
+                  nir_move_to_entry_block_only |
+                     nir_move_to_top_input_loads);
+      }
+
+      /* nir_opt_varyings requires scalar IO. Scalarize all varyings (not just
+       * the ones we optimize) because we want to re-vectorize everything to
+       * get better vectorization and other goodies from nir_opt_vectorize_io.
+       */
+      NIR_PASS(_, nir, nir_lower_io_to_scalar, nir_varying_var_mask(nir),
+               NULL, NULL);
+
+      /* nir_opt_varyings requires shaders to be optimized. */
+      optimize(nir);
+   }
+
+   /* Optimize varyings from the first shader to the last shader first, and
+    * then in the opposite order from the last changed producer.
+    *
+    * For example, VS->GS->FS is optimized in this order first:
+    *    (VS,GS), (GS,FS)
+    *
+    * That ensures that constants and undefs (dead inputs) are propagated
+    * forward.
+    *
+    * If GS was changed while optimizing (GS,FS), (VS,GS) is optimized again
+    * because removing outputs in GS can cause a chain reaction in making
+    * GS inputs, VS outputs, and VS inputs dead.
+    */
+   unsigned highest_changed_producer = 0;
+   for (unsigned i = 0; i < num_shaders - 1; i++) {
+      if (optimize_varyings(shaders[i], shaders[i + 1], spirv,
+                            max_uniform_comps, max_ubos, optimize) &
+          nir_progress_producer)
+         highest_changed_producer = i;
+   }
+
+   /* Optimize varyings from the highest changed producer to the first
+    * shader.
+    */
+   for (unsigned i = highest_changed_producer; i > 0; i--) {
+      optimize_varyings(shaders[i - 1], shaders[i], spirv, max_uniform_comps,
+                        max_ubos, optimize);
+   }
+
+   /* Final cleanups. */
+   for (unsigned i = 0; i < num_shaders; i++) {
+      nir_shader *nir = shaders[i];
+
+      /* Re-vectorize IO. */
+      NIR_PASS(_, nir, nir_opt_vectorize_io, nir_varying_var_mask(nir), false);
+
+      /* Recompute intrinsic bases, which are totally random after
+       * optimizations and compaction. Do that for all inputs and outputs,
+       * including VS inputs because those could have been removed too.
+       */
+      NIR_PASS(_, nir, nir_recompute_io_bases,
+               nir_var_shader_in | nir_var_shader_out);
+
+      /* Regather shader info because the slots info is messed up now. */
+      nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+
+      /* Regenerate transform feedback info because compaction in
+       * nir_opt_varyings always moves them to other slots.
+       */
+      if (nir->xfb_info)
+         nir_gather_xfb_info_from_intrinsics(nir);
+   }
+
+   /* Now that we've picked slots, link interpolation qualifiers. */
+   nir_shader *fs = shaders[num_shaders - 1];
+   if (fs->info.stage == MESA_SHADER_FRAGMENT) {
+      nir_shader *producer = shaders[num_shaders - 2];
+
+      producer->info.known_interpolation_qualifiers =
+         fs->info.known_interpolation_qualifiers;
+
+      producer->info.linear_varyings = fs->info.linear_varyings;
+      producer->info.perspective_varyings = fs->info.perspective_varyings;
+   }
 }

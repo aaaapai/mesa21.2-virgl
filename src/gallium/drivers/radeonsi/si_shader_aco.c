@@ -38,8 +38,8 @@ si_aco_compiler_debug(void *private_data, enum aco_compiler_debug_level level,
 }
 
 static void
-si_fill_aco_options(struct si_screen *screen, gl_shader_stage stage,
-                    gl_shader_stage next_merged_stage, struct aco_compiler_options *options,
+si_fill_aco_options(struct si_screen *screen, mesa_shader_stage stage,
+                    mesa_shader_stage next_merged_stage, struct aco_compiler_options *options,
                     struct util_debug_callback *debug)
 {
    options->dump_ir = si_can_dump_shader(screen, stage, SI_DUMP_ACO_IR);
@@ -68,7 +68,7 @@ si_fill_aco_shader_info(struct si_shader *shader, struct aco_shader_info *info,
    const struct si_shader_selector *sel = shader->selector;
    const union si_shader_key *key = &shader->key;
    const enum amd_gfx_level gfx_level = sel->screen->info.gfx_level;
-   gl_shader_stage stage = shader->is_gs_copy_shader ? MESA_SHADER_VERTEX : sel->stage;
+   mesa_shader_stage stage = shader->is_gs_copy_shader ? MESA_SHADER_VERTEX : sel->stage;
 
    info->wave_size = shader->wave_size;
    info->workgroup_size = si_get_max_workgroup_size(shader);
@@ -151,7 +151,7 @@ si_aco_compile_shader(struct si_shader *shader, struct si_linked_shaders *linked
 {
    const struct si_shader_selector *sel = shader->selector;
    nir_shader *nir = linked->consumer.nir;
-   gl_shader_stage next_merged_stage = MESA_SHADER_NONE;
+   mesa_shader_stage next_merged_stage = MESA_SHADER_NONE;
 
    if (nir->info.stage <= MESA_SHADER_GEOMETRY) {
       if (shader->key.ge.as_ls)
@@ -190,7 +190,6 @@ si_aco_resolve_symbols(struct si_shader *shader, uint32_t *code_for_write,
 {
    const struct aco_symbol *symbols = (struct aco_symbol *)shader->binary.symbols;
    const struct si_shader_selector *sel = shader->selector;
-   const union si_shader_key *key = &shader->key;
 
    for (int i = 0; i < shader->binary.num_symbols; i++) {
       uint32_t value = 0;
@@ -207,24 +206,13 @@ si_aco_resolve_symbols(struct si_shader *shader, uint32_t *code_for_write,
          else
             value |= S_008F04_SWIZZLE_ENABLE_GFX6(1);
          break;
-      case aco_symbol_lds_ngg_scratch_base:
-         assert(sel->stage <= MESA_SHADER_GEOMETRY && key->ge.as_ngg);
-         value = shader->gs_info.esgs_ring_size * 4;
-         if (sel->stage == MESA_SHADER_GEOMETRY)
-            value += shader->ngg.ngg_emit_size * 4;
-         value = ALIGN(value, 8);
-         break;
-      case aco_symbol_lds_ngg_gs_out_vertex_base:
-         assert(sel->stage == MESA_SHADER_GEOMETRY && key->ge.as_ngg);
-         value = shader->gs_info.esgs_ring_size * 4;
-         break;
       case aco_symbol_const_data_addr:
          if (!const_offset)
             continue;
          value = code_for_read[symbols[i].offset] + const_offset;
          break;
       default:
-         unreachable("invalid aco symbol");
+         UNREACHABLE("invalid aco symbol");
          break;
       }
 
@@ -343,7 +331,7 @@ si_aco_build_ps_epilog(struct aco_compiler_options *options,
 }
 
 bool
-si_aco_build_shader_part(struct si_screen *screen, gl_shader_stage stage, bool prolog,
+si_aco_build_shader_part(struct si_screen *screen, mesa_shader_stage stage, bool prolog,
                          struct util_debug_callback *debug, const char *name,
                          struct si_shader_part *result)
 {
@@ -357,7 +345,7 @@ si_aco_build_shader_part(struct si_screen *screen, gl_shader_stage stage, bool p
       else
          return si_aco_build_ps_epilog(&options, result);
    default:
-      unreachable("bad shader part");
+      UNREACHABLE("bad shader part");
    }
 
    return false;

@@ -246,7 +246,7 @@ negation_exists(nir_const_value v, unsigned bit_size,
          return v.i64 != 0 && v.i64 != INT64_MIN;
 
    default:
-      unreachable("unsupported bit-size should have already been filtered.");
+      UNREACHABLE("unsupported bit-size should have already been filtered.");
    }
 }
 
@@ -286,7 +286,7 @@ negate(nir_const_value v, unsigned bit_size, enum interpreted_type base_type)
       break;
 
    default:
-      unreachable("unsupported bit-size should have already been filtered.");
+      UNREACHABLE("unsupported bit-size should have already been filtered.");
    }
 
    return ret;
@@ -334,7 +334,7 @@ absolute(nir_const_value v, unsigned bit_size, enum interpreted_type base_type)
       break;
 
    default:
-      unreachable("unsupported bit-size should have already been filtered.");
+      UNREACHABLE("unsupported bit-size should have already been filtered.");
    }
 
    return ret;
@@ -410,7 +410,7 @@ value_equal(nir_const_value a, nir_const_value b, unsigned bit_size)
    case 64:
       return a.u64 == b.u64;
    default:
-      unreachable("unsupported bit-size should have already been filtered.");
+      UNREACHABLE("unsupported bit-size should have already been filtered.");
    }
 }
 
@@ -773,14 +773,14 @@ struct reg_link {
    reg_link(brw_inst *inst, unsigned src, bool negate, enum interpreted_type type)
    : inst(inst), src(src), negate(negate), type(type) {}
 
-   struct exec_node link;
+   struct brw_exec_node link;
    brw_inst *inst;
    uint8_t src;
    bool negate;
    enum interpreted_type type;
 };
 
-static struct exec_node *
+static struct brw_exec_node *
 link(void *mem_ctx, brw_inst *inst, unsigned src, bool negate,
      enum interpreted_type type)
 {
@@ -805,7 +805,7 @@ struct imm {
     * A list of fs_regs that refer to this immediate.  If we promote it, we'll
     * have to patch these up to refer to the new GRF.
     */
-   exec_list *uses;
+   brw_exec_list *uses;
 
    /** The immediate value */
    union {
@@ -933,7 +933,7 @@ build_imm_reg_for_copy(struct imm *imm)
    case 2:
       return brw_imm_w(imm->w);
    default:
-      unreachable("not implemented");
+      UNREACHABLE("not implemented");
    }
 }
 
@@ -1150,7 +1150,7 @@ add_candidate_immediate(struct table *table, brw_inst *inst, unsigned ip,
    case BRW_TYPE_UB:
    case BRW_TYPE_B:
    default:
-      unreachable("not reached");
+      UNREACHABLE("not reached");
    }
 
    /* It is safe to change the type of the operands of a select instruction
@@ -1212,7 +1212,7 @@ allocate_slots(brw_shader &s,
       }
    }
 
-   unreachable("No free slots found.");
+   UNREACHABLE("No free slots found.");
 }
 
 static void
@@ -1235,7 +1235,7 @@ deallocate_slots(const struct intel_device_info *devinfo,
       }
    }
 
-   unreachable("No such register found.");
+   UNREACHABLE("No such register found.");
 }
 
 static void
@@ -1436,7 +1436,7 @@ brw_opt_combine_constants(brw_shader &s)
       imm->first_use_ip = UINT16_MAX;
       imm->last_use_ip = 0;
 
-      imm->uses = new(const_ctx) exec_list;
+      imm->uses = new(const_ctx) brw_exec_list;
 
       const unsigned first_user = result->values_to_emit[i].first_user;
       const unsigned last_user = first_user +
@@ -1535,39 +1535,22 @@ brw_opt_combine_constants(brw_shader &s)
       /* Insert it either before the instruction that generated the immediate
        * or after the last non-control flow instruction of the common ancestor.
        */
-      exec_node *n;
-      bblock_t *insert_block;
+      brw_builder ibld = brw_builder(&s, 1).exec_all();
       if (imm->inst != nullptr) {
-         insert_block = imm->block;
-         n = imm->inst;
+         ibld = ibld.before(imm->inst);
       } else {
-         insert_block = imm->block;
-         if (insert_block->start()->opcode == BRW_OPCODE_DO) {
+         bblock_t *block = imm->block;
+         if (block->start()->opcode == BRW_OPCODE_DO) {
             /* DO blocks are weird. They can contain only the single DO
              * instruction. As a result, MOV instructions cannot be added to
              * the DO block, so add to the next block which is guaranteed
              * to not be a DO block.
              */
-            insert_block = insert_block->next();
-            assert(insert_block->start()->opcode != BRW_OPCODE_DO);
+            block = block->next();
+            assert(block->start()->opcode != BRW_OPCODE_DO);
          }
-         n = insert_block->last_non_control_flow_inst()->next;
+         ibld = ibld.after_block_before_control_flow(block);
       }
-
-      /* From the BDW and CHV PRM, 3D Media GPGPU, Special Restrictions:
-       *
-       *   "In Align16 mode, the channel selects and channel enables apply to a
-       *    pair of half-floats, because these parameters are defined for DWord
-       *    elements ONLY. This is applicable when both source and destination
-       *    are half-floats."
-       *
-       * This means that Align16 instructions that use promoted HF immediates
-       * and use a <0,1,0>:HF region would read 2 HF slots instead of
-       * replicating the single one we want. To avoid this, we always populate
-       * both HF slots within a DWord with the constant.
-       */
-      const uint32_t width = 1;
-      const brw_builder ibld = brw_builder(&s, width).at(insert_block, n).exec_all();
 
       brw_reg reg = brw_vgrf(imm->nr, BRW_TYPE_F);
       reg.offset = imm->subreg_offset;
@@ -1582,7 +1565,7 @@ brw_opt_combine_constants(brw_shader &s)
       struct brw_reg imm_reg = build_imm_reg_for_copy(imm);
 
       /* Ensure we have enough space in the register to copy the immediate */
-      assert(reg.offset + brw_type_size_bytes(imm_reg.type) * width <= REG_SIZE * reg_unit(devinfo));
+      assert(reg.offset + brw_type_size_bytes(imm_reg.type) <= REG_SIZE * reg_unit(devinfo));
 
       ibld.MOV(retype(reg, imm_reg.type), imm_reg);
    }
@@ -1590,7 +1573,7 @@ brw_opt_combine_constants(brw_shader &s)
 
    /* Rewrite the immediate sources to refer to the new GRFs. */
    for (int i = 0; i < table.len; i++) {
-      foreach_list_typed(reg_link, link, link, table.imm[i].uses) {
+      brw_foreach_list_typed(reg_link, link, link, table.imm[i].uses) {
          brw_reg *reg = &link->inst->src[link->src];
 
          if (link->inst->opcode == BRW_OPCODE_SEL) {
@@ -1612,7 +1595,7 @@ brw_opt_combine_constants(brw_shader &s)
                   reg->type = BRW_TYPE_DF;
                   break;
                default:
-                  unreachable("Bad type size");
+                  UNREACHABLE("Bad type size");
                }
             }
          } else if ((link->inst->opcode == BRW_OPCODE_SHL ||

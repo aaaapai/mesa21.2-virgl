@@ -531,7 +531,8 @@ anv_get_format(const struct anv_physical_device *device, VkFormat vk_format)
 
    const struct anv_format *format =
       &anv_formats[ext_number].formats[enum_offset];
-   if (format->planes[0].isl_format == ISL_FORMAT_UNSUPPORTED)
+   if (format->planes[0].isl_format == ISL_FORMAT_UNSUPPORTED &&
+       format->planes[0].vbo_format == ISL_FORMAT_UNSUPPORTED)
       return NULL;
 
    /* This format is only available if custom border colors without format is
@@ -644,7 +645,8 @@ anv_get_image_format_features2(const struct anv_physical_device *physical_device
                             VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT |
                             VK_IMAGE_CREATE_SPARSE_ALIASED_BIT)) != 0;
 
-   if (anv_format == NULL)
+   if (anv_format == NULL ||
+       anv_format->planes[0].isl_format == ISL_FORMAT_UNSUPPORTED)
       return 0;
 
    assert((isl_mod_info != NULL) ==
@@ -658,17 +660,19 @@ anv_get_image_format_features2(const struct anv_physical_device *physical_device
    if (anv_is_compressed_format_emulated(physical_device, vk_format)) {
       assert(isl_format_is_compressed(anv_format->planes[0].isl_format));
 
-      /* require optimal tiling so that we can decompress on upload */
-      if (vk_tiling != VK_IMAGE_TILING_OPTIMAL)
-         return 0;
-
-      /* required features for compressed formats */
-      flags |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT |
-               VK_FORMAT_FEATURE_2_BLIT_SRC_BIT |
-               VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
-               VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT |
-               VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
-
+      /* Require optimal tiling so that we can decompress on upload */
+      if (vk_tiling == VK_IMAGE_TILING_OPTIMAL) {
+         /* Required features for compressed formats */
+         flags |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT |
+                  VK_FORMAT_FEATURE_2_BLIT_SRC_BIT |
+                  VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                  VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT |
+                  VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
+      } else if (vk_tiling == VK_IMAGE_TILING_LINEAR) {
+         /* Images used for transfers */
+         flags |= VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT |
+                  VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
+      }
       return flags;
    }
 
@@ -973,6 +977,8 @@ anv_get_image_format_features2(const struct anv_physical_device *physical_device
           */
          if (vk_format != VK_FORMAT_G8_B8R8_2PLANE_420_UNORM &&
              vk_format != VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM &&
+             vk_format != VK_FORMAT_G8_B8_R8_3PLANE_422_UNORM &&
+             vk_format != VK_FORMAT_G8_B8_R8_3PLANE_444_UNORM &&
              vk_format != VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16) {
             anv_finishme("support more multi-planar formats with DRM modifiers");
             return 0;
@@ -1313,7 +1319,7 @@ anv_formats_are_compatible(
       isl_format_get_layout(img_view_isl_fmt0);
    const enum isl_format img_isl_fmt0 =
       anv_get_format_plane(physical_device,
-                           img_view_fmt->vk_format, 0, tiling).isl_format;
+                           img_fmt->vk_format, 0, tiling).isl_format;
    const struct isl_format_layout *img_fmt0_layout =
       isl_format_get_layout(img_isl_fmt0);
 
@@ -1510,6 +1516,7 @@ anv_get_image_format_properties(
    VkImageCompressionPropertiesEXT *comp_props = NULL;
    VkHostImageCopyDevicePerformanceQueryEXT *host_props = NULL;
    bool from_wsi = false;
+   const bool is_sparse = info->flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT;
 
    /* Extract input structs */
    vk_foreach_struct_const(s, info->pNext) {
@@ -1592,7 +1599,7 @@ anv_get_image_format_properties(
 
    switch (info->type) {
    default:
-      unreachable("bad VkImageType");
+      UNREACHABLE("bad VkImageType");
    case VK_IMAGE_TYPE_1D:
       maxExtent.width = 16384;
       maxExtent.height = 1;
@@ -1818,6 +1825,20 @@ anv_get_image_format_properties(
        !devinfo->has_coarse_pixel_primitive_and_cb)
       goto unsupported;
 
+   if (is_sparse) {
+      if (anv_sparse_image_check_support(physical_device,
+                                         info->flags,
+                                         info->tiling,
+                                         sampleCounts,
+                                         info->type,
+                                         info->format,
+                                         &sampleCounts) != VK_SUCCESS) {
+         goto unsupported;
+      }
+   }
+
+   assert(sampleCounts != 0);
+
    /* From the bspec section entitled "Surface Layout and Tiling",
     * Gfx9 has a 256 GB limitation and Gfx11+ has a 16 TB limitation.
     */
@@ -1872,7 +1893,7 @@ anv_get_image_format_properties(
 
       switch (info->tiling) {
       default:
-         unreachable("bad VkImageTiling");
+         UNREACHABLE("bad VkImageTiling");
       case VK_IMAGE_TILING_LINEAR:
          /* The app can query the image's memory layout with
           * vkGetImageSubresourceLayout.
@@ -2109,16 +2130,6 @@ void anv_GetPhysicalDeviceSparseImageFormatProperties2(
    if ((pFormatInfo->samples &
         img_props.imageFormatProperties.sampleCounts) == 0)
       return;
-
-   if (anv_sparse_image_check_support(physical_device,
-                                      VK_IMAGE_CREATE_SPARSE_BINDING_BIT |
-                                      VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT,
-                                      pFormatInfo->tiling,
-                                      pFormatInfo->samples,
-                                      pFormatInfo->type,
-                                      pFormatInfo->format) != VK_SUCCESS) {
-      return;
-   }
 
    VkExtent3D ds_granularity = {};
    VkSparseImageFormatProperties2 *ds_props_ptr = NULL;

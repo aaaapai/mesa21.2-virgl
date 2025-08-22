@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use crate::ir::*;
+use compiler::cfg::CFG;
 use std::cmp::max;
 use std::cmp::Reverse;
 
@@ -182,6 +183,9 @@ pub fn side_effect_type(op: &Op) -> SideEffect {
         | Op::LdTram(_)
         | Op::MemBar(_) => SideEffect::Memory,
 
+        // Matrix ops
+        Op::Imma(_) | Op::Hmma(_) => SideEffect::None,
+
         // Control-flow ops
         Op::BClear(_)
         | Op::Break(_)
@@ -234,6 +238,10 @@ pub fn side_effect_type(op: &Op) -> SideEffect {
         | Op::PhiDsts(_)
         | Op::RegOut(_) => SideEffect::Barrier,
     }
+}
+
+pub fn estimate_block_weight(cfg: &CFG<BasicBlock>, block_idx: usize) -> u32 {
+    10_u32.pow(cfg.loop_depth(block_idx).try_into().unwrap())
 }
 
 /// Try to guess how many cycles a variable latency instruction will take
@@ -318,6 +326,8 @@ pub fn estimate_variable_latency(sm: u8, op: &Op) -> u32 {
         | Op::PixLd(_)
         | Op::S2R(_)
         | Op::Match(_) => 16,
+
+        Op::Hmma(_) | Op::Imma(_) => 22,
 
         _ => panic!("Unknown variable latency op {op}"),
     }

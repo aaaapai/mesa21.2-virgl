@@ -49,10 +49,6 @@
 #include "drm-uapi/drm_fourcc.h"
 #endif
 
-#if DETECT_OS_ANDROID
-#include <vndk/hardware_buffer.h>
-#endif
-
 /* Pre-declarations needed for WSI entrypoints */
 struct wl_surface;
 struct wl_display;
@@ -70,6 +66,7 @@ typedef uint32_t xcb_window_t;
 #include "vk_buffer_view.h"
 #include "vk_device.h"
 #include "vk_device_generated_commands.h"
+#include "vk_device_memory.h"
 #include "vk_instance.h"
 #include "vk_image.h"
 #include "vk_log.h"
@@ -98,6 +95,7 @@ typedef uint32_t xcb_window_t;
 extern "C" {
 #endif
 
+#define LVP_NUM_QUEUES 1
 #define MAX_SETS         8
 #define MAX_DESCRIPTORS 1000000 /* Required by vkd3d-proton */
 #define MAX_PUSH_CONSTANTS_SIZE 256
@@ -137,20 +135,20 @@ void __lvp_finishme(const char *file, int line, const char *format, ...)
 
 #define LVP_SHADER_STAGES (MESA_SHADER_CALLABLE + 1)
 #define LVP_STAGE_MASK BITFIELD_MASK(LVP_SHADER_STAGES)
-#define LVP_STAGE_MASK_GFX (BITFIELD_MASK(PIPE_SHADER_MESH_TYPES) & ~BITFIELD_BIT(MESA_SHADER_COMPUTE))
+#define LVP_STAGE_MASK_GFX (BITFIELD_MASK(MESA_SHADER_MESH_STAGES) & ~BITFIELD_BIT(MESA_SHADER_COMPUTE))
 
 #define lvp_foreach_stage(stage, stage_bits)                         \
-   for (gl_shader_stage stage,                                       \
-        __tmp = (gl_shader_stage)((stage_bits) & LVP_STAGE_MASK);    \
+   for (mesa_shader_stage stage,                                       \
+        __tmp = (mesa_shader_stage)((stage_bits) & LVP_STAGE_MASK);    \
         stage = ffs(__tmp) - 1, __tmp;                     \
         __tmp &= ~(1 << (stage)))
 
 #define lvp_forall_stage(stage)                                      \
-   for (gl_shader_stage stage = MESA_SHADER_VERTEX; stage < LVP_SHADER_STAGES; stage++)
+   for (mesa_shader_stage stage = MESA_SHADER_VERTEX; stage < LVP_SHADER_STAGES; stage++)
 
 #define lvp_forall_gfx_stage(stage)                                  \
-   for (gl_shader_stage stage,                                       \
-           __tmp = (gl_shader_stage)(LVP_STAGE_MASK_GFX);            \
+   for (mesa_shader_stage stage,                                       \
+           __tmp = (mesa_shader_stage)(LVP_STAGE_MASK_GFX);            \
         stage = ffs(__tmp) - 1, __tmp;                               \
         __tmp &= ~(1 << (stage)))
 
@@ -241,18 +239,14 @@ enum lvp_device_memory_type {
 };
 
 struct lvp_device_memory {
-   struct vk_object_base base;
+   struct vk_device_memory vk;
+
    struct pipe_memory_allocation *pmem;
    struct llvmpipe_memory_allocation mem_alloc;
-   uint32_t                                     type_index;
    VkDeviceSize                                 map_size;
-   VkDeviceSize                                 size;
    void *                                       map;
    enum lvp_device_memory_type memory_type;
    int                                          backed_fd;
-#if DETECT_OS_ANDROID
-   struct AHardwareBuffer *android_hardware_buffer;
-#endif
 };
 
 struct lvp_pipe_sync {
@@ -469,7 +463,7 @@ lvp_pipeline_type_from_bind_point(VkPipelineBindPoint bind_point)
 #ifdef VK_ENABLE_BETA_EXTENSIONS
    case VK_PIPELINE_BIND_POINT_EXECUTION_GRAPH_AMDX: return LVP_PIPELINE_EXEC_GRAPH;
 #endif
-   default: unreachable("Unsupported VkPipelineBindPoint");
+   default: UNREACHABLE("Unsupported VkPipelineBindPoint");
    }
 }
 
@@ -519,7 +513,7 @@ struct lvp_pipeline {
    void *state_data;
    bool force_min_sample;
    struct lvp_shader shaders[LVP_SHADER_STAGES];
-   gl_shader_stage last_vertex;
+   mesa_shader_stage last_vertex;
    struct vk_graphics_pipeline_state graphics_state;
    VkGraphicsPipelineLibraryFlagsEXT stages;
    bool line_smooth;
@@ -686,7 +680,7 @@ VK_DEFINE_NONDISP_HANDLE_CASTS(lvp_descriptor_set, base, VkDescriptorSet,
                                VK_OBJECT_TYPE_DESCRIPTOR_SET)
 VK_DEFINE_NONDISP_HANDLE_CASTS(lvp_descriptor_set_layout, vk.base, VkDescriptorSetLayout,
                                VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT)
-VK_DEFINE_NONDISP_HANDLE_CASTS(lvp_device_memory, base, VkDeviceMemory,
+VK_DEFINE_NONDISP_HANDLE_CASTS(lvp_device_memory, vk.base, VkDeviceMemory,
                                VK_OBJECT_TYPE_DEVICE_MEMORY)
 VK_DEFINE_NONDISP_HANDLE_CASTS(lvp_event, base, VkEvent, VK_OBJECT_TYPE_EVENT)
 VK_DEFINE_NONDISP_HANDLE_CASTS(lvp_image, vk.base, VkImage, VK_OBJECT_TYPE_IMAGE)
@@ -728,8 +722,6 @@ VkResult lvp_execute_cmds(struct lvp_device *device,
                           struct lvp_cmd_buffer *cmd_buffer);
 size_t
 lvp_get_rendering_state_size(void);
-struct lvp_image *lvp_swapchain_get_image(VkSwapchainKHR swapchain,
-                                          uint32_t index);
 
 static inline enum pipe_format
 lvp_vk_format_to_pipe_format(VkFormat format)
@@ -808,11 +800,7 @@ lvp_nv_dgc_token_to_cmd_type(const VkIndirectCommandsLayoutTokenNV *token);
 
 #if DETECT_OS_ANDROID
 VkResult
-lvp_import_ahb_memory(struct lvp_device *device, struct lvp_device_memory *mem,
-                      const VkImportAndroidHardwareBufferInfoANDROID *info);
-VkResult
-lvp_create_ahb_memory(struct lvp_device *device, struct lvp_device_memory *mem,
-                      const VkMemoryAllocateInfo *pAllocateInfo);
+lvp_import_ahb_memory(struct lvp_device *device, struct lvp_device_memory *mem);
 #endif
 
 enum vk_cmd_type

@@ -124,8 +124,10 @@ elk_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo)
       nir_options->lower_doubles_options = fp64_options;
 
       nir_options->unify_interfaces = i < MESA_SHADER_FRAGMENT;
-      nir_options->support_indirect_inputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
-      nir_options->support_indirect_outputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
+      nir_options->support_indirect_inputs = BITFIELD_BIT(MESA_SHADER_TESS_CTRL) |
+                                             BITFIELD_BIT(MESA_SHADER_TESS_EVAL) |
+                                             BITFIELD_BIT(MESA_SHADER_FRAGMENT),
+      nir_options->support_indirect_outputs = (uint8_t)BITFIELD_MASK(MESA_SHADER_STAGES),
 
       nir_options->force_indirect_unrolling |=
          elk_nir_no_indirect_mask(compiler, i);
@@ -184,7 +186,7 @@ elk_get_compiler_config_value(const struct elk_compiler *compiler)
 }
 
 unsigned
-elk_prog_data_size(gl_shader_stage stage)
+elk_prog_data_size(mesa_shader_stage stage)
 {
    static const size_t stage_sizes[] = {
       [MESA_SHADER_VERTEX]       = sizeof(struct elk_vs_prog_data),
@@ -199,7 +201,7 @@ elk_prog_data_size(gl_shader_stage stage)
 }
 
 unsigned
-elk_prog_key_size(gl_shader_stage stage)
+elk_prog_key_size(mesa_shader_stage stage)
 {
    static const size_t stage_sizes[] = {
       [MESA_SHADER_VERTEX]       = sizeof(struct elk_vs_prog_key),
@@ -234,7 +236,7 @@ elk_write_shader_relocs(const struct elk_isa_info *isa,
                elk_update_reloc_imm(isa, dst, value);
                break;
             default:
-               unreachable("Invalid relocation type");
+               UNREACHABLE("Invalid relocation type");
             }
             break;
          }

@@ -151,7 +151,12 @@
 
 #define RDECODE_FEEDBACK_PROFILING                          0x00000001
 
-#define RDECODE_SPS_INFO_H264_EXTENSION_SUPPORT_FLAG_SHIFT  7
+#define RDECODE_SPS_INFO_H264_DIRECT_8X8_INFERENCE_FLAG_SHIFT            0
+#define RDECODE_SPS_INFO_H264_MB_ADAPTIVE_FRAME_FIELD_FLAG_SHIFT         1
+#define RDECODE_SPS_INFO_H264_FRAME_MBS_ONLY_FLAG_SHIFT                  2
+#define RDECODE_SPS_INFO_H264_DELTA_PIC_ORDER_ALWAYS_ZERO_FLAG_SHIFT     3
+#define RDECODE_SPS_INFO_H264_GAPS_IN_FRAME_NUM_VALUE_ALLOWED_FLAG_SHIFT 5
+#define RDECODE_SPS_INFO_H264_EXTENSION_SUPPORT_FLAG_SHIFT               7
 
 #define RDECODE_VP9_PROBS_DATA_SIZE                         2304
 
@@ -1081,6 +1086,7 @@ typedef struct rvcn_dec_message_av1_s {
    rvcn_dec_warped_motion_params_t global_motion[8];
    rvcn_dec_av1_tile_info_t tile_info[256];
    unsigned char reserved[3];
+   unsigned int av1_intrabc_workaround;
 } rvcn_dec_message_av1_t;
 
 typedef struct rvcn_dec_feature_index_s {
@@ -1257,6 +1263,7 @@ struct jpeg_params {
 
 #define RDECODE_SESSION_CONTEXT_SIZE (128 * 1024)
 #define RDECODE_MAX_SUBSAMPLE_SIZE   (2048 * 2 * 4)
+#define RDECODE_IT_SCALING_TABLE_SIZE       992
 
 void ac_vcn_vp9_fill_probs_table(void *ptr);
 

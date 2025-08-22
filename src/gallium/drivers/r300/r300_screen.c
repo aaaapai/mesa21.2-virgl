@@ -208,37 +208,10 @@ static const nir_shader_compiler_options gallivm_compiler_options = {
    .has_fused_comp_and_csel = true,
    .max_unroll_iterations = 32,
 
-   .support_indirect_inputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
-   .support_indirect_outputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
+   .support_indirect_inputs = (uint8_t)BITFIELD_MASK(MESA_SHADER_STAGES),
+   .support_indirect_outputs = (uint8_t)BITFIELD_MASK(MESA_SHADER_STAGES),
 };
 
-static const void *
-r300_get_compiler_options(struct pipe_screen *pscreen,
-                          enum pipe_shader_ir ir,
-                          enum pipe_shader_type shader)
-{
-   struct r300_screen* r300screen = r300_screen(pscreen);
-
-   assert(ir == PIPE_SHADER_IR_NIR);
-
-   if (shader == PIPE_SHADER_VERTEX && !r300screen->caps.has_tcl) {
-      return &gallivm_compiler_options;
-   } else if (r300screen->caps.is_r500) {
-      if (shader == PIPE_SHADER_VERTEX)
-         return &r500_vs_compiler_options;
-       else
-         return &r500_fs_compiler_options;
-   } else {
-      if (shader == PIPE_SHADER_VERTEX) {
-         if (r300screen->caps.is_r400)
-            return &r400_vs_compiler_options;
-
-         return &r300_vs_compiler_options;
-      } else {
-         return &r300_fs_compiler_options;
-      }
-   }
-}
 
 /**
  * Whether the format matches:
@@ -450,7 +423,7 @@ static void r300_init_shader_caps(struct r300_screen* r300screen)
    bool is_r500 = r300screen->caps.is_r500;
 
    struct pipe_shader_caps *caps =
-      (struct pipe_shader_caps *)&r300screen->screen.shader_caps[PIPE_SHADER_VERTEX];
+      (struct pipe_shader_caps *)&r300screen->screen.shader_caps[MESA_SHADER_VERTEX];
 
    if (r300screen->caps.has_tcl) {
       caps->max_instructions =
@@ -492,7 +465,7 @@ static void r300_init_shader_caps(struct r300_screen* r300screen)
    }
    caps->supported_irs = (1 << PIPE_SHADER_IR_NIR) | (1 << PIPE_SHADER_IR_TGSI);
 
-   caps = (struct pipe_shader_caps *)&r300screen->screen.shader_caps[PIPE_SHADER_FRAGMENT];
+   caps = (struct pipe_shader_caps *)&r300screen->screen.shader_caps[MESA_SHADER_FRAGMENT];
 
    caps->max_instructions = is_r500 || is_r400 ? 512 : 96;
    caps->max_alu_instructions = is_r500 || is_r400 ? 512 : 64;
@@ -709,7 +682,6 @@ struct pipe_screen* r300_screen_create(struct radeon_winsys *rws,
     r300screen->screen.destroy = r300_destroy_screen;
     r300screen->screen.get_name = r300_get_name;
     r300screen->screen.get_vendor = r300_get_vendor;
-    r300screen->screen.get_compiler_options = r300_get_compiler_options;
     r300screen->screen.get_device_vendor = r300_get_device_vendor;
     r300screen->screen.get_disk_shader_cache = r300_get_disk_shader_cache;
     r300screen->screen.get_screen_fd = r300_screen_get_fd;
@@ -719,6 +691,14 @@ struct pipe_screen* r300_screen_create(struct radeon_winsys *rws,
     r300screen->screen.context_create = r300_create_context;
     r300screen->screen.fence_reference = r300_fence_reference;
     r300screen->screen.fence_finish = r300_fence_finish;
+
+    r300screen->screen.nir_options[MESA_SHADER_VERTEX] =
+        !r300screen->caps.has_tcl ? &gallivm_compiler_options :
+        r300screen->caps.is_r500 ? &r500_vs_compiler_options :
+        r300screen->caps.is_r400 ? &r400_vs_compiler_options :
+                                   &r300_vs_compiler_options;
+    r300screen->screen.nir_options[MESA_SHADER_FRAGMENT] =
+        r300screen->caps.is_r500 ? &r500_fs_compiler_options : &r300_fs_compiler_options;
 
     r300_init_screen_resource_functions(r300screen);
 

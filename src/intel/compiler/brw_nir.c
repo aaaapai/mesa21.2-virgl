@@ -94,7 +94,7 @@ type_size_xvec4(const struct glsl_type *type, bool as_vec4, bool bindless)
    case GLSL_TYPE_VOID:
    case GLSL_TYPE_ERROR:
    case GLSL_TYPE_COOPERATIVE_MATRIX:
-      unreachable("not reached");
+      UNREACHABLE("not reached");
    }
 
    return 0;
@@ -199,7 +199,7 @@ remap_tess_levels(nir_builder *b, nir_intrinsic_instr *intr,
          out_of_bounds = true;
          break;
       default:
-         unreachable("Bogus tessellation domain");
+         UNREACHABLE("Bogus tessellation domain");
       }
    } else if (location == VARYING_SLOT_TESS_LEVEL_OUTER) {
       b->cursor = write ? nir_before_instr(&intr->instr)
@@ -251,7 +251,7 @@ remap_tess_levels(nir_builder *b, nir_intrinsic_instr *intr,
          }
          break;
       default:
-         unreachable("Bogus tessellation domain");
+         UNREACHABLE("Bogus tessellation domain");
       }
    } else {
       return false;
@@ -268,8 +268,7 @@ remap_tess_levels(nir_builder *b, nir_intrinsic_instr *intr,
          nir_src_rewrite(&intr->src[0], src);
       }
    } else if (dest) {
-      nir_def_rewrite_uses_after(&intr->def, dest,
-                                     dest->parent_instr);
+      nir_def_rewrite_uses_after(&intr->def, dest);
    }
 
    return true;
@@ -369,7 +368,7 @@ lower_per_view_outputs(nir_builder *b,
    else {
       nir_def *new_def = nir_load_output(b, intrin->def.num_components,
                                          intrin->def.bit_size, new_offset);
-      new = nir_instr_as_intrinsic(new_def->parent_instr);
+      new = nir_def_as_intrinsic(new_def);
    }
 
    nir_intrinsic_set_base(new, nir_intrinsic_base(intrin));
@@ -491,7 +490,7 @@ brw_nir_lower_vs_inputs(nir_shader *nir)
                      nir_intrinsic_set_component(load, 1);
                   break;
                default:
-                  unreachable("Invalid system value intrinsic");
+                  UNREACHABLE("Invalid system value intrinsic");
                }
 
                /* Position the value behind the app's inputs, for base we
@@ -1007,7 +1006,7 @@ brw_nir_optimize(nir_shader *nir,
 
       LOOP_OPT(nir_copy_prop);
 
-      LOOP_OPT(nir_lower_phis_to_scalar, false);
+      LOOP_OPT(nir_lower_phis_to_scalar, NULL, NULL);
 
       LOOP_OPT(nir_copy_prop);
       LOOP_OPT(nir_opt_dce);
@@ -1145,7 +1144,7 @@ lower_bit_size_callback(const nir_instr *instr, UNUSED void *data)
       case nir_op_fcos:
          return 0;
       case nir_op_isign:
-         unreachable("Should have been lowered by nir_opt_algebraic.");
+         UNREACHABLE("Should have been lowered by nir_opt_algebraic.");
       default:
          if (nir_op_infos[alu->op].num_inputs >= 2 &&
              alu->def.bit_size == 8)
@@ -1526,8 +1525,8 @@ brw_nir_link_shaders(const struct brw_compiler *compiler,
          ms_outputs |= BITFIELD64_BIT(var->data.location);
 
       uint64_t zero_inputs = ~ms_outputs & fs_inputs;
-      zero_inputs &= BITFIELD64_BIT(VARYING_SLOT_LAYER) |
-                     BITFIELD64_BIT(VARYING_SLOT_VIEWPORT);
+      zero_inputs &= VARYING_BIT_LAYER |
+                     VARYING_BIT_VIEWPORT;
 
       if (zero_inputs)
          NIR_PASS(_, consumer, brw_nir_zero_inputs, &zero_inputs);
@@ -1574,7 +1573,7 @@ brw_nir_link_shaders(const struct brw_compiler *compiler,
 
    if (producer->info.stage == MESA_SHADER_TESS_CTRL &&
        producer->options->vectorize_tess_levels)
-   NIR_PASS_V(producer, nir_lower_tess_level_array_vars_to_vec);
+   NIR_PASS(_, producer, nir_lower_tess_level_array_vars_to_vec);
 
    NIR_PASS(_, producer, nir_opt_combine_stores, nir_var_shader_out);
    NIR_PASS(_, consumer, nir_opt_vectorize_io_vars, nir_var_shader_in);
@@ -1592,7 +1591,7 @@ brw_nir_link_shaders(const struct brw_compiler *compiler,
        * between whole workgroup, possibly using multiple HW threads). For
        * those write-mask in output is handled by I/O lowering.
        */
-      NIR_PASS_V(producer, nir_lower_io_vars_to_temporaries,
+      NIR_PASS(_, producer, nir_lower_io_vars_to_temporaries,
                  nir_shader_get_entrypoint(producer), true, false);
       NIR_PASS(_, producer, nir_lower_global_vars_to_local);
       NIR_PASS(_, producer, nir_split_var_copies);
@@ -2037,7 +2036,7 @@ brw_postprocess_nir(nir_shader *nir, const struct brw_compiler *compiler,
    if (devinfo->ver >= 30)
       NIR_PASS(_, nir, brw_nir_lower_sample_index_in_coord);
 
-   if (gl_shader_stage_can_set_fragment_shading_rate(nir->info.stage))
+   if (mesa_shader_stage_can_set_fragment_shading_rate(nir->info.stage))
       NIR_PASS(_, nir, intel_nir_lower_shading_rate_output);
 
    OPT(brw_nir_tag_speculative_access);
@@ -2067,6 +2066,12 @@ brw_postprocess_nir(nir_shader *nir, const struct brw_compiler *compiler,
 
    if (OPT(nir_lower_int64))
       brw_nir_optimize(nir, devinfo);
+
+   /* This pass specifically looks for sequences of fmul and fadd that
+    * intel_nir_opt_peephole_ffma will try to eliminate. Call this
+    * reassociation pass first.
+    */
+   OPT(nir_opt_reassociate_matrix_mul);
 
    /* Try and fuse multiply-adds, if successful, run shrink_vectors to
     * avoid peephole_ffma to generate things like this :
@@ -2282,7 +2287,7 @@ get_subgroup_size(const struct shader_info *info, unsigned max_subgroup_size)
       return info->stage == MESA_SHADER_FRAGMENT ? 0 : max_subgroup_size;
 
    case SUBGROUP_SIZE_REQUIRE_4:
-      unreachable("Unsupported subgroup size type");
+      UNREACHABLE("Unsupported subgroup size type");
 
    case SUBGROUP_SIZE_REQUIRE_8:
    case SUBGROUP_SIZE_REQUIRE_16:
@@ -2298,7 +2303,7 @@ get_subgroup_size(const struct shader_info *info, unsigned max_subgroup_size)
       break;
    }
 
-   unreachable("Invalid subgroup size type");
+   UNREACHABLE("Invalid subgroup size type");
 }
 
 unsigned
@@ -2377,7 +2382,7 @@ brw_cmod_for_nir_comparison(nir_op op)
       return BRW_CONDITIONAL_NZ;
 
    default:
-      unreachable("Unsupported NIR comparison op");
+      UNREACHABLE("Unsupported NIR comparison op");
    }
 }
 
@@ -2443,7 +2448,7 @@ lsc_op_for_nir_intrinsic(const nir_intrinsic_instr *intrin)
          src_idx = 1;
          break;
       default:
-         unreachable("Invalid add atomic opcode");
+         UNREACHABLE("Invalid add atomic opcode");
       }
 
       if (nir_src_is_const(intrin->src[src_idx])) {
@@ -2472,7 +2477,7 @@ lsc_op_for_nir_intrinsic(const nir_intrinsic_instr *intrin)
    case nir_atomic_op_fadd: return LSC_OP_ATOMIC_FADD;
 
    default:
-      unreachable("Unsupported NIR atomic intrinsic");
+      UNREACHABLE("Unsupported NIR atomic intrinsic");
    }
 }
 
@@ -2494,7 +2499,7 @@ brw_type_for_base_type(enum glsl_base_type base_type)
    case GLSL_TYPE_INT64:     return BRW_TYPE_Q;
 
    default:
-      unreachable("invalid base type");
+      UNREACHABLE("invalid base type");
    }
 }
 
@@ -2531,7 +2536,7 @@ brw_type_for_nir_type(const struct intel_device_info *devinfo,
    case nir_type_uint8:
       return BRW_TYPE_UB;
    default:
-      unreachable("unknown type");
+      UNREACHABLE("unknown type");
    }
 
    return BRW_TYPE_F;
@@ -2692,7 +2697,7 @@ brw_nir_move_interpolation_to_top(nir_shader *nir)
             if (intrin->intrinsic != nir_intrinsic_load_interpolated_input)
                continue;
             nir_intrinsic_instr *bary_intrinsic =
-               nir_instr_as_intrinsic(intrin->src[0].ssa->parent_instr);
+               nir_def_as_intrinsic(intrin->src[0].ssa);
             nir_intrinsic_op op = bary_intrinsic->intrinsic;
 
             /* Leave interpolateAtSample/Offset() where they are. */

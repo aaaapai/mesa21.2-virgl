@@ -19,13 +19,11 @@
 
 #include "vn_command_buffer.h"
 #include "vn_device.h"
-#include "vn_device_memory.h"
 #include "vn_feedback.h"
 #include "vn_instance.h"
 #include "vn_physical_device.h"
 #include "vn_query_pool.h"
 #include "vn_renderer.h"
-#include "vn_wsi.h"
 
 /* queue commands */
 
@@ -52,7 +50,6 @@ struct vn_queue_submission {
    uint32_t pnext_count;
    uint32_t dev_mask_count;
    bool has_zink_sync_batch;
-   const struct vn_device_memory *wsi_mem;
    struct vn_sync_payload_external external_payload;
 
    /* Temporary storage allocation for submission
@@ -102,7 +99,7 @@ vn_get_wait_semaphore_count(struct vn_queue_submission *submit,
    case VK_STRUCTURE_TYPE_BIND_SPARSE_INFO:
       return submit->sparse_batches[batch_index].waitSemaphoreCount;
    default:
-      unreachable("unexpected batch type");
+      UNREACHABLE("unexpected batch type");
    }
 }
 
@@ -118,7 +115,7 @@ vn_get_signal_semaphore_count(struct vn_queue_submission *submit,
    case VK_STRUCTURE_TYPE_BIND_SPARSE_INFO:
       return submit->sparse_batches[batch_index].signalSemaphoreCount;
    default:
-      unreachable("unexpected batch type");
+      UNREACHABLE("unexpected batch type");
    }
 }
 
@@ -139,7 +136,7 @@ vn_get_wait_semaphore(struct vn_queue_submission *submit,
       return submit->sparse_batches[batch_index]
          .pWaitSemaphores[semaphore_index];
    default:
-      unreachable("unexpected batch type");
+      UNREACHABLE("unexpected batch type");
    }
 }
 
@@ -160,7 +157,7 @@ vn_get_signal_semaphore(struct vn_queue_submission *submit,
       return submit->sparse_batches[batch_index]
          .pSignalSemaphores[semaphore_index];
    default:
-      unreachable("unexpected batch type");
+      UNREACHABLE("unexpected batch type");
    }
 }
 
@@ -255,7 +252,7 @@ vn_get_signal_semaphore_counter(struct vn_queue_submission *submit,
          .pSignalSemaphoreInfos[sem_index]
          .value;
    default:
-      unreachable("unexpected batch type");
+      UNREACHABLE("unexpected batch type");
    }
 }
 
@@ -509,15 +506,6 @@ vn_queue_submission_prepare(struct vn_queue_submission *submit)
 
    submit->external_payload.ring_idx = queue->ring_idx;
 
-   submit->wsi_mem = NULL;
-   if (submit->batch_count == 1 &&
-       submit->batch_type != VK_STRUCTURE_TYPE_BIND_SPARSE_INFO) {
-      const struct wsi_memory_signal_submit_info *info = vk_find_struct_const(
-         submit->submit_batches[0].pNext, WSI_MEMORY_SIGNAL_SUBMIT_INFO_MESA);
-      if (info)
-         submit->wsi_mem = vn_device_memory_from_handle(info->memory);
-   }
-
    for (uint32_t i = 0; i < submit->batch_count; i++) {
       VkResult result = vn_queue_submission_fix_batch_semaphores(submit, i);
       if (result != VK_SUCCESS)
@@ -739,7 +727,7 @@ vn_queue_submission_add_semaphore_feedback(struct vn_queue_submission *submit,
       }
    }
 
-   unreachable("bad feedback sem");
+   UNREACHABLE("bad feedback sem");
 }
 
 static void
@@ -980,51 +968,6 @@ vn_queue_submission_prepare_submit(struct vn_queue_submission *submit)
    return VK_SUCCESS;
 }
 
-static void
-vn_queue_wsi_present(struct vn_queue_submission *submit)
-{
-   struct vk_queue *queue_vk = vk_queue_from_handle(submit->queue_handle);
-   struct vn_device *dev = vn_device_from_vk(queue_vk->base.device);
-
-   if (!submit->wsi_mem)
-      return;
-
-   if (dev->renderer->info.has_implicit_fencing) {
-      struct vn_renderer_submit_batch batch = {
-         .ring_idx = submit->external_payload.ring_idx,
-      };
-
-      uint32_t local_data[8];
-      struct vn_cs_encoder local_enc =
-         VN_CS_ENCODER_INITIALIZER_LOCAL(local_data, sizeof(local_data));
-      if (submit->external_payload.ring_seqno_valid) {
-         const uint64_t ring_id = vn_ring_get_id(dev->primary_ring);
-         vn_encode_vkWaitRingSeqnoMESA(&local_enc, 0, ring_id,
-                                       submit->external_payload.ring_seqno);
-         batch.cs_data = local_data;
-         batch.cs_size = vn_cs_encoder_get_len(&local_enc);
-      }
-
-      const struct vn_renderer_submit renderer_submit = {
-         .bos = &submit->wsi_mem->base_bo,
-         .bo_count = 1,
-         .batches = &batch,
-         .batch_count = 1,
-      };
-      vn_renderer_submit(dev->renderer, &renderer_submit);
-   } else {
-      if (VN_DEBUG(WSI)) {
-         static uint32_t num_rate_limit_warning = 0;
-
-         if (num_rate_limit_warning++ < 10)
-            vn_log(dev->instance,
-                   "forcing vkQueueWaitIdle before presenting");
-      }
-
-      vn_QueueWaitIdle(submit->queue_handle);
-   }
-}
-
 static VkResult
 vn_queue_submit(struct vn_queue_submission *submit)
 {
@@ -1036,11 +979,9 @@ vn_queue_submit(struct vn_queue_submission *submit)
    /* To ensure external components waiting on the correct fence payload,
     * below sync primitives must be installed after the submission:
     * - explicit fencing: sync file export
-    * - implicit fencing: dma-fence attached to the wsi bo
     *
     * We enforce above via an asynchronous vkQueueSubmit(2) via ring followed
     * by an asynchronous renderer submission to wait for the ring submission:
-    * - struct wsi_memory_signal_submit_info
     * - fence is an external fence
     * - has an external signal semaphore
     */
@@ -1110,8 +1051,6 @@ vn_queue_submit(struct vn_queue_submission *submit)
       }
    }
 
-   vn_queue_wsi_present(submit);
-
    vn_queue_submission_cleanup(submit);
 
    return VK_SUCCESS;
@@ -1138,6 +1077,131 @@ vn_QueueSubmit(VkQueue queue,
    return vn_queue_submit(&submit);
 }
 
+static VkResult
+vn_queue_submit_2_to_1(struct vn_device *dev,
+                       VkQueue queue_handle,
+                       const VkSubmitInfo2 *submit,
+                       VkFence fence_handle)
+{
+   VkResult result;
+   const void *pnext = NULL;
+
+   VkProtectedSubmitInfo _protected;
+   VkDeviceGroupSubmitInfo _group;
+   VkTimelineSemaphoreSubmitInfo _timeline;
+
+   STACK_ARRAY(VkSemaphore, _wait_sem_handles,
+               submit->waitSemaphoreInfoCount);
+   STACK_ARRAY(VkPipelineStageFlags, _wait_stages,
+               submit->waitSemaphoreInfoCount);
+   STACK_ARRAY(uint32_t, _wait_dev_indices, submit->waitSemaphoreInfoCount);
+   STACK_ARRAY(uint64_t, _wait_values, submit->waitSemaphoreInfoCount);
+   STACK_ARRAY(VkCommandBuffer, _cmd_handles, submit->commandBufferInfoCount);
+   STACK_ARRAY(uint32_t, _cmd_dev_indices, submit->commandBufferInfoCount);
+   STACK_ARRAY(VkSemaphore, _signal_sem_handles,
+               submit->signalSemaphoreInfoCount);
+   STACK_ARRAY(uint32_t, _signal_dev_indices,
+               submit->signalSemaphoreInfoCount);
+   STACK_ARRAY(uint64_t, _signal_values, submit->waitSemaphoreInfoCount);
+
+   if (submit->flags & VK_SUBMIT_PROTECTED_BIT) {
+      _protected = (VkProtectedSubmitInfo){
+         .sType = VK_STRUCTURE_TYPE_PROTECTED_SUBMIT_INFO,
+         .pNext = pnext,
+         .protectedSubmit = VK_TRUE,
+      };
+      pnext = &_protected;
+   }
+
+   if (dev->device_mask > 1) {
+      for (uint32_t i = 0; i < submit->waitSemaphoreInfoCount; i++) {
+         _wait_dev_indices[i] = submit->pWaitSemaphoreInfos[i].deviceIndex;
+         _cmd_dev_indices[i] = submit->pCommandBufferInfos[i].deviceMask;
+         _signal_dev_indices[i] = submit->pWaitSemaphoreInfos[i].deviceIndex;
+      }
+      _group = (VkDeviceGroupSubmitInfo){
+         .sType = VK_STRUCTURE_TYPE_DEVICE_GROUP_SUBMIT_INFO,
+         .pNext = pnext,
+         .waitSemaphoreCount = submit->waitSemaphoreInfoCount,
+         .pWaitSemaphoreDeviceIndices = _wait_dev_indices,
+         .commandBufferCount = submit->commandBufferInfoCount,
+         .pCommandBufferDeviceMasks = _cmd_dev_indices,
+         .signalSemaphoreCount = submit->signalSemaphoreInfoCount,
+         .pSignalSemaphoreDeviceIndices = _signal_dev_indices,
+      };
+      pnext = &_group;
+   }
+
+   bool has_wait_timeline_sem = false;
+   for (uint32_t i = 0; i < submit->waitSemaphoreInfoCount; i++) {
+      _wait_sem_handles[i] = submit->pWaitSemaphoreInfos[i].semaphore;
+      _wait_stages[i] = submit->pWaitSemaphoreInfos[i].stageMask
+                           ? submit->pWaitSemaphoreInfos[i].stageMask
+                           : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
+      VK_FROM_HANDLE(vn_semaphore, sem, _wait_sem_handles[i]);
+      has_wait_timeline_sem |= sem->type == VK_SEMAPHORE_TYPE_TIMELINE;
+   }
+   if (has_wait_timeline_sem) {
+      for (uint32_t i = 0; i < submit->waitSemaphoreInfoCount; i++)
+         _wait_values[i] = submit->pWaitSemaphoreInfos[i].value;
+   }
+
+   bool has_signal_timeline_sem = false;
+   for (uint32_t i = 0; i < submit->signalSemaphoreInfoCount; i++) {
+      _signal_sem_handles[i] = submit->pSignalSemaphoreInfos[i].semaphore;
+
+      VK_FROM_HANDLE(vn_semaphore, sem, _signal_sem_handles[i]);
+      has_signal_timeline_sem |= sem->type == VK_SEMAPHORE_TYPE_TIMELINE;
+   }
+   if (has_signal_timeline_sem) {
+      for (uint32_t i = 0; i < submit->signalSemaphoreInfoCount; i++)
+         _signal_values[i] = submit->pSignalSemaphoreInfos[i].value;
+   }
+
+   if (has_wait_timeline_sem || has_signal_timeline_sem) {
+      _timeline = (VkTimelineSemaphoreSubmitInfo){
+         .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+         .pNext = pnext,
+         .waitSemaphoreValueCount =
+            has_wait_timeline_sem ? submit->waitSemaphoreInfoCount : 0,
+         .pWaitSemaphoreValues = _wait_values,
+         .signalSemaphoreValueCount =
+            has_signal_timeline_sem ? submit->signalSemaphoreInfoCount : 0,
+         .pSignalSemaphoreValues = _signal_values,
+      };
+      pnext = &_timeline;
+   }
+
+   for (uint32_t i = 0; i < submit->commandBufferInfoCount; i++)
+      _cmd_handles[i] = submit->pCommandBufferInfos[i].commandBuffer;
+
+   const VkSubmitInfo _submit = {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .pNext = pnext,
+      .waitSemaphoreCount = submit->waitSemaphoreInfoCount,
+      .pWaitSemaphores = _wait_sem_handles,
+      .pWaitDstStageMask = _wait_stages,
+      .commandBufferCount = submit->commandBufferInfoCount,
+      .pCommandBuffers = _cmd_handles,
+      .signalSemaphoreCount = submit->signalSemaphoreInfoCount,
+      .pSignalSemaphores = _signal_sem_handles,
+   };
+   result = vn_QueueSubmit(queue_handle, 1, &_submit, fence_handle);
+
+   STACK_ARRAY_FINISH(_wait_sem_handles);
+   STACK_ARRAY_FINISH(_wait_stages);
+   STACK_ARRAY_FINISH(_wait_dev_indices);
+   STACK_ARRAY_FINISH(_wait_values);
+   STACK_ARRAY_FINISH(_cmd_handles);
+   STACK_ARRAY_FINISH(_cmd_dev_indices);
+   STACK_ARRAY_FINISH(_signal_sem_handles);
+   STACK_ARRAY_FINISH(_signal_dev_indices);
+   STACK_ARRAY_FINISH(_signal_values);
+
+   return result;
+}
+
 VkResult
 vn_QueueSubmit2(VkQueue queue,
                 uint32_t submitCount,
@@ -1145,6 +1209,20 @@ vn_QueueSubmit2(VkQueue queue,
                 VkFence fence)
 {
    VN_TRACE_FUNC();
+
+   VK_FROM_HANDLE(vk_queue, queue_vk, queue);
+   struct vn_device *dev = vn_device_from_vk(queue_vk->base.device);
+   if (!dev->has_sync2) {
+      for (uint32_t i = 0; i < submitCount; i++) {
+         VkResult result = vn_queue_submit_2_to_1(
+            dev, queue, &pSubmits[i],
+            i == submitCount - 1 ? fence : VK_NULL_HANDLE);
+         if (result != VK_SUCCESS)
+            return result;
+      }
+
+      return VK_SUCCESS;
+   }
 
    vn_tls_set_async_pipeline_create();
 
@@ -1638,7 +1716,7 @@ vn_GetFenceStatus(VkDevice device, VkFence _fence)
          result = errno == ETIME ? VK_NOT_READY : VK_ERROR_DEVICE_LOST;
       break;
    default:
-      unreachable("unexpected fence payload type");
+      UNREACHABLE("unexpected fence payload type");
       break;
    }
 

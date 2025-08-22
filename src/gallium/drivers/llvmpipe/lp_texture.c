@@ -950,8 +950,8 @@ llvmpipe_transfer_map_ms(struct pipe_context *pipe,
    if ((usage & PIPE_MAP_WRITE) &&
        (resource->bind & PIPE_BIND_CONSTANT_BUFFER)) {
       unsigned i;
-      for (i = 0; i < ARRAY_SIZE(llvmpipe->constants[PIPE_SHADER_FRAGMENT]); ++i) {
-         if (resource == llvmpipe->constants[PIPE_SHADER_FRAGMENT][i].buffer) {
+      for (i = 0; i < ARRAY_SIZE(llvmpipe->constants[MESA_SHADER_FRAGMENT]); ++i) {
+         if (resource == llvmpipe->constants[MESA_SHADER_FRAGMENT][i].buffer) {
             /* constants may have changed */
             llvmpipe->dirty |= LP_NEW_FS_CONSTANTS;
             break;
@@ -1715,7 +1715,7 @@ llvmpipe_resource_get_param(struct pipe_screen *screen,
 
    switch (param) {
    case PIPE_RESOURCE_PARAM_NPLANES:
-      *value = util_format_get_num_planes(resource->format);
+      *value = util_resource_num(resource);
       return true;
    case PIPE_RESOURCE_PARAM_STRIDE:
       *value = lpr->row_stride[level];

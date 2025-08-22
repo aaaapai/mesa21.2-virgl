@@ -911,6 +911,7 @@ a7xx_base = A6XXProps(
         line_width_min = 1.0,
         line_width_max = 127.5,
         has_scalar_alu = True,
+        has_scalar_predicates = True,
         has_coherent_ubwc_flag_caches = True,
         has_isam_v = True,
         has_ssbo_imm_offsets = True,
@@ -943,6 +944,7 @@ a7xx_gen2 = A7XXProps(
         has_primitive_shading_rate = True,
         reading_shading_rate_requires_smask_quirk = True,
         has_ray_intersection = True,
+        has_hw_bin_scaling = True,
     )
 
 a7xx_gen3 = A7XXProps(
@@ -970,6 +972,7 @@ a7xx_gen3 = A7XXProps(
         has_alias_rt = True,
         has_abs_bin_mask = True,
         new_control_regs = True,
+        has_hw_bin_scaling = True,
     )
 
 a730_magic_regs = dict(
@@ -1010,9 +1013,6 @@ a730_raw_magic_regs = [
         [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB22, 0x00000000],
         [A6XXRegs.REG_A7XX_SP_UNKNOWN_B310, 0x00000000],
 
-        [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8120, 0x09510840],
-        [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8121, 0x00000a62],
-
         [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2,   0x00000000],
         [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2+1, 0x00000000],
         [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE4,   0x00000000],
@@ -1024,7 +1024,6 @@ a730_raw_magic_regs = [
 
         [A6XXRegs.REG_A7XX_RB_UNKNOWN_8E79,   0x00000000],
         [A6XXRegs.REG_A7XX_RB_UNKNOWN_8899,   0x00000000],
-        [A6XXRegs.REG_A7XX_RB_UNKNOWN_88F5,   0x00000000],
     ]
 
 a740_magic_regs = dict(
@@ -1069,14 +1068,6 @@ a740_raw_magic_regs = [
         [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB22, 0x00000000],
         [A6XXRegs.REG_A7XX_SP_UNKNOWN_B310, 0x00000000],
 
-        [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8120, 0x09510840],
-        [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8121, 0x00000a62],
-
-        [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8009, 0x00000000],
-        [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800A, 0x00000000],
-        [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800B, 0x00000000],
-        [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800C, 0x00000000],
-
         [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2,   0x00000000],
         [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2+1, 0x00000000],
         [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE4,   0x00000000],
@@ -1088,10 +1079,7 @@ a740_raw_magic_regs = [
 
         [A6XXRegs.REG_A7XX_RB_UNKNOWN_8E79,   0x00000000],
         [A6XXRegs.REG_A7XX_RB_UNKNOWN_8899,   0x00000000],
-        [A6XXRegs.REG_A7XX_RB_UNKNOWN_88F5,   0x00000000],
         [A6XXRegs.REG_A7XX_RB_UNKNOWN_8C34,   0x00000000],
-
-        [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8008, 0x00000000],
     ]
 
 add_gpus([
@@ -1181,14 +1169,6 @@ add_gpus([
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB22, 0x00000000],
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_B310, 0x00000000],
 
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8120, 0x09510840],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8121, 0x00000a62],
-
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8009, 0x00000000],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800A, 0x00000000],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800B, 0x00000000],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800C, 0x00000000],
-
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2,   0x00000000],
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2+1, 0x00000000],
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE4,   0x00000000],
@@ -1200,10 +1180,7 @@ add_gpus([
 
             [A6XXRegs.REG_A7XX_RB_UNKNOWN_8E79,   0x00000000],
             [A6XXRegs.REG_A7XX_RB_UNKNOWN_8899,   0x00000000],
-            [A6XXRegs.REG_A7XX_RB_UNKNOWN_88F5,   0x00000000],
             [A6XXRegs.REG_A7XX_RB_UNKNOWN_8C34,   0x00000000],
-
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8008, 0x00000000],
         ],
     ))
 
@@ -1264,14 +1241,6 @@ add_gpus([
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB22, 0x00000000],
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_B310, 0x00000000],
 
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8120, 0x09510840],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8121, 0x00000a62],
-
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8009, 0x00000000],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800A, 0x00000000],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800B, 0x00000000],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800C, 0x00000000],
-
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2,   0x00000000],
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2+1, 0x00000000],
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE4,   0x00000000],
@@ -1283,7 +1252,6 @@ add_gpus([
 
             [A6XXRegs.REG_A7XX_RB_UNKNOWN_8E79,   0x00000000],
             [A6XXRegs.REG_A7XX_RB_UNKNOWN_8899,   0x00000000],
-            [A6XXRegs.REG_A7XX_RB_UNKNOWN_88F5,   0x00000000],
         ],
     ))
 
@@ -1369,12 +1337,6 @@ add_gpus([
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB01, 0x00000000],
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB22, 0x00000000],
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_B310, 0x00000000],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8120, 0x09510840],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8121, 0x00000a62],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8009, 0x00000000],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800A, 0x00000000],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800B, 0x00000000],
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800C, 0x00000000],
 
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2,   0x00000000],
             [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2+1, 0x00000000],
@@ -1386,10 +1348,7 @@ add_gpus([
             [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_80A7, 0x00000000],
 
             [A6XXRegs.REG_A7XX_RB_UNKNOWN_8899,   0x00000000],
-            [A6XXRegs.REG_A7XX_RB_UNKNOWN_88F5,   0x00000000],
             [A6XXRegs.REG_A7XX_RB_UNKNOWN_8C34,   0x00000000],
-
-            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8008, 0x00000000],
 
             [0x930a, 0],
             [0x960a, 1],

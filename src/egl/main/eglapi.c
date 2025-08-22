@@ -86,7 +86,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "c11/threads.h"
-#include "mapi/glapi/glapi.h"
+#include "mesa/glapi/glapi/glapi.h"
 #include "util/detect_os.h"
 #include "util/macros.h"
 #include "util/perf/cpu_trace.h"
@@ -406,9 +406,6 @@ eglGetDisplay(EGLNativeDisplayType nativeDisplay)
    _EGLDisplay *disp;
    void *native_display_ptr;
 
-#if !DETECT_OS_ANDROID
-   util_cpu_trace_init();
-#endif
    _EGL_FUNC_START(NULL, EGL_OBJECT_THREAD_KHR, NULL);
 
    STATIC_ASSERT(sizeof(void *) >= sizeof(nativeDisplay));
@@ -473,9 +470,6 @@ eglGetPlatformDisplayEXT(EGLenum platform, void *native_display,
    EGLAttrib *attrib_list;
    EGLDisplay disp;
 
-#if !DETECT_OS_ANDROID
-   util_cpu_trace_init();
-#endif
    _EGL_FUNC_START(NULL, EGL_OBJECT_THREAD_KHR, NULL);
 
    if (_eglConvertIntsToAttribs(int_attribs, &attrib_list) != EGL_SUCCESS)
@@ -490,9 +484,6 @@ PUBLIC EGLDisplay EGLAPIENTRY
 eglGetPlatformDisplay(EGLenum platform, void *native_display,
                       const EGLAttrib *attrib_list)
 {
-#if !DETECT_OS_ANDROID
-   util_cpu_trace_init();
-#endif
    _EGL_FUNC_START(NULL, EGL_OBJECT_THREAD_KHR, NULL);
    return _eglGetPlatformDisplayCommon(platform, native_display, attrib_list);
 }
@@ -591,7 +582,6 @@ _eglCreateExtensionsString(_EGLDisplay *disp)
 
    if (disp->Extensions.KHR_no_config_context)
       _eglAppendExtension(&exts, "EGL_MESA_configless_context");
-   _EGL_CHECK_EXTENSION(MESA_drm_image);
    _EGL_CHECK_EXTENSION(MESA_gl_interop);
    _EGL_CHECK_EXTENSION(MESA_image_dma_buf_export);
    _EGL_CHECK_EXTENSION(MESA_query_driver);
@@ -667,7 +657,6 @@ eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
 {
    _EGLDisplay *disp = _eglLockDisplay(dpy);
 
-   util_cpu_trace_init();
    _EGL_FUNC_START(disp, EGL_OBJECT_DISPLAY_KHR, NULL);
 
    _eglDeviceRefreshList();
@@ -2240,48 +2229,7 @@ eglDupNativeFenceFDANDROID(EGLDisplay dpy, EGLSync sync)
    RETURN_EGL_SUCCESS(disp, ret);
 }
 
-static EGLImage EGLAPIENTRY
-eglCreateDRMImageMESA(EGLDisplay dpy, const EGLint *attr_list)
-{
-   _EGLDisplay *disp = _eglLockDisplay(dpy);
-   _EGLImage *img;
-   EGLImage ret;
-
-   _EGL_FUNC_START(disp, EGL_OBJECT_DISPLAY_KHR, NULL);
-
-   _EGL_CHECK_DISPLAY(disp, EGL_NO_IMAGE_KHR);
-   if (!disp->Extensions.MESA_drm_image)
-      RETURN_EGL_EVAL(disp, EGL_NO_IMAGE_KHR);
-
-   img = disp->Driver->CreateDRMImageMESA(disp, attr_list);
-   ret = (img) ? _eglLinkImage(img) : EGL_NO_IMAGE_KHR;
-
-   RETURN_EGL_EVAL(disp, ret);
-}
-
-static EGLBoolean EGLAPIENTRY
-eglExportDRMImageMESA(EGLDisplay dpy, EGLImage image, EGLint *name,
-                      EGLint *handle, EGLint *stride)
-{
-   _EGLDisplay *disp = _eglLockDisplay(dpy);
-   _EGLImage *img = _eglLookupImage(image, disp);
-   EGLBoolean ret = EGL_FALSE;
-
-   _EGL_FUNC_START(disp, EGL_OBJECT_IMAGE_KHR, img);
-
-   _EGL_CHECK_DISPLAY(disp, EGL_FALSE);
-   assert(disp->Extensions.MESA_drm_image);
-
-   if (!img)
-      RETURN_EGL_ERROR(disp, EGL_BAD_PARAMETER, EGL_FALSE);
-
-   egl_relax (disp, &img->Resource) {
-      ret = disp->Driver->ExportDRMImageMESA(disp, img, name, handle, stride);
-   }
-
-   RETURN_EGL_EVAL(disp, ret);
-}
-
+#ifdef HAVE_BIND_WL_DISPLAY
 struct wl_display;
 
 static EGLBoolean EGLAPIENTRY
@@ -2370,6 +2318,7 @@ eglCreateWaylandBufferFromImageWL(EGLDisplay dpy, EGLImage image)
 
    RETURN_EGL_EVAL(disp, ret);
 }
+#endif
 
 static EGLBoolean EGLAPIENTRY
 eglGetSyncValuesCHROMIUM(EGLDisplay dpy, EGLSurface surface, EGLuint64KHR *ust,

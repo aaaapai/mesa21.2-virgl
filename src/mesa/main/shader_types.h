@@ -38,7 +38,8 @@
 #include "util/mesa-sha1.h"
 #include "util/mesa-blake3.h"
 #include "compiler/shader_info.h"
-#include "compiler/glsl/list.h"
+#include "compiler/list.h"
+#include "compiler/glsl/ir_list.h"
 
 #include "pipe/p_state.h"
 
@@ -154,7 +155,7 @@ struct gl_shader
     * Must be the first field.
     */
    GLenum16 Type;
-   gl_shader_stage Stage;
+   mesa_shader_stage Stage;
    GLuint Name;  /**< AKA the handle */
    GLint RefCount;  /**< Reference count */
    GLchar *Label;   /**< GL_KHR_debug */
@@ -187,7 +188,7 @@ struct gl_shader
    GLbitfield BlendSupport;
 
    struct nir_shader *nir;
-   struct exec_list *ir;
+   struct ir_exec_list *ir;
 
    /**
     * Whether early fragment tests are enabled as defined by
@@ -247,7 +248,7 @@ struct gl_shader
  */
 struct gl_linked_shader
 {
-   gl_shader_stage Stage;
+   mesa_shader_stage Stage;
 
    struct gl_program *Program;  /**< Post-compile assembly code */
 
@@ -445,7 +446,7 @@ struct gl_shader_program
     * allocate slots to explicit locations. This list stores the blocks of
     * continuous empty slots inside UniformRemapTable.
     */
-   struct exec_list EmptyUniformLocations;
+   struct ir_exec_list EmptyUniformLocations;
 
    /**
     * Total number of explicit uniform location including inactive uniforms.
@@ -463,7 +464,7 @@ struct gl_shader_program
     * \c MESA_SHADER_* defines.  Entries for non-existent stages will be
     * \c NULL.
     */
-   struct gl_linked_shader *_LinkedShaders[MESA_SHADER_STAGES];
+   struct gl_linked_shader *_LinkedShaders[MESA_SHADER_MESH_STAGES];
 
    unsigned GLSL_Version; /**< GLSL version used for linking */
 };
@@ -480,8 +481,6 @@ struct gl_program
    GLint RefCount;
    GLubyte *String;  /**< Null-terminated program text */
 
-   /** GL_VERTEX/FRAGMENT_PROGRAM_ARB, GL_GEOMETRY_PROGRAM_NV */
-   GLenum16 Target;
    GLenum16 Format;    /**< String encoding format */
 
    GLboolean _Used;        /**< Ever used for drawing? Used for debugging */
@@ -688,7 +687,7 @@ struct gl_active_atomic_buffer
    GLuint MinimumSize;
 
    /** Shader stages making use of it. */
-   GLboolean StageReferences[MESA_SHADER_STAGES];
+   GLboolean StageReferences[MESA_SHADER_MESH_STAGES];
 };
 
 struct gl_resource_name
@@ -794,7 +793,7 @@ struct gl_uniform_storage {
     */
    unsigned array_elements;
 
-   struct gl_opaque_uniform_index opaque[MESA_SHADER_STAGES];
+   struct gl_opaque_uniform_index opaque[MESA_SHADER_MESH_STAGES];
 
    /**
     * Mask of shader stages (1 << MESA_SHADER_xxx) where this uniform is used.

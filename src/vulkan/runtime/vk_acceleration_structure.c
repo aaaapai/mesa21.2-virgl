@@ -29,7 +29,9 @@
 #include "vk_device.h"
 #include "vk_command_buffer.h"
 #include "vk_log.h"
+#include "vk_pipeline.h"
 #include "vk_meta.h"
+#include "vk_shader.h"
 
 #include "bvh/vk_build_interface.h"
 #include "bvh/vk_bvh.h"
@@ -164,7 +166,7 @@ vk_acceleration_structure_build_state_init(struct vk_acceleration_structure_buil
       ir_leaf_size = sizeof(struct vk_ir_instance_node);
       break;
    default:
-      unreachable("Unknown VkGeometryTypeKHR");
+      UNREACHABLE("Unknown VkGeometryTypeKHR");
    }
 
    uint32_t offset = 0;
@@ -277,7 +279,8 @@ vk_get_bvh_build_pipeline_spv(struct vk_device *device, struct vk_meta_device *m
                               enum vk_meta_object_key_type type, const uint32_t *spv,
                               uint32_t spv_size, unsigned push_constant_size,
                               const struct vk_acceleration_structure_build_args *args,
-                              uint32_t flags, VkPipeline *pipeline)
+                              uint32_t flags, VkPipeline *pipeline,
+                              bool unaligned_dispatch)
 {
    VkPipelineLayout layout;
    VkResult result = vk_get_bvh_build_pipeline_layout(device, meta, push_constant_size, &layout);
@@ -347,17 +350,25 @@ vk_get_bvh_build_pipeline_spv(struct vk_device *device, struct vk_meta_device *m
       .requiredSubgroupSize = args->subgroup_size,
    };
 
+   uint32_t shader_flags = VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT;
+
    VkPipelineShaderStageCreateInfo shader_stage = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
       .pNext = &rssci,
-      .flags = VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT,
+      .flags = shader_flags,
       .stage = VK_SHADER_STAGE_COMPUTE_BIT,
       .pName = "main",
       .pSpecializationInfo = &spec_info,
    };
 
+   VkPipelineCreateFlags2CreateInfo pipeline_flags_info = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO,
+      .flags = unaligned_dispatch ? VK_PIPELINE_CREATE_2_UNALIGNED_DISPATCH_BIT_MESA : 0,
+   };
+
    VkComputePipelineCreateInfo pipeline_info = {
       .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+      .pNext = &pipeline_flags_info,
       .stage = shader_stage,
       .flags = 0,
       .layout = layout,
@@ -426,7 +437,7 @@ vk_fill_geometry_data(VkAccelerationStructureTypeKHR type, uint32_t first_id, ui
          data.stride = sizeof(VkAccelerationStructureInstanceKHR);
       break;
    default:
-      unreachable("Unknown geometryType");
+      UNREACHABLE("Unknown geometryType");
    }
 
    return data;
@@ -504,7 +515,8 @@ build_leaves(VkCommandBuffer commandBuffer,
    VkResult result = vk_get_bvh_build_pipeline_spv(device, meta, VK_META_OBJECT_KEY_LEAF,
                                                    spirv, spirv_size, sizeof(struct leaf_args),
                                                    args, flags,
-                                                   &pipeline);
+                                                   &pipeline,
+                                                   true /* unaligned_dispatch */);
    if (result != VK_SUCCESS)
       return result;
 
@@ -573,7 +585,8 @@ morton_generate(VkCommandBuffer commandBuffer, struct vk_device *device,
    VkResult result = vk_get_bvh_build_pipeline_spv(device, meta, VK_META_OBJECT_KEY_MORTON,
                                                    morton_spv, sizeof(morton_spv),
                                                    sizeof(struct morton_args), args, 0,
-                                                   &pipeline);
+                                                   &pipeline,
+                                                   true /* unaligned_dispatch */);
    if (result != VK_SUCCESS)
       return result;
 
@@ -866,7 +879,8 @@ lbvh_build_internal(VkCommandBuffer commandBuffer,
    VkResult result = vk_get_bvh_build_pipeline_spv(device, meta, VK_META_OBJECT_KEY_LBVH_MAIN,
                                                    lbvh_main_spv, sizeof(lbvh_main_spv),
                                                    sizeof(struct lbvh_main_args), args, flags,
-                                                   &pipeline);
+                                                   &pipeline,
+                                                   true /* unaligned_dispatch */);
    if (result != VK_SUCCESS)
       return result;
 
@@ -910,7 +924,7 @@ lbvh_build_internal(VkCommandBuffer commandBuffer,
    result = vk_get_bvh_build_pipeline_spv(device, meta, VK_META_OBJECT_KEY_LBVH_GENERATE_IR,
                                           lbvh_generate_ir_spv, sizeof(lbvh_generate_ir_spv),
                                           sizeof(struct lbvh_generate_ir_args), args, flags,
-                                          &pipeline);
+                                          &pipeline, true /* unaligned_dispatch */);
    if (result != VK_SUCCESS)
       return result;
 
@@ -959,7 +973,8 @@ ploc_build_internal(VkCommandBuffer commandBuffer,
 
    VkResult result = vk_get_bvh_build_pipeline_spv(device, meta, VK_META_OBJECT_KEY_PLOC, ploc_spv,
                                                    sizeof(ploc_spv), sizeof(struct ploc_args),
-                                                   args, flags, &pipeline);
+                                                   args, flags, &pipeline,
+                                                   false /* unaligned_dispatch */);
    if (result != VK_SUCCESS)
       return result;
 
@@ -1071,7 +1086,7 @@ vk_cmd_build_acceleration_structures(VkCommandBuffer commandBuffer,
          /* For updates, the leaf node pass never runs, so set leaf_node_count here. */
          bvh_states[i].vk.leaf_node_count = leaf_node_count;
       } else {
-         unreachable("Unknown internal_build_type");
+         UNREACHABLE("Unknown internal_build_type");
       }
 
       if (bvh_states[i].vk.config.internal_type != VK_INTERNAL_BUILD_TYPE_UPDATE) {
@@ -1307,7 +1322,7 @@ vk_common_CmdBuildAccelerationStructuresIndirectKHR(VkCommandBuffer commandBuffe
                                                     const uint32_t *pIndirectStrides,
                                                     const uint32_t *const *ppMaxPrimitiveCounts)
 {
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -1319,7 +1334,7 @@ vk_common_WriteAccelerationStructuresPropertiesKHR(VkDevice _device, uint32_t ac
                                                    size_t stride)
 {
    VK_FROM_HANDLE(vk_device, device, _device);
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
    return vk_error(device, VK_ERROR_FEATURE_NOT_PRESENT);
 }
 
@@ -1331,7 +1346,7 @@ vk_common_BuildAccelerationStructuresKHR(VkDevice _device,
                                          const VkAccelerationStructureBuildRangeInfoKHR *const *ppBuildRangeInfos)
 {
    VK_FROM_HANDLE(vk_device, device, _device);
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
    return vk_error(device, VK_ERROR_FEATURE_NOT_PRESENT);
 }
 
@@ -1341,7 +1356,7 @@ vk_common_CopyAccelerationStructureKHR(VkDevice _device,
                                        const VkCopyAccelerationStructureInfoKHR *pInfo)
 {
    VK_FROM_HANDLE(vk_device, device, _device);
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
    return vk_error(device, VK_ERROR_FEATURE_NOT_PRESENT);
 }
 
@@ -1351,7 +1366,7 @@ vk_common_CopyMemoryToAccelerationStructureKHR(VkDevice _device,
                                                const VkCopyMemoryToAccelerationStructureInfoKHR *pInfo)
 {
    VK_FROM_HANDLE(vk_device, device, _device);
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
    return vk_error(device, VK_ERROR_FEATURE_NOT_PRESENT);
 }
 
@@ -1361,6 +1376,6 @@ vk_common_CopyAccelerationStructureToMemoryKHR(VkDevice _device,
                                                const VkCopyAccelerationStructureToMemoryInfoKHR *pInfo)
 {
    VK_FROM_HANDLE(vk_device, device, _device);
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
    return vk_error(device, VK_ERROR_FEATURE_NOT_PRESENT);
 }

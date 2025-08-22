@@ -93,6 +93,7 @@ enum radv_meta_object_key_type {
    RADV_META_OBJECT_KEY_CLEAR_DS,
    RADV_META_OBJECT_KEY_CLEAR_HTILE,
    RADV_META_OBJECT_KEY_CLEAR_DCC_COMP_TO_SINGLE,
+   RADV_META_OBJECT_KEY_CLEAR_HIZ,
    RADV_META_OBJECT_KEY_FAST_CLEAR_ELIMINATE,
    RADV_META_OBJECT_KEY_DCC_DECOMPRESS,
    RADV_META_OBJECT_KEY_DCC_RETILE,
@@ -126,7 +127,6 @@ enum radv_meta_object_key_type {
 VkResult radv_device_init_meta(struct radv_device *device);
 void radv_device_finish_meta(struct radv_device *device);
 
-VkResult radv_device_init_null_accel_struct(struct radv_device *device);
 VkResult radv_device_init_accel_struct_build_state(struct radv_device *device);
 void radv_device_finish_accel_struct_build_state(struct radv_device *device);
 
@@ -150,7 +150,7 @@ radv_meta_get_96bit_channel_format(VkFormat format)
       return VK_FORMAT_R32_SFLOAT;
       break;
    default:
-      unreachable("invalid R32G32B32 format");
+      UNREACHABLE("invalid R32G32B32 format");
    }
 }
 
@@ -240,6 +240,9 @@ uint32_t radv_clear_dcc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *i
                         const VkImageSubresourceRange *range, uint32_t value);
 uint32_t radv_clear_htile(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *image,
                           const VkImageSubresourceRange *range, uint32_t value, bool is_clear);
+
+void radv_clear_hiz(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image, const VkImageSubresourceRange *range,
+                    uint32_t value);
 
 void radv_update_memory_cp(struct radv_cmd_buffer *cmd_buffer, uint64_t va, const void *data, uint64_t size);
 

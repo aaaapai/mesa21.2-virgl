@@ -240,7 +240,9 @@ radv_amdgpu_cs_domain(const struct radeon_winsys *_ws)
    /* Bandwidth should be equivalent to at least PCIe 3.0 x8.
     * If there is no PCIe info, assume there is enough bandwidth.
     */
-   bool enough_bandwidth = !ws->info.has_pcie_bandwidth_info || ws->info.pcie_bandwidth_mbps >= 8 * 0.985 * 1024;
+   const uint32_t bandwidth_mbps_threshold = 8 * 0.985 * 1024;
+   bool enough_bandwidth =
+      !ws->info.has_pcie_bandwidth_info || ws->info.pcie_bandwidth_mbps >= bandwidth_mbps_threshold;
 
    bool use_sam =
       (enough_vram && enough_bandwidth && ws->info.has_dedicated_vram && !(ws->perftest & RADV_PERFTEST_NO_SAM)) ||
@@ -347,7 +349,7 @@ get_nop_packet(struct radv_amdgpu_cs *cs)
    case AMDGPU_HW_IP_VCN_ENC:
       return 0; /* NOPs are illegal in encode, so don't pad */
    default:
-      unreachable("Unknown IP type");
+      UNREACHABLE("Unknown IP type");
    }
 }
 
@@ -1577,7 +1579,7 @@ radv_to_amdgpu_priority(enum radeon_ctx_priority radv_priority)
    case RADEON_CTX_PRIORITY_LOW:
       return AMDGPU_CTX_PRIORITY_LOW;
    default:
-      unreachable("Invalid context priority");
+      UNREACHABLE("Invalid context priority");
    }
 }
 
@@ -1684,7 +1686,7 @@ radv_to_amdgpu_pstate(enum radeon_ctx_pstate radv_pstate)
    case RADEON_CTX_PSTATE_PEAK:
       return AMDGPU_CTX_STABLE_PSTATE_PEAK;
    default:
-      unreachable("Invalid pstate");
+      UNREACHABLE("Invalid pstate");
    }
 }
 

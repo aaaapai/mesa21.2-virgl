@@ -27,7 +27,7 @@
 
 class symbol_table_entry {
 public:
-   DECLARE_LINEAR_ALLOC_CXX_OPERATORS(symbol_table_entry);
+   DECLARE_LINEAR_ALLOC_CXX_OPERATORS(symbol_table_entry,,);
 
    bool add_interface(const glsl_type *i, enum ir_variable_mode mode)
    {
@@ -56,23 +56,6 @@ public:
       } else {
          *dest = i;
          return true;
-      }
-   }
-
-   const glsl_type *get_interface(enum ir_variable_mode mode)
-   {
-      switch (mode) {
-      case ir_var_uniform:
-         return ibu;
-      case ir_var_shader_storage:
-         return iss;
-      case ir_var_shader_in:
-         return ibi;
-      case ir_var_shader_out:
-         return ibo;
-      default:
-         assert(!"Unsupported interface variable mode!");
-         return NULL;
       }
    }
 

@@ -96,7 +96,7 @@ uint32_t ir3_nir_scan_driver_consts(struct ir3_compiler *compiler,
 void ir3_alloc_driver_params(struct ir3_const_allocations *const_alloc,
                              uint32_t *num_driver_params,
                              struct ir3_compiler *compiler,
-                             enum pipe_shader_type shader_type);
+                             mesa_shader_stage shader_type);
 bool ir3_nir_lower_load_constant(nir_shader *nir, struct ir3_shader_variant *v);
 void ir3_nir_analyze_ubo_ranges(nir_shader *nir, struct ir3_shader_variant *v);
 bool ir3_nir_lower_ubo_loads(nir_shader *nir, struct ir3_shader_variant *v);
@@ -153,7 +153,7 @@ ir3_bindless_resource(nir_src src)
    if (src.ssa->parent_instr->type != nir_instr_type_intrinsic)
       return NULL;
 
-   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(src.ssa->parent_instr);
+   nir_intrinsic_instr *intrin = nir_def_as_intrinsic(src.ssa);
    if (intrin->intrinsic != nir_intrinsic_bindless_resource_ir3)
       return NULL;
 
@@ -196,6 +196,7 @@ is_intrinsic_load(nir_intrinsic_op op)
 }
 
 uint32_t ir3_nir_max_imm_offset(nir_intrinsic_instr *intrin, const void *data);
+unsigned ir3_nir_max_offset_shift(nir_intrinsic_instr *intr, const void *data);
 
 /* TODO: make this a common NIR helper?
  * there is a nir_system_value_from_intrinsic but it takes nir_intrinsic_op so

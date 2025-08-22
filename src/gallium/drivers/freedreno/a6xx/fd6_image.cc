@@ -121,12 +121,12 @@ fd6_image_descriptor(struct fd_context *ctx, const struct pipe_image_view *buf,
 }
 
 static struct fd6_descriptor_set *
-descriptor_set(struct fd_context *ctx, enum pipe_shader_type shader)
+descriptor_set(struct fd_context *ctx, mesa_shader_stage shader)
    assert_dt
 {
    struct fd6_context *fd6_ctx = fd6_context(ctx);
 
-   if (shader == PIPE_SHADER_COMPUTE)
+   if (shader == MESA_SHADER_COMPUTE)
       return &fd6_ctx->cs_descriptor_set;
 
    unsigned idx = ir3_shader_descriptor_set(shader);
@@ -184,15 +184,14 @@ validate_buffer_descriptor(struct fd_context *ctx, struct fd6_descriptor_set *se
 /* Build bindless descriptor state, returns ownership of state reference */
 template <chip CHIP>
 struct fd_ringbuffer *
-fd6_build_bindless_state(struct fd_context *ctx, enum pipe_shader_type shader,
+fd6_build_bindless_state(struct fd_context *ctx, mesa_shader_stage shader,
                          bool append_fb_read)
 {
    struct fd_shaderbuf_stateobj *bufso = &ctx->shaderbuf[shader];
    struct fd_shaderimg_stateobj *imgso = &ctx->shaderimg[shader];
    struct fd6_descriptor_set *set = descriptor_set(ctx, shader);
 
-   struct fd_ringbuffer *ring = fd_submit_new_ringbuffer(
-      ctx->batch->submit, 16 * 4, FD_RINGBUFFER_STREAMING);
+   fd_cs cs(ctx->batch->submit, 19 * 4);
 
    /* Don't re-use a previous descriptor set if appending the
     * fb-read descriptor, as that can change across batches.
@@ -267,115 +266,109 @@ fd6_build_bindless_state(struct fd_context *ctx, enum pipe_shader_type shader,
 
    unsigned idx = ir3_shader_descriptor_set(shader);
 
-   fd_ringbuffer_attach_bo(ring, set->bo);
+   cs.attach_bo(set->bo);
 
-   if (shader == PIPE_SHADER_COMPUTE) {
-      OUT_REG(ring,
-         SP_UPDATE_CNTL(
-            CHIP,
+   if (shader == MESA_SHADER_COMPUTE) {
+      with_crb (cs, 5) {
+         crb.add(SP_UPDATE_CNTL(CHIP,
             .cs_bindless = CHIP == A6XX ? 0x1f : 0xff,
-         )
-      );
-      OUT_REG(ring, SP_CS_BINDLESS_BASE_DESCRIPTOR(CHIP,
-            idx, .desc_size = BINDLESS_DESCRIPTOR_64B, .bo = set->bo,
-      ));
-
-      if (CHIP == A6XX) {
-         OUT_REG(ring, A6XX_HLSQ_CS_BINDLESS_BASE_DESCRIPTOR(
-               idx, .desc_size = BINDLESS_DESCRIPTOR_64B, .bo = set->bo,
          ));
+         crb.add(SP_CS_BINDLESS_BASE_DESCRIPTOR(CHIP,
+            idx, .desc_size = BINDLESS_DESCRIPTOR_64B, .bo = set->bo,
+         ));
+
+         if (CHIP == A6XX) {
+            crb.add(A6XX_HLSQ_CS_BINDLESS_BASE_DESCRIPTOR(
+               idx, .desc_size = BINDLESS_DESCRIPTOR_64B, .bo = set->bo,
+            ));
+         }
       }
 
       if (bufso->enabled_mask) {
-         OUT_PKT(ring, CP_LOAD_STATE6_FRAG,
-            CP_LOAD_STATE6_0(
-                  .dst_off     = IR3_BINDLESS_SSBO_OFFSET,
-                  .state_type  = ST6_UAV,
-                  .state_src   = SS6_BINDLESS,
-                  .state_block = SB6_CS_SHADER,
-                  .num_unit    = util_last_bit(bufso->enabled_mask),
-            ),
-            CP_LOAD_STATE6_EXT_SRC_ADDR(
-                  /* This isn't actually an address: */
-                  .qword = (idx << 28) |
-                     IR3_BINDLESS_SSBO_OFFSET * FDL6_TEX_CONST_DWORDS,
-            ),
-         );
+         fd_pkt7(cs, CP_LOAD_STATE6_FRAG, 3)
+            .add(CP_LOAD_STATE6_0(
+               .dst_off     = IR3_BINDLESS_SSBO_OFFSET,
+               .state_type  = ST6_UAV,
+               .state_src   = SS6_BINDLESS,
+               .state_block = SB6_CS_SHADER,
+               .num_unit    = util_last_bit(bufso->enabled_mask),
+            ))
+            .add(CP_LOAD_STATE6_EXT_SRC_ADDR(
+               /* This isn't actually an address: */
+               .qword = (idx << 28) |
+                  IR3_BINDLESS_SSBO_OFFSET * FDL6_TEX_CONST_DWORDS,
+            ));
       }
 
       if (imgso->enabled_mask) {
-         OUT_PKT(ring, CP_LOAD_STATE6_FRAG,
-            CP_LOAD_STATE6_0(
-                  .dst_off     = IR3_BINDLESS_IMAGE_OFFSET,
-                  .state_type  = ST6_UAV,
-                  .state_src   = SS6_BINDLESS,
-                  .state_block = SB6_CS_SHADER,
-                  .num_unit    = util_last_bit(imgso->enabled_mask),
-            ),
-            CP_LOAD_STATE6_EXT_SRC_ADDR(
-                  /* This isn't actually an address: */
-                  .qword = (idx << 28) |
-                     IR3_BINDLESS_IMAGE_OFFSET * FDL6_TEX_CONST_DWORDS,
-            ),
-         );
+         fd_pkt7(cs, CP_LOAD_STATE6_FRAG, 3)
+            .add(CP_LOAD_STATE6_0(
+               .dst_off     = IR3_BINDLESS_IMAGE_OFFSET,
+               .state_type  = ST6_UAV,
+               .state_src   = SS6_BINDLESS,
+               .state_block = SB6_CS_SHADER,
+               .num_unit    = util_last_bit(imgso->enabled_mask),
+            ))
+            .add(CP_LOAD_STATE6_EXT_SRC_ADDR(
+               /* This isn't actually an address: */
+               .qword = (idx << 28) |
+                  IR3_BINDLESS_IMAGE_OFFSET * FDL6_TEX_CONST_DWORDS,
+            ));
       }
    } else {
-      OUT_REG(ring,
-         SP_UPDATE_CNTL(
-            CHIP,
+      with_crb (cs, 5) {
+         crb.add(SP_UPDATE_CNTL(CHIP,
             .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,
-         )
-      );
-      OUT_REG(ring, SP_GFX_BINDLESS_BASE_DESCRIPTOR(CHIP,
-            idx, .desc_size = BINDLESS_DESCRIPTOR_64B, .bo = set->bo,
-      ));
-      if (CHIP == A6XX) {
-         OUT_REG(ring, A6XX_HLSQ_BINDLESS_BASE_DESCRIPTOR(
-               idx, .desc_size = BINDLESS_DESCRIPTOR_64B, .bo = set->bo,
          ));
+         crb.add(SP_GFX_BINDLESS_BASE_DESCRIPTOR(CHIP,
+            idx, .desc_size = BINDLESS_DESCRIPTOR_64B, .bo = set->bo,
+         ));
+         if (CHIP == A6XX) {
+            crb.add(A6XX_HLSQ_BINDLESS_BASE_DESCRIPTOR(
+               idx, .desc_size = BINDLESS_DESCRIPTOR_64B, .bo = set->bo,
+            ));
+         }
       }
 
       if (bufso->enabled_mask) {
-         OUT_PKT(ring, CP_LOAD_STATE6,
-            CP_LOAD_STATE6_0(
-                  .dst_off     = IR3_BINDLESS_SSBO_OFFSET,
-                  .state_type  = ST6_SHADER,
-                  .state_src   = SS6_BINDLESS,
-                  .state_block = SB6_UAV,
-                  .num_unit    = util_last_bit(bufso->enabled_mask),
-            ),
-            CP_LOAD_STATE6_EXT_SRC_ADDR(
-                  /* This isn't actually an address: */
-                  .qword = (idx << 28) |
-                     IR3_BINDLESS_SSBO_OFFSET * FDL6_TEX_CONST_DWORDS,
-            ),
-         );
+         fd_pkt7(cs, CP_LOAD_STATE6, 3)
+            .add(CP_LOAD_STATE6_0(
+               .dst_off     = IR3_BINDLESS_SSBO_OFFSET,
+               .state_type  = ST6_SHADER,
+               .state_src   = SS6_BINDLESS,
+               .state_block = SB6_UAV,
+               .num_unit    = util_last_bit(bufso->enabled_mask),
+            ))
+            .add(CP_LOAD_STATE6_EXT_SRC_ADDR(
+               /* This isn't actually an address: */
+               .qword = (idx << 28) |
+                  IR3_BINDLESS_SSBO_OFFSET * FDL6_TEX_CONST_DWORDS,
+            ));
       }
 
       if (imgso->enabled_mask) {
-         OUT_PKT(ring, CP_LOAD_STATE6,
-            CP_LOAD_STATE6_0(
-                  .dst_off     = IR3_BINDLESS_IMAGE_OFFSET,
-                  .state_type  = ST6_SHADER,
-                  .state_src   = SS6_BINDLESS,
-                  .state_block = SB6_UAV,
-                  .num_unit    = util_last_bit(imgso->enabled_mask),
-            ),
-            CP_LOAD_STATE6_EXT_SRC_ADDR(
-                  /* This isn't actually an address: */
-                  .qword = (idx << 28) |
-                     IR3_BINDLESS_IMAGE_OFFSET * FDL6_TEX_CONST_DWORDS,
-            ),
-         );
+         fd_pkt7(cs, CP_LOAD_STATE6, 3)
+            .add(CP_LOAD_STATE6_0(
+               .dst_off     = IR3_BINDLESS_IMAGE_OFFSET,
+               .state_type  = ST6_SHADER,
+               .state_src   = SS6_BINDLESS,
+               .state_block = SB6_UAV,
+               .num_unit    = util_last_bit(imgso->enabled_mask),
+            ))
+            .add(CP_LOAD_STATE6_EXT_SRC_ADDR(
+               /* This isn't actually an address: */
+               .qword = (idx << 28) |
+                  IR3_BINDLESS_IMAGE_OFFSET * FDL6_TEX_CONST_DWORDS,
+            ));
       }
    }
 
-   return ring;
+   return cs.ring();
 }
 FD_GENX(fd6_build_bindless_state);
 
 static void
-fd6_set_shader_buffers(struct pipe_context *pctx, enum pipe_shader_type shader,
+fd6_set_shader_buffers(struct pipe_context *pctx, mesa_shader_stage shader,
                        unsigned start, unsigned count,
                        const struct pipe_shader_buffer *buffers,
                        unsigned writable_bitmask)
@@ -406,7 +399,7 @@ fd6_set_shader_buffers(struct pipe_context *pctx, enum pipe_shader_type shader,
 }
 
 static void
-fd6_set_shader_images(struct pipe_context *pctx, enum pipe_shader_type shader,
+fd6_set_shader_images(struct pipe_context *pctx, mesa_shader_stage shader,
                       unsigned start, unsigned count,
                       unsigned unbind_num_trailing_slots,
                       const struct pipe_image_view *images)

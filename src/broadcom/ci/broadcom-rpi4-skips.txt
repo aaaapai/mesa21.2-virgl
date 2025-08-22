@@ -1,9 +1,11 @@
 # Slow piglit tests (> 1 minute to run)
-spec@!opengl 1.1@streaming-texture-leak
 spec@!opengl 1.2@tex3d-maxsize
 
 # Slow CL tests (> 5 minute to run)
 program@execute@builtin@builtin-float-lgamma_r-1.0.generated
+program@execute@builtin@builtin-float-pow-1.0.generated
+program@execute@builtin@builtin-float-pow-1.0.generated@pow float1
+program@execute@builtin@builtin-float-powr-1.0.generated
 program@execute@builtin@builtin-float-sincos-1.0.generated
 
 # Versions / Extensions not supported
@@ -26,24 +28,42 @@ spec@glsl-es-3.20.*
 dEQP-VK.draw.renderpass.inverted_depth_ranges.nodepthclamp_deltazero
 dEQP-VK.rasterization.depth_bias.d32_sfloat
 
-# When running these tests in parallel with others, quite a few of the
-# tests reach the execution time limit of 1 minute, which generates a
-# lot of flakes (sometimes they pass, sometimes they are timeout). And
-# moving those tests to skip list won't fix the issue, as new tests
-# that were passing fastly now they take 1 minute. Requires
-# investigation.
-dEQP-VK.synchronization.implicit.*
-dEQP-VK.synchronization2.implicit.*
-
 # Slow CTS tests (> 1 minute to run)
 dEQP-VK.memory.mapping.dedicated_alloc.buffer.full.variable.implicit_unmap
+dEQP-VK.memory.mapping.dedicated_alloc.image.full.variable.implicit_unmap
+dEQP-VK.memory.mapping.suballocation.full.variable.implicit_unmap
 dEQP-VK.spirv_assembly.instruction.graphics.spirv_ids_abuse.lots_ids_geom
+dEQP-VK.spirv_assembly.instruction.graphics.spirv_ids_abuse.lots_ids_vert
+dEQP-VK.ssbo.layout.random.16bit.all_per_block_buffers.47
+dEQP-VK.ssbo.layout.random.16bit.all_per_block_buffers.5
 dEQP-VK.ssbo.layout.random.16bit.all_shared_buffer.31
 dEQP-VK.ssbo.layout.random.8bit.all_per_block_buffers.5
+dEQP-VK.ssbo.layout.random.8bit.all_per_block_buffers.6
+dEQP-VK.ssbo.layout.random.all_shared_buffer.3
 dEQP-VK.ssbo.layout.random.nested_structs_arrays.17
+dEQP-VK.ssbo.phys.layout.3_level_array.std140.row_major_mat4_comp_access
+dEQP-VK.ssbo.phys.layout.3_level_array.std430.row_major_mat4
+dEQP-VK.ssbo.phys.layout.3_level_unsized_array.scalar.row_major_mat3x4_comp_access_store_cols
+dEQP-VK.ssbo.phys.layout.3_level_unsized_array.std430.column_major_mat4_store_cols
+dEQP-VK.ssbo.phys.layout.3_level_unsized_array.std430.row_major_mat4_comp_access
 dEQP-VK.ssbo.phys.layout.random.8bit.all_per_block_buffers.46
 dEQP-VK.ssbo.phys.layout.random.8bit.nested_structs_arrays.17
 dEQP-VK.ssbo.phys.layout.random.all_shared_buffer.3
+dEQP-VK.ssbo.phys.layout.single_struct_array.per_block_buffer.std140_instance_array
+dEQP-VK.ssbo.phys.layout.single_struct_array.per_block_buffer.std140_instance_array_comp_access
+dEQP-VK.ssbo.phys.layout.single_struct_array.per_block_buffer.std140_instance_array_comp_access_store_cols
+dEQP-VK.ssbo.phys.layout.single_struct_array.per_block_buffer.std140_instance_array_store_cols
+dEQP-VK.ssbo.phys.layout.single_struct_array.per_block_buffer.std430_instance_array
+dEQP-VK.ssbo.phys.layout.single_struct_array.per_block_buffer.std430_instance_array_comp_access
+dEQP-VK.ssbo.phys.layout.single_struct_array.per_block_buffer.std430_instance_array_comp_access_store_cols
+dEQP-VK.ssbo.phys.layout.single_struct_array.per_block_buffer.std430_instance_array_store_cols
+dEQP-VK.ssbo.phys.layout.single_struct_array.single_buffer.std140_instance_array
+dEQP-VK.ssbo.phys.layout.single_struct_array.single_buffer.std140_instance_array_comp_access
+dEQP-VK.ssbo.phys.layout.single_struct_array.single_buffer.std140_instance_array_comp_access_store_cols
+dEQP-VK.ssbo.phys.layout.single_struct_array.single_buffer.std140_instance_array_store_cols
+dEQP-VK.ssbo.phys.layout.single_struct_array.single_buffer.std430_instance_array
+dEQP-VK.ssbo.phys.layout.single_struct_array.single_buffer.std430_instance_array_comp_access_store_cols
+dEQP-VK.ssbo.phys.layout.single_struct_array.single_buffer.std430_instance_array_store_cols
 
 # WSI tests are too flaky to be useful
 dEQP-VK.image.swapchain_mutable.*
@@ -110,7 +130,6 @@ dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_optimal.v
 dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_optimal.vk_image_type_3d.multiple.random.device.write
 dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_optimal.vk_image_type_3d.single.gradient.device.write
 dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_optimal.vk_image_type_3d.single.random.device.write
-dEQP-VK.synchronization2.signal_order.shared_binary_semaphore.write_ssbo_vertex_read_ssbo_fragment.buffer_16384_opaque_fd
 
 # Leaky in VKCTS 1.4.1.1
 asan-dEQP-VK.video.*

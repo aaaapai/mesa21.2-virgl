@@ -42,7 +42,7 @@
 static void
 write_subroutines(struct blob *metadata, struct gl_shader_program *prog)
 {
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       struct gl_linked_shader *sh = prog->_LinkedShaders[i];
       if (!sh)
          continue;
@@ -72,7 +72,7 @@ read_subroutines(struct blob_reader *metadata, struct gl_shader_program *prog)
 {
    struct gl_subroutine_function *subs;
 
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       struct gl_linked_shader *sh = prog->_LinkedShaders[i];
       if (!sh)
          continue;
@@ -133,7 +133,7 @@ write_buffer_blocks(struct blob *metadata, struct gl_shader_program *prog)
       write_buffer_block(metadata, &prog->data->ShaderStorageBlocks[i]);
    }
 
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       struct gl_linked_shader *sh = prog->_LinkedShaders[i];
       if (!sh)
          continue;
@@ -210,7 +210,7 @@ read_buffer_blocks(struct blob_reader *metadata,
       read_buffer_block(metadata, &prog->data->ShaderStorageBlocks[i], prog);
    }
 
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       struct gl_linked_shader *sh = prog->_LinkedShaders[i];
       if (!sh)
          continue;
@@ -243,7 +243,7 @@ write_atomic_buffers(struct blob *metadata, struct gl_shader_program *prog)
 {
    blob_write_uint32(metadata, prog->data->NumAtomicBuffers);
 
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       if (prog->_LinkedShaders[i]) {
          struct gl_program *glprog = prog->_LinkedShaders[i]->Program;
          blob_write_uint32(metadata, glprog->info.num_abos);
@@ -273,8 +273,8 @@ read_atomic_buffers(struct blob_reader *metadata,
       rzalloc_array(prog, gl_active_atomic_buffer,
                     prog->data->NumAtomicBuffers);
 
-   struct gl_active_atomic_buffer **stage_buff_list[MESA_SHADER_STAGES];
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   struct gl_active_atomic_buffer **stage_buff_list[MESA_SHADER_MESH_STAGES];
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       if (prog->_LinkedShaders[i]) {
          struct gl_program *glprog = prog->_LinkedShaders[i]->Program;
 
@@ -302,7 +302,7 @@ read_atomic_buffers(struct blob_reader *metadata,
          prog->data->AtomicBuffers[i].Uniforms[j] = blob_read_uint32(metadata);
       }
 
-      for (unsigned j = 0; j < MESA_SHADER_STAGES; j++) {
+      for (unsigned j = 0; j < MESA_SHADER_MESH_STAGES; j++) {
          if (prog->data->AtomicBuffers[i].StageReferences[j]) {
             *stage_buff_list[j] = &prog->data->AtomicBuffers[i];
             stage_buff_list[j]++;
@@ -622,7 +622,7 @@ write_uniform_remap_tables(struct blob *metadata,
                              prog->data->UniformStorage,
                              prog->UniformRemapTable);
 
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       struct gl_linked_shader *sh = prog->_LinkedShaders[i];
       if (sh) {
          write_uniform_remap_table(metadata,
@@ -677,7 +677,7 @@ read_uniform_remap_tables(struct blob_reader *metadata,
       read_uniform_remap_table(metadata, prog, &prog->NumUniformRemapTable,
                                prog->data->UniformStorage);
 
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       struct gl_linked_shader *sh = prog->_LinkedShaders[i];
       if (sh) {
          struct gl_program *glprog = sh->Program;
@@ -841,6 +841,8 @@ write_program_resource_data(struct blob *metadata,
    case GL_COMPUTE_SUBROUTINE_UNIFORM:
    case GL_TESS_CONTROL_SUBROUTINE_UNIFORM:
    case GL_TESS_EVALUATION_SUBROUTINE_UNIFORM:
+   case GL_TASK_SUBROUTINE_UNIFORM_EXT:
+   case GL_MESH_SUBROUTINE_UNIFORM_EXT:
    case GL_UNIFORM:
       if (((gl_uniform_storage *)res->Data)->builtin ||
           res->Type != GL_UNIFORM) {
@@ -888,6 +890,8 @@ write_program_resource_data(struct blob *metadata,
    case GL_GEOMETRY_SUBROUTINE:
    case GL_FRAGMENT_SUBROUTINE:
    case GL_COMPUTE_SUBROUTINE:
+   case GL_TASK_SUBROUTINE_EXT:
+   case GL_MESH_SUBROUTINE_EXT:
       sh =
          prog->_LinkedShaders[_mesa_shader_stage_from_subroutine(res->Type)];
       write_shader_subroutine_index(metadata, sh, res);
@@ -938,6 +942,8 @@ read_program_resource_data(struct blob_reader *metadata,
    case GL_COMPUTE_SUBROUTINE_UNIFORM:
    case GL_TESS_CONTROL_SUBROUTINE_UNIFORM:
    case GL_TESS_EVALUATION_SUBROUTINE_UNIFORM:
+   case GL_TASK_SUBROUTINE_UNIFORM_EXT:
+   case GL_MESH_SUBROUTINE_UNIFORM_EXT:
    case GL_UNIFORM: {
       enum uniform_type type = (enum uniform_type) blob_read_uint32(metadata);
       if (type == uniform_not_remapped) {
@@ -964,6 +970,8 @@ read_program_resource_data(struct blob_reader *metadata,
    case GL_GEOMETRY_SUBROUTINE:
    case GL_FRAGMENT_SUBROUTINE:
    case GL_COMPUTE_SUBROUTINE:
+   case GL_TASK_SUBROUTINE_EXT:
+   case GL_MESH_SUBROUTINE_EXT:
       sh =
          prog->_LinkedShaders[_mesa_shader_stage_from_subroutine(res->Type)];
       res->Data =
@@ -1234,7 +1242,7 @@ get_shader_info_and_pointer_sizes(size_t *s_info_size, size_t *s_info_ptrs,
 
 static void
 create_linked_shader_and_program(struct gl_context *ctx,
-                                 gl_shader_stage stage,
+                                 mesa_shader_stage stage,
                                  struct gl_shader_program *prog,
                                  struct blob_reader *metadata)
 {
@@ -1279,7 +1287,7 @@ serialize_glsl_program(struct blob *blob, struct gl_context *ctx,
    blob_write_uint32(blob, prog->IsES);
    blob_write_uint32(blob, prog->data->linked_stages);
 
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+   for (unsigned i = 0; i < MESA_SHADER_MESH_STAGES; i++) {
       struct gl_linked_shader *sh = prog->_LinkedShaders[i];
       if (sh) {
          write_shader_metadata(blob, sh);
@@ -1341,7 +1349,7 @@ deserialize_glsl_program(struct blob_reader *blob, struct gl_context *ctx,
    unsigned mask = prog->data->linked_stages;
    while (mask) {
       const int j = u_bit_scan(&mask);
-      create_linked_shader_and_program(ctx, (gl_shader_stage) j, prog,
+      create_linked_shader_and_program(ctx, (mesa_shader_stage) j, prog,
                                        blob);
    }
 

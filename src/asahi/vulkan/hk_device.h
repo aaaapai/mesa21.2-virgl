@@ -29,10 +29,6 @@
 struct hk_physical_device;
 struct vk_pipeline_cache;
 
-/* Fixed offsets for reserved null image descriptors */
-#define HK_NULL_TEX_OFFSET (0)
-#define HK_NULL_PBE_OFFSET (24)
-
 typedef void (*hk_internal_builder_t)(struct nir_builder *b, const void *key);
 
 struct hk_internal_key {
@@ -70,7 +66,6 @@ struct hk_device {
    struct agx_device dev;
    struct agxdecode_ctx *decode_ctx;
 
-   struct hk_descriptor_table images;
    struct hk_descriptor_table occlusion_queries;
    struct hk_sampler_heap samplers;
 
@@ -83,7 +78,6 @@ struct hk_device {
 
    struct {
       struct agx_bo *bo;
-      uint64_t image_heap_ptr;
       uint64_t heap;
    } rodata;
 
@@ -143,14 +137,14 @@ VkResult hk_sampler_heap_add(struct hk_device *dev,
 void hk_sampler_heap_remove(struct hk_device *dev, struct hk_rc_sampler *rc);
 
 static inline struct agx_scratch *
-hk_device_scratch_locked(struct hk_device *dev, enum pipe_shader_type stage)
+hk_device_scratch_locked(struct hk_device *dev, mesa_shader_stage stage)
 {
    simple_mtx_assert_locked(&dev->scratch.lock);
 
    switch (stage) {
-   case PIPE_SHADER_FRAGMENT:
+   case MESA_SHADER_FRAGMENT:
       return &dev->scratch.fs;
-   case PIPE_SHADER_VERTEX:
+   case MESA_SHADER_VERTEX:
       return &dev->scratch.vs;
    default:
       return &dev->scratch.cs;
@@ -158,7 +152,7 @@ hk_device_scratch_locked(struct hk_device *dev, enum pipe_shader_type stage)
 }
 
 static inline void
-hk_device_alloc_scratch(struct hk_device *dev, enum pipe_shader_type stage,
+hk_device_alloc_scratch(struct hk_device *dev, mesa_shader_stage stage,
                         unsigned size)
 {
    simple_mtx_lock(&dev->scratch.lock);

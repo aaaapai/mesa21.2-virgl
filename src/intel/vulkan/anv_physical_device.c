@@ -142,9 +142,6 @@ static void
 get_device_extensions(const struct anv_physical_device *device,
                       struct vk_device_extension_table *ext)
 {
-   const bool has_syncobj_wait =
-      (device->sync_syncobj_type.features & VK_SYNC_FEATURE_CPU_WAIT) != 0;
-
    const bool rt_enabled = ANV_SUPPORT_RT && device->info.has_ray_tracing;
    const bool video_decode_enabled = device->instance->debug & ANV_DEBUG_VIDEO_DECODE;
    const bool video_encode_enabled = device->instance->debug & ANV_DEBUG_VIDEO_ENCODE;
@@ -170,8 +167,8 @@ get_device_extensions(const struct anv_physical_device *device,
       .KHR_driver_properties                 = true,
       .KHR_dynamic_rendering                 = true,
       .KHR_dynamic_rendering_local_read      = true,
-      .KHR_external_fence                    = has_syncobj_wait,
-      .KHR_external_fence_fd                 = has_syncobj_wait,
+      .KHR_external_fence                    = true,
+      .KHR_external_fence_fd                 = true,
       .KHR_external_memory                   = true,
       .KHR_external_memory_fd                = true,
       .KHR_external_semaphore                = true,
@@ -208,20 +205,13 @@ get_device_extensions(const struct anv_physical_device *device,
          !(device->instance->debug & ANV_DEBUG_NO_SECONDARY_CALL),
       .KHR_pipeline_executable_properties    = true,
       .KHR_pipeline_library                  = true,
-      /* Hide these behind dri configs for now since we cannot implement it reliably on
-       * all surfaces yet. There is no surface capability query for present wait/id,
-       * but the feature is useful enough to hide behind an opt-in mechanism for now.
-       * If the instance only enables surface extensions that unconditionally support present wait,
-       * we can also expose the extension that way. */
-      .KHR_present_id =
-         driQueryOptionb(&device->instance->dri_options, "vk_khr_present_wait") ||
-         wsi_common_vk_instance_supports_present_wait(&device->instance->vk),
-      .KHR_present_wait =
-         driQueryOptionb(&device->instance->dri_options, "vk_khr_present_wait") ||
-         wsi_common_vk_instance_supports_present_wait(&device->instance->vk),
-      .KHR_push_descriptor                   = true,
+#ifdef ANV_USE_WSI_PLATFORM
+      .KHR_present_id                        = true,
       .KHR_present_id2                       = true,
+      .KHR_present_wait                      = true,
       .KHR_present_wait2                     = true,
+#endif
+      .KHR_push_descriptor                   = true,
       .KHR_ray_query                         = rt_enabled,
       .KHR_ray_tracing_maintenance1          = rt_enabled,
       .KHR_ray_tracing_pipeline              = rt_enabled,
@@ -247,6 +237,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .KHR_shader_subgroup_rotate            = true,
       .KHR_shader_subgroup_uniform_control_flow = true,
       .KHR_shader_terminate_invocation       = true,
+      .KHR_shader_untyped_pointers           = true,
       .KHR_spirv_1_4                         = true,
       .KHR_storage_buffer_storage_class      = true,
 #ifdef ANV_USE_WSI_PLATFORM
@@ -478,6 +469,7 @@ get_features(const struct anv_physical_device *pdevice,
       .sparseResidency8Samples                  = has_sparse_or_fake &&
                                                   pdevice->info.verx10 != 125,
       .sparseResidency16Samples                 = has_sparse_or_fake &&
+                                                  pdevice->info.ver < 30 &&
                                                   pdevice->info.verx10 != 125,
       .variableMultisampleRate                  = true,
       .inheritedQueries                         = true,
@@ -843,11 +835,13 @@ get_features(const struct anv_physical_device *pdevice,
       /* VK_EXT_depth_clip_control */
       .depthClipControl = true,
 
+#ifdef ANV_USE_WSI_PLATFORM
       /* VK_KHR_present_id */
-      .presentId = pdevice->vk.supported_extensions.KHR_present_id,
+      .presentId = true,
 
       /* VK_KHR_present_wait */
-      .presentWait = pdevice->vk.supported_extensions.KHR_present_wait,
+      .presentWait = true,
+#endif
 
       /* VK_EXT_vertex_input_dynamic_state */
       .vertexInputDynamicState = true,
@@ -974,6 +968,17 @@ get_features(const struct anv_physical_device *pdevice,
 
       /* VK_KHR_maintenance9 */
       .maintenance9 = true,
+
+#ifdef ANV_USE_WSI_PLATFORM
+      /* VK_KHR_present_id2 */
+      .presentId2 = true,
+
+      /* VK_KHR_present_wait2 */
+      .presentWait2 = true,
+#endif
+
+      /* VK_KHR_shader_untyped_pointers */
+      .shaderUntypedPointers = true,
    };
 
    /* The new DOOM and Wolfenstein games require depthBounds without
@@ -1407,7 +1412,8 @@ get_properties(const struct anv_physical_device *pdevice,
 
       /* Sparse: */
       .sparseResidencyStandard2DBlockShape = has_sparse_or_fake,
-      .sparseResidencyStandard2DMultisampleBlockShape = false,
+      .sparseResidencyStandard2DMultisampleBlockShape = has_sparse_or_fake &&
+                                                        pdevice->info.ver < 20,
       .sparseResidencyStandard3DBlockShape = has_sparse_or_fake,
       .sparseResidencyAlignedMipSize = false,
       .sparseResidencyNonResidentStrict = has_sparse_or_fake,
@@ -1562,7 +1568,7 @@ get_properties(const struct anv_physical_device *pdevice,
       props->robustStorageBufferAccessSizeAlignment =
          ANV_SSBO_BOUNDS_CHECK_ALIGNMENT;
       props->robustUniformBufferAccessSizeAlignment =
-         ANV_UBO_ALIGNMENT;
+         ANV_UBO_BOUNDS_CHECK_ALIGNMENT;
    }
 
    /* VK_KHR_vertex_attribute_divisor */
@@ -1625,7 +1631,11 @@ get_properties(const struct anv_physical_device *pdevice,
 
       /* Storing a 64bit address */
       props->bufferCaptureReplayDescriptorDataSize = 8;
-      props->imageCaptureReplayDescriptorDataSize = 8;
+      /* 4 64bit addresses for the worst case (multiplanar disjoint +
+       * private binding)
+       */
+      props->imageCaptureReplayDescriptorDataSize =
+         sizeof(struct anv_image_opaque_capture_data);
       /* Offset inside the reserved border color pool */
       props->samplerCaptureReplayDescriptorDataSize = 4;
 
@@ -2515,7 +2525,7 @@ anv_physical_device_get_parameters(struct anv_physical_device *device)
    case INTEL_KMD_TYPE_XE:
       return anv_xe_physical_device_get_parameters(device);
    default:
-      unreachable("Missing");
+      UNREACHABLE("Missing");
       return VK_ERROR_UNKNOWN;
    }
 }
@@ -2565,7 +2575,7 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
       /* If INTEL_FORCE_PROBE was used, then the user has opted-in for
        * unsupported device support. No need to print a warning message.
        */
-   } else if (devinfo.ver > 20) {
+   } else if (devinfo.ver > 30) {
       result = vk_errorf(instance, VK_ERROR_INCOMPATIBLE_DRIVER,
                          "Vulkan not yet supported on %s", devinfo.name);
       goto fail_fd;
@@ -2655,30 +2665,13 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
    device->has_cooperative_matrix =
       device->info.cooperative_matrix_configurations[0].scope != INTEL_CMAT_SCOPE_NONE;
 
-   unsigned st_idx = 0;
-
    device->sync_syncobj_type = vk_drm_syncobj_get_type(fd);
-   if (!device->has_exec_timeline)
-      device->sync_syncobj_type.features &= ~VK_SYNC_FEATURE_TIMELINE;
-   device->sync_types[st_idx++] = &device->sync_syncobj_type;
+   assert(vk_sync_type_is_drm_syncobj(&device->sync_syncobj_type));
+   assert(device->sync_syncobj_type.features & VK_SYNC_FEATURE_TIMELINE);
+   assert(device->sync_syncobj_type.features & VK_SYNC_FEATURE_CPU_WAIT);
 
-   /* anv_bo_sync_type is only supported with i915 for now  */
-   if (device->info.kmd_type == INTEL_KMD_TYPE_I915) {
-      if (!(device->sync_syncobj_type.features & VK_SYNC_FEATURE_CPU_WAIT))
-         device->sync_types[st_idx++] = &anv_bo_sync_type;
-
-      if (!(device->sync_syncobj_type.features & VK_SYNC_FEATURE_TIMELINE)) {
-         device->sync_timeline_type = vk_sync_timeline_get_type(&anv_bo_sync_type);
-         device->sync_types[st_idx++] = &device->sync_timeline_type.sync;
-      }
-   } else {
-      assert(vk_sync_type_is_drm_syncobj(&device->sync_syncobj_type));
-      assert(device->sync_syncobj_type.features & VK_SYNC_FEATURE_TIMELINE);
-      assert(device->sync_syncobj_type.features & VK_SYNC_FEATURE_CPU_WAIT);
-   }
-
-   device->sync_types[st_idx++] = NULL;
-   assert(st_idx <= ARRAY_SIZE(device->sync_types));
+   device->sync_types[0] = &device->sync_syncobj_type;
+   device->sync_types[1] = NULL;
    device->vk.supported_sync_types = device->sync_types;
 
    device->vk.pipeline_cache_import_ops = anv_cache_import_ops;
@@ -2710,7 +2703,7 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
          else
             device->sparse_type = ANV_SPARSE_TYPE_VM_BIND;
       } else {
-         if (device->info.ver >= 12 && device->has_exec_timeline)
+         if (device->info.ver >= 12)
             device->sparse_type = ANV_SPARSE_TYPE_TRTT;
       }
    }
@@ -3184,7 +3177,7 @@ convert_component_type(enum intel_cooperative_matrix_component_type t)
    case INTEL_CMAT_UINT8:    return VK_COMPONENT_TYPE_UINT8_KHR;
    case INTEL_CMAT_BFLOAT16: return VK_COMPONENT_TYPE_BFLOAT16_KHR;
    }
-   unreachable("invalid cooperative matrix component type in configuration");
+   UNREACHABLE("invalid cooperative matrix component type in configuration");
 }
 
 static VkScopeKHR
@@ -3193,7 +3186,7 @@ convert_scope(enum intel_cmat_scope scope)
    switch (scope) {
    case INTEL_CMAT_SCOPE_SUBGROUP: return VK_SCOPE_SUBGROUP_KHR;
    default:
-      unreachable("invalid cooperative matrix scope in configuration");
+      UNREACHABLE("invalid cooperative matrix scope in configuration");
    }
 }
 

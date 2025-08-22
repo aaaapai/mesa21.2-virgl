@@ -113,7 +113,7 @@ impl DeviceCaps {
     }
 
     fn shader_caps(screen: &PipeScreen) -> &pipe_shader_caps {
-        screen.shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
+        screen.shader_caps(mesa_shader_stage::MESA_SHADER_COMPUTE)
     }
 }
 
@@ -151,7 +151,7 @@ pub trait HelperContextWrapper {
     ) -> Option<PipeTransfer>;
 
     fn is_create_fence_fd_supported(&self) -> bool;
-    fn import_fence(&self, fence_fd: &FenceFd) -> PipeFence;
+    fn import_fence(&self, fence_fd: &FenceFd, fence_type: pipe_fd_type) -> CLResult<PipeFence>;
 }
 
 pub struct HelperContext<'a> {
@@ -246,8 +246,10 @@ impl HelperContextWrapper for HelperContext<'_> {
         self.lock.is_create_fence_fd_supported()
     }
 
-    fn import_fence(&self, fd: &FenceFd) -> PipeFence {
-        self.lock.import_fence(fd)
+    fn import_fence(&self, fd: &FenceFd, fence_type: pipe_fd_type) -> CLResult<PipeFence> {
+        self.lock
+            .import_fence(fd, fence_type)
+            .ok_or(CL_OUT_OF_HOST_MEMORY)
     }
 }
 
@@ -286,7 +288,7 @@ impl DeviceBase {
                     cl_mem_type_to_texture_target(t),
                     PIPE_BIND_SAMPLER_VIEW,
                 ) {
-                    flags |= CL_MEM_READ_ONLY;
+                    flags |= CL_MEM_READ_ONLY | CL_MEM_IMMUTABLE_EXT;
                 }
 
                 // TODO: cl_khr_srgb_image_writes
@@ -623,6 +625,7 @@ impl DeviceBase {
         add_ext(1, 0, 0, "cl_khr_spirv_no_integer_wrap_decoration");
         add_ext(1, 0, 0, "cl_khr_spirv_queries");
         add_ext(1, 0, 0, "cl_khr_suggested_local_work_size");
+        add_ext(1, 0, 0, "cl_ext_immutable_memory_objects");
 
         add_feat(2, 0, 0, "__opencl_c_integer_dot_product_input_4x8bit");
         add_feat(
@@ -777,7 +780,7 @@ impl DeviceBase {
 
     fn shader_caps(&self) -> &pipe_shader_caps {
         self.screen
-            .shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
+            .shader_caps(mesa_shader_stage::MESA_SHADER_COMPUTE)
     }
 
     pub fn address_bits(&self) -> cl_uint {
@@ -892,7 +895,7 @@ impl DeviceBase {
         unsafe {
             *self
                 .screen
-                .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE)
+                .nir_shader_compiler_options(mesa_shader_stage::MESA_SHADER_COMPUTE)
         }
     }
 
@@ -1142,7 +1145,7 @@ impl DeviceBase {
         }
     }
 
-    pub fn subgroup_sizes(&self) -> impl ExactSizeIterator<Item = usize> {
+    pub fn subgroup_sizes(&self) -> impl ExactSizeIterator<Item = usize> + use<> {
         let subgroup_size = self.screen.compute_caps().subgroup_sizes;
 
         SetBitIndices::from_msb(subgroup_size).map(|bit| 1 << bit)
@@ -1351,7 +1354,7 @@ impl Device {
     fn check_valid(screen: &PipeScreen) -> bool {
         if !screen.caps().compute
             || screen
-                .shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
+                .shader_caps(mesa_shader_stage::MESA_SHADER_COMPUTE)
                 .supported_irs
                 & (1 << (pipe_shader_ir::PIPE_SHADER_IR_NIR as i32))
                 == 0
@@ -1362,7 +1365,7 @@ impl Device {
         // CL_DEVICE_MAX_PARAMETER_SIZE
         // For this minimum value, only a maximum of 128 arguments can be passed to a kernel
         if screen
-            .shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
+            .shader_caps(mesa_shader_stage::MESA_SHADER_COMPUTE)
             .max_const_buffer0_size
             < 128
         {

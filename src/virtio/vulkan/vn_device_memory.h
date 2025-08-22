@@ -58,13 +58,11 @@ VkResult
 vn_device_memory_import_dma_buf(struct vn_device *dev,
                                 struct vn_device_memory *mem,
                                 const VkMemoryAllocateInfo *alloc_info,
-                                bool force_unmappable,
                                 int fd);
 
 VkResult
 vn_get_memory_dma_buf_properties(struct vn_device *dev,
                                  int fd,
-                                 uint64_t *out_alloc_size,
                                  uint32_t *out_mem_type_bits);
 
 #endif /* VN_DEVICE_MEMORY_H */

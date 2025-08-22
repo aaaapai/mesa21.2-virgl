@@ -44,8 +44,7 @@ static void emit_const_ptrs(struct fd_ringbuffer *ring,
                             struct fd_bo **bos, uint32_t *offsets);
 
 static void
-emit_const_asserts(struct fd_ringbuffer *ring,
-                   const struct ir3_shader_variant *v, uint32_t regid,
+emit_const_asserts(const struct ir3_shader_variant *v, uint32_t regid,
                    uint32_t sizedwords)
 {
    assert((v->type == MESA_SHADER_VERTEX) ||
@@ -98,6 +97,9 @@ static inline void
 ir3_emit_constant_data(const struct ir3_shader_variant *v,
                        struct fd_ringbuffer *ring)
 {
+   if (v->compiler->options.push_ubo_with_preamble)
+      return;
+
    const struct ir3_const_state *const_state = ir3_const_state(v);
    const struct ir3_ubo_analysis_state *state = &const_state->ubo_state;
 
@@ -387,7 +389,7 @@ emit_tfbos(struct fd_context *ctx, const struct ir3_shader_variant *v,
 static inline void
 emit_common_consts(const struct ir3_shader_variant *v,
                    struct fd_ringbuffer *ring, struct fd_context *ctx,
-                   enum pipe_shader_type t) assert_dt
+                   mesa_shader_stage t) assert_dt
 {
    enum fd_dirty_shader_state dirty = ctx->dirty_shader[t];
 
@@ -565,7 +567,7 @@ ir3_emit_vs_consts(const struct ir3_shader_variant *v,
 {
    assert(v->type == MESA_SHADER_VERTEX);
 
-   emit_common_consts(v, ring, ctx, PIPE_SHADER_VERTEX);
+   emit_common_consts(v, ring, ctx, MESA_SHADER_VERTEX);
 
    /* emit driver params every time: */
    if (info && v->need_driver_params) {
@@ -584,7 +586,7 @@ ir3_emit_fs_consts(const struct ir3_shader_variant *v,
 {
    assert(v->type == MESA_SHADER_FRAGMENT);
 
-   emit_common_consts(v, ring, ctx, PIPE_SHADER_FRAGMENT);
+   emit_common_consts(v, ring, ctx, MESA_SHADER_FRAGMENT);
 }
 
 static inline struct ir3_driver_params_cs
@@ -667,9 +669,9 @@ ir3_emit_cs_consts(const struct ir3_shader_variant *v,
                    struct fd_ringbuffer *ring, struct fd_context *ctx,
                    const struct pipe_grid_info *info) assert_dt
 {
-   assert(gl_shader_stage_is_compute(v->type));
+   assert(mesa_shader_stage_is_compute(v->type));
 
-   emit_common_consts(v, ring, ctx, PIPE_SHADER_COMPUTE);
+   emit_common_consts(v, ring, ctx, MESA_SHADER_COMPUTE);
 
    ir3_emit_cs_driver_params(v, ring, ctx, info);
 }

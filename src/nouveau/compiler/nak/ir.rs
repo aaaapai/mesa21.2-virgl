@@ -337,12 +337,12 @@ impl<T> PerRegFile<T> {
     }
 
     /// Iterates over the values in this container.
-    pub fn values(&self) -> slice::Iter<T> {
+    pub fn values(&self) -> slice::Iter<'_, T> {
         self.per_file.iter()
     }
 
     /// Iterates over the mutable values in this container.
-    pub fn values_mut(&mut self) -> slice::IterMut<T> {
+    pub fn values_mut(&mut self) -> slice::IterMut<'_, T> {
         self.per_file.iter_mut()
     }
 }
@@ -744,6 +744,16 @@ impl<T: Into<SSARef>> From<T> for SrcRef {
     }
 }
 
+impl From<PredRef> for SrcRef {
+    fn from(value: PredRef) -> Self {
+        match value {
+            PredRef::None => SrcRef::True,
+            PredRef::Reg(reg) => SrcRef::Reg(reg),
+            PredRef::SSA(ssa) => SrcRef::SSA(ssa.into()),
+        }
+    }
+}
+
 impl fmt::Display for SrcRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1095,6 +1105,14 @@ impl Src {
         self.src_ref.is_bindless_cbuf()
     }
 
+    pub fn is_upred_reg(&self) -> bool {
+        match &self.src_ref {
+            SrcRef::SSA(ssa) => ssa.file() == Some(RegFile::UPred),
+            SrcRef::Reg(reg) => reg.file() == RegFile::UPred,
+            _ => false,
+        }
+    }
+
     pub fn is_predicate(&self) -> bool {
         self.src_ref.is_predicate()
     }
@@ -1115,6 +1133,10 @@ impl Src {
     pub fn is_nonzero(&self) -> bool {
         assert!(self.is_unmodified());
         matches!(self.src_ref, SrcRef::Imm32(x) if x != 0)
+    }
+
+    pub fn is_true(&self) -> bool {
+        self.as_bool() == Some(true)
     }
 
     pub fn is_fneg_zero(&self, src_type: SrcType) -> bool {
@@ -1195,6 +1217,20 @@ impl<T: Into<SrcRef>> From<T> for Src {
         Src {
             src_ref: value.into(),
             src_mod: SrcMod::None,
+            src_swizzle: SrcSwizzle::None,
+        }
+    }
+}
+
+impl From<Pred> for Src {
+    fn from(value: Pred) -> Self {
+        Src {
+            src_ref: value.pred_ref.into(),
+            src_mod: if value.pred_inv {
+                SrcMod::BNot
+            } else {
+                SrcMod::None
+            },
             src_swizzle: SrcSwizzle::None,
         }
     }
@@ -1368,6 +1404,7 @@ pub struct OpFoldData<'a> {
 }
 
 impl OpFoldData<'_> {
+    #[allow(dead_code)]
     pub fn get_pred_src(&self, op: &impl SrcsAsSlice, src: &Src) -> bool {
         let i = op.src_idx(src);
         let b = match src.src_ref {
@@ -1401,6 +1438,7 @@ impl OpFoldData<'_> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_u32_bnot_src(&self, op: &impl SrcsAsSlice, src: &Src) -> u32 {
         let x = self.get_u32_src(op, src);
         if src.src_mod.is_bnot() {
@@ -1410,6 +1448,7 @@ impl OpFoldData<'_> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_carry_src(&self, op: &impl SrcsAsSlice, src: &Src) -> bool {
         assert!(src.src_ref.as_ssa().is_some());
         let i = op.src_idx(src);
@@ -1443,10 +1482,12 @@ impl OpFoldData<'_> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_pred_dst(&mut self, op: &impl DstsAsSlice, dst: &Dst, b: bool) {
         self.dsts[op.dst_idx(dst)] = FoldData::Pred(b);
     }
 
+    #[allow(dead_code)]
     pub fn set_carry_dst(&mut self, op: &impl DstsAsSlice, dst: &Dst, b: bool) {
         self.dsts[op.dst_idx(dst)] = FoldData::Carry(b);
     }
@@ -1520,6 +1561,7 @@ pub enum PredSetOp {
 }
 
 impl PredSetOp {
+    #[allow(dead_code)]
     pub fn eval(&self, a: bool, b: bool) -> bool {
         match self {
             PredSetOp::And => a & b,
@@ -3349,6 +3391,108 @@ impl DisplayOp for OpHMul2 {
     }
 }
 impl_display_for_op!(OpHMul2);
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[allow(dead_code)]
+pub enum ImmaSize {
+    M8N8K16,
+    M8N8K32,
+    M16N8K16,
+    M16N8K32,
+    M16N8K64,
+}
+
+impl fmt::Display for ImmaSize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ImmaSize::M8N8K16 => write!(f, ".m8n8k16"),
+            ImmaSize::M8N8K32 => write!(f, ".m8n8k32"),
+            ImmaSize::M16N8K16 => write!(f, ".m16n8k16"),
+            ImmaSize::M16N8K32 => write!(f, ".m16n8k32"),
+            ImmaSize::M16N8K64 => write!(f, ".m16n8k64"),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(SrcsAsSlice, DstsAsSlice)]
+pub struct OpImma {
+    #[dst_type(Vec)]
+    pub dst: Dst,
+
+    pub mat_size: ImmaSize,
+    pub src_types: [IntType; 2],
+    pub saturate: bool,
+
+    #[src_type(SSA)]
+    pub srcs: [Src; 3],
+}
+
+impl DisplayOp for OpImma {
+    fn fmt_op(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let sat = if self.saturate { ".sat" } else { "" };
+        write!(
+            f,
+            "imma{}{}{}{sat} {} {} {}",
+            self.mat_size,
+            self.src_types[0],
+            self.src_types[1],
+            self.srcs[0],
+            self.srcs[1],
+            self.srcs[2],
+        )
+    }
+}
+
+impl_display_for_op!(OpImma);
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[allow(dead_code)]
+pub enum HmmaSize {
+    M16N8K16,
+    M16N8K8,
+    M16N8K4,
+}
+
+impl fmt::Display for HmmaSize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HmmaSize::M16N8K16 => write!(f, ".m16n8k16"),
+            HmmaSize::M16N8K8 => write!(f, ".m16n8k8"),
+            HmmaSize::M16N8K4 => write!(f, ".m16n8k4"),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(SrcsAsSlice, DstsAsSlice)]
+pub struct OpHmma {
+    #[dst_type(Vec)]
+    pub dst: Dst,
+
+    pub mat_size: HmmaSize,
+    pub src_type: FloatType,
+    pub dst_type: FloatType,
+
+    #[src_type(SSA)]
+    pub srcs: [Src; 3],
+}
+
+impl DisplayOp for OpHmma {
+    fn fmt_op(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "hmma{}{} {} {} {}",
+            self.mat_size,
+            self.dst_type,
+            self.srcs[0],
+            self.srcs[1],
+            self.srcs[2],
+        )
+    }
+}
+
+impl_display_for_op!(OpHmma);
 
 #[repr(C)]
 #[derive(SrcsAsSlice, DstsAsSlice)]
@@ -5382,7 +5526,7 @@ pub struct OpSuLd {
     pub mem_order: MemOrder,
     pub mem_eviction_priority: MemEvictionPriority,
 
-    #[src_type(GPR)]
+    #[src_type(SSA)]
     pub handle: Src,
 
     #[src_type(SSA)]
@@ -5413,7 +5557,7 @@ pub struct OpSuSt {
     pub mem_order: MemOrder,
     pub mem_eviction_priority: MemEvictionPriority,
 
-    #[src_type(GPR)]
+    #[src_type(SSA)]
     pub handle: Src,
 
     #[src_type(SSA)]
@@ -5454,7 +5598,7 @@ pub struct OpSuAtom {
     pub mem_order: MemOrder,
     pub mem_eviction_priority: MemEvictionPriority,
 
-    #[src_type(GPR)]
+    #[src_type(SSA)]
     pub handle: Src,
 
     #[src_type(SSA)]
@@ -5520,6 +5664,7 @@ impl SuClampRound {
         }
     }
 
+    #[allow(dead_code)]
     pub fn to_mask(&self) -> u32 {
         !(self.to_int() as u32 - 1)
     }
@@ -5936,6 +6081,7 @@ impl IMadSpSrcType {
         }
     }
 
+    #[allow(dead_code)]
     fn cast(&self, v: u32) -> i64 {
         use IMadSpSrcType::*;
         match self {
@@ -6708,15 +6854,21 @@ impl DisplayOp for OpBSync {
 }
 impl_display_for_op!(OpBSync);
 
+/// Takes the branch when the guard predicate and all sources evaluate to true.
 #[repr(C)]
 #[derive(Clone, SrcsAsSlice, DstsAsSlice)]
 pub struct OpBra {
     pub target: Label,
+
+    /// Can be a UPred if uniform
+    // TODO: actually .u has another form with an additional UPred input.
+    #[src_type(Pred)]
+    pub cond: Src,
 }
 
 impl DisplayOp for OpBra {
     fn fmt_op(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "bra {}", self.target)
+        write!(f, "bra {} {}", self.cond, self.target)
     }
 }
 impl_display_for_op!(OpBra);
@@ -6843,7 +6995,15 @@ impl_display_for_op!(OpBar);
 #[repr(C)]
 #[derive(SrcsAsSlice, DstsAsSlice)]
 pub struct OpTexDepBar {
-    pub textures_left: i8,
+    pub textures_left: u8,
+}
+
+impl OpTexDepBar {
+    /// Maximum value of textures_left
+    ///
+    /// The maximum encodable value is 63.  However, nvcc starts emitting
+    /// TEXDEPBAR 0x3e as soon as it hits 62 texture instructions.
+    pub const MAX_TEXTURES_LEFT: u8 = 62;
 }
 
 impl DisplayOp for OpTexDepBar {
@@ -7639,6 +7799,8 @@ pub enum Op {
     HMul2(OpHMul2),
     HSet2(OpHSet2),
     HSetP2(OpHSetP2),
+    Imma(OpImma),
+    Hmma(OpHmma),
     HMnMx2(OpHMnMx2),
     BMsk(OpBMsk),
     BRev(OpBRev),
@@ -7804,6 +7966,9 @@ impl Op {
             | Op::DMnMx(_)
             | Op::DMul(_)
             | Op::DSetP(_) => false,
+
+            // Matrix Multiply Add
+            Op::Imma(_) | Op::Hmma(_) => false,
 
             // Integer ALU
             Op::BRev(_) | Op::Flo(_) | Op::PopC(_) => false,
@@ -8075,7 +8240,6 @@ impl fmt::Display for Pred {
 }
 
 pub const MIN_INSTR_DELAY: u8 = 1;
-pub const MAX_INSTR_DELAY: u8 = 15;
 
 pub struct InstrDeps {
     pub delay: u8,
@@ -8251,6 +8415,19 @@ impl Instr {
 
     pub fn is_branch(&self) -> bool {
         self.op.is_branch()
+    }
+
+    /// Returns true if `self`` is a branch instruction that is always taken.
+    /// It returns false for non branch instructions.
+    pub fn is_branch_always_taken(&self) -> bool {
+        if self.pred.is_true() {
+            match &self.op {
+                Op::Bra(bra) => bra.cond.is_true(),
+                _ => self.is_branch(),
+            }
+        } else {
+            false
+        }
     }
 
     pub fn uses_global_mem(&self) -> bool {
@@ -8466,7 +8643,7 @@ impl BasicBlock {
 
     pub fn falls_through(&self) -> bool {
         if let Some(i) = self.branch() {
-            !i.pred.is_true()
+            !i.is_branch_always_taken()
         } else {
             true
         }
@@ -8931,6 +9108,9 @@ pub trait ShaderModel {
 
     /// Worst-case access-after-write latency
     fn worst_latency(&self, write: &Op, dst_idx: usize) -> u32;
+
+    /// Maximum encodable instruction delay
+    fn max_instr_delay(&self) -> u8;
 
     fn legalize_op(&self, b: &mut LegalizeBuilder, op: &mut Op);
     fn encode_shader(&self, s: &Shader<'_>) -> Vec<u32>;

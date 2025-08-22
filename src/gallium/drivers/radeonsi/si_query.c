@@ -95,7 +95,7 @@ static enum radeon_value_id winsys_id_from_type(unsigned type)
    case SI_QUERY_CS_THREAD_BUSY:
       return RADEON_CS_THREAD_TIME;
    default:
-      unreachable("query type does not correspond to winsys id");
+      UNREACHABLE("query type does not correspond to winsys id");
    }
 }
 
@@ -247,7 +247,7 @@ static bool si_query_sw_begin(struct si_context *sctx, struct si_query *squery)
    case SI_QUERY_GPIN_NUM_SE:
       break;
    default:
-      unreachable("si_query_sw_begin: bad query type");
+      UNREACHABLE("si_query_sw_begin: bad query type");
    }
 
    return true;
@@ -404,7 +404,7 @@ static bool si_query_sw_end(struct si_context *sctx, struct si_query *squery)
    case SI_QUERY_GPIN_NUM_SE:
       break;
    default:
-      unreachable("si_query_sw_end: bad query type");
+      UNREACHABLE("si_query_sw_end: bad query type");
    }
 
    return true;
@@ -1339,7 +1339,7 @@ static void si_get_hw_query_result_shader_params(struct si_context *sctx,
       break;
    }
    default:
-      unreachable("si_get_hw_query_params unsupported");
+      UNREACHABLE("si_get_hw_query_params unsupported");
    }
 }
 
@@ -1619,7 +1619,7 @@ static void si_query_hw_get_result_resource(struct si_context *sctx, struct si_q
          params.start_offset += qbuf->results_end - query->result_size;
       }
 
-      sctx->b.set_constant_buffer(&sctx->b, PIPE_SHADER_COMPUTE, 0, false, &constant_buffer);
+      sctx->b.set_constant_buffer(&sctx->b, MESA_SHADER_COMPUTE, 0, false, &constant_buffer);
 
       ssbo[0].buffer = &qbuf->buf->b.b;
       ssbo[0].buffer_offset = params.start_offset;
@@ -1958,7 +1958,7 @@ void si_init_query_functions(struct si_context *sctx)
    sctx->b.get_query_result = si_get_query_result;
    sctx->b.get_query_result_resource = si_get_query_result_resource;
 
-   if (sctx->has_graphics) {
+   if (sctx->is_gfx_queue) {
       sctx->atoms.s.render_cond.emit = si_emit_query_predication;
       sctx->b.render_condition = si_render_condition;
    }

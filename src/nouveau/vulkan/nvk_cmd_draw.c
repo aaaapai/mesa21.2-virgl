@@ -907,7 +907,7 @@ nvk_cmd_set_sample_layout(struct nvk_cmd_buffer *cmd,
       break;
 
    default:
-      unreachable("Unknown sample layout");
+      UNREACHABLE("Unknown sample layout");
    }
 
    P_1INC(p, NV9097, CALL_MME_MACRO(NVK_MME_SET_ANTI_ALIAS));
@@ -1562,7 +1562,7 @@ nvk_CmdEndRendering(VkCommandBuffer commandBuffer)
 
 void
 nvk_cmd_bind_graphics_shader(struct nvk_cmd_buffer *cmd,
-                             const gl_shader_stage stage,
+                             const mesa_shader_stage stage,
                              struct nvk_shader *shader)
 {
    assert(stage < ARRAY_SIZE(cmd->state.gfx.shaders));
@@ -1693,7 +1693,7 @@ nvk_cmd_flush_gfx_shaders(struct nvk_cmd_buffer *cmd)
 
    u_foreach_bit(s, cmd->state.gfx.shaders_dirty &
                     NVK_SHADER_STAGE_GRAPHICS_BITS) {
-      gl_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
+      mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
       uint32_t type = mesa_to_nv9097_shader_type(stage);
       types_dirty |= BITFIELD_BIT(type);
 
@@ -1736,7 +1736,7 @@ nvk_cmd_flush_gfx_shaders(struct nvk_cmd_buffer *cmd)
    if (cmd->state.gfx.shaders_dirty & NVK_SHADER_STAGE_VTGM_BITS) {
       struct nvk_shader *last_vtgm = NULL;
       u_foreach_bit(s, NVK_SHADER_STAGE_VTGM_BITS) {
-         gl_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
+         mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
          if (cmd->state.gfx.shaders[stage] != NULL)
             last_vtgm = cmd->state.gfx.shaders[stage];
       }
@@ -1885,7 +1885,7 @@ vk_to_nv9097_primitive_topology(VkPrimitiveTopology prim)
    case VK_PRIMITIVE_TOPOLOGY_PATCH_LIST:
       return NV9097_BEGIN_OP_PATCH;
    default:
-      unreachable("Invalid primitive topology");
+      UNREACHABLE("Invalid primitive topology");
    }
 }
 
@@ -2337,7 +2337,7 @@ nvk_flush_rs_state(struct nvk_cmd_buffer *cmd)
          break;
       case VK_DEPTH_BIAS_REPRESENTATION_FLOAT_EXT:
       default:
-         unreachable("Unsupported depth bias representation");
+         UNREACHABLE("Unsupported depth bias representation");
       }
       /* TODO: The blob multiplies by 2 for some reason. We don't. */
       P_IMMD(p, NV9097, SET_DEPTH_BIAS, fui(dyn->rs.depth_bias.constant_factor));
@@ -2370,7 +2370,7 @@ nvk_flush_rs_state(struct nvk_cmd_buffer *cmd)
          break;
 
       default:
-         unreachable("Invalid line rasterization mode");
+         UNREACHABLE("Invalid line rasterization mode");
       }
    }
 
@@ -2522,7 +2522,7 @@ nvk_combine_fs_log2_rates(VkFragmentShadingRateCombinerOpKHR op,
       };
 
    default:
-      unreachable("Invalid FSR combiner op");
+      UNREACHABLE("Invalid FSR combiner op");
    }
 }
 
@@ -3519,7 +3519,7 @@ nvk_cmd_flush_gfx_cbufs(struct nvk_cmd_buffer *cmd)
 
    /* Find cbuf maps for the 5 cbuf groups */
    const struct nvk_shader *cbuf_shaders[5] = { NULL, };
-   for (gl_shader_stage stage = 0; stage < MESA_SHADER_STAGES; stage++) {
+   for (mesa_shader_stage stage = 0; stage < MESA_SHADER_STAGES; stage++) {
       const struct nvk_shader *shader = cmd->state.gfx.shaders[stage];
       if (shader == NULL)
          continue;

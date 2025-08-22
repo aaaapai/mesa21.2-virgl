@@ -61,6 +61,17 @@ struct radv_dynamic_state {
    struct radv_sample_locations_state sample_location;
 
    VkImageAspectFlags feedback_loop_aspects;
+
+   uint32_t color_write_enable;
+   uint32_t color_write_mask;
+
+   bool mrt0_is_dual_src;
+
+   struct {
+      /* For color blend equations. */
+      uint32_t cb_blend_control;
+      uint32_t sx_mrt_blend_opt;
+   } cb_att[MAX_RTS];
 };
 
 struct radv_multisample_state {
@@ -112,10 +123,9 @@ struct radv_graphics_pipeline {
    uint32_t db_render_control;
 
    /* Last pre-PS API stage */
-   gl_shader_stage last_vgt_api_stage;
+   mesa_shader_stage last_vgt_api_stage;
 
    unsigned rast_prim;
-
 
    /* Custom blend mode for internal operations. */
    unsigned custom_blend_mode;
@@ -174,7 +184,7 @@ struct radv_graphics_lib_pipeline {
 RADV_DECL_PIPELINE_DOWNCAST(graphics_lib, RADV_PIPELINE_GRAPHICS_LIB)
 
 static inline bool
-radv_pipeline_has_stage(const struct radv_graphics_pipeline *pipeline, gl_shader_stage stage)
+radv_pipeline_has_stage(const struct radv_graphics_pipeline *pipeline, mesa_shader_stage stage)
 {
    return pipeline->base.shaders[stage];
 }
@@ -256,7 +266,7 @@ radv_translate_prim(unsigned topology)
    case VK_PRIMITIVE_TOPOLOGY_META_RECT_LIST_MESA:
       return V_008958_DI_PT_RECTLIST;
    default:
-      unreachable("unhandled primitive type");
+      UNREACHABLE("unhandled primitive type");
    }
 }
 
@@ -416,7 +426,7 @@ radv_translate_blend_logic_op(VkLogicOp op)
    case VK_LOGIC_OP_SET:
       return V_028808_ROP3_SET;
    default:
-      unreachable("Unhandled logic op");
+      UNREACHABLE("Unhandled logic op");
    }
 }
 
@@ -590,7 +600,11 @@ struct radv_ia_multi_vgt_param_helpers radv_compute_ia_multi_vgt_param(const str
 
 void radv_get_viewport_xform(const VkViewport *viewport, float scale[3], float translate[3]);
 
-struct radv_shader *radv_get_shader(struct radv_shader *const *shaders, gl_shader_stage stage);
+void radv_translate_blend_equation(const struct radv_physical_device *pdev, VkBlendOp eqRGB, VkBlendFactor srcRGB,
+                                   VkBlendFactor dstRGB, VkBlendOp eqA, VkBlendFactor srcA, VkBlendFactor dstA,
+                                   uint32_t *cb_blend_control_out, uint32_t *sx_mrt_blend_opt_out);
+
+struct radv_shader *radv_get_shader(struct radv_shader *const *shaders, mesa_shader_stage stage);
 
 struct radv_ps_epilog_state {
    uint8_t color_attachment_count;

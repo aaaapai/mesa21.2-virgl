@@ -45,34 +45,23 @@ extern "C" {
 /**
  * Shader stages.
  *
+ * For vertex/tessallation/geometry/fragment shaders:
  * The order must match how shaders are ordered in the pipeline.
  * The GLSL linker assumes that if i<j, then the j-th shader is
  * executed later than the i-th shader.
  */
-typedef enum pipe_shader_type
-{
+typedef enum mesa_shader_stage {
    MESA_SHADER_NONE = -1,
    MESA_SHADER_VERTEX = 0,
-   PIPE_SHADER_VERTEX = MESA_SHADER_VERTEX,
    MESA_SHADER_TESS_CTRL = 1,
-   PIPE_SHADER_TESS_CTRL = MESA_SHADER_TESS_CTRL,
    MESA_SHADER_TESS_EVAL = 2,
-   PIPE_SHADER_TESS_EVAL = MESA_SHADER_TESS_EVAL,
    MESA_SHADER_GEOMETRY = 3,
-   PIPE_SHADER_GEOMETRY = MESA_SHADER_GEOMETRY,
    MESA_SHADER_FRAGMENT = 4,
-   PIPE_SHADER_FRAGMENT = MESA_SHADER_FRAGMENT,
    MESA_SHADER_COMPUTE = 5,
-   PIPE_SHADER_COMPUTE = MESA_SHADER_COMPUTE,
+   MESA_SHADER_TASK = 6,
+   MESA_SHADER_MESH = 7,
 
-   PIPE_SHADER_TYPES = (PIPE_SHADER_COMPUTE + 1),
    /* Vulkan-only stages. */
-   MESA_SHADER_TASK         = 6,
-   PIPE_SHADER_TASK = MESA_SHADER_TASK,
-   MESA_SHADER_MESH         = 7,
-   PIPE_SHADER_MESH = MESA_SHADER_MESH,
-   PIPE_SHADER_MESH_TYPES = (PIPE_SHADER_MESH + 1),
-
    MESA_SHADER_RAYGEN       = 8,
    MESA_SHADER_ANY_HIT      = 9,
    MESA_SHADER_CLOSEST_HIT  = 10,
@@ -82,23 +71,23 @@ typedef enum pipe_shader_type
 
    /* must be last so it doesn't affect the GL pipeline */
    MESA_SHADER_KERNEL = 14,
-} gl_shader_stage;
+} mesa_shader_stage;
 
 static inline bool
-gl_shader_stage_is_compute(gl_shader_stage stage)
+mesa_shader_stage_is_compute(mesa_shader_stage stage)
 {
    return stage == MESA_SHADER_COMPUTE || stage == MESA_SHADER_KERNEL;
 }
 
 static inline bool
-gl_shader_stage_is_mesh(gl_shader_stage stage)
+mesa_shader_stage_is_mesh(mesa_shader_stage stage)
 {
    return stage == MESA_SHADER_TASK ||
           stage == MESA_SHADER_MESH;
 }
 
 static inline bool
-gl_shader_stage_uses_workgroup(gl_shader_stage stage)
+mesa_shader_stage_uses_workgroup(mesa_shader_stage stage)
 {
    return stage == MESA_SHADER_COMPUTE ||
           stage == MESA_SHADER_KERNEL ||
@@ -107,7 +96,7 @@ gl_shader_stage_uses_workgroup(gl_shader_stage stage)
 }
 
 static inline bool
-gl_shader_stage_is_callable(gl_shader_stage stage)
+mesa_shader_stage_is_callable(mesa_shader_stage stage)
 {
    return stage == MESA_SHADER_ANY_HIT ||
           stage == MESA_SHADER_CLOSEST_HIT ||
@@ -117,13 +106,13 @@ gl_shader_stage_is_callable(gl_shader_stage stage)
 }
 
 static inline bool
-gl_shader_stage_is_rt(gl_shader_stage stage)
+mesa_shader_stage_is_rt(mesa_shader_stage stage)
 {
-   return stage == MESA_SHADER_RAYGEN || gl_shader_stage_is_callable(stage);
+   return stage == MESA_SHADER_RAYGEN || mesa_shader_stage_is_callable(stage);
 }
 
 static inline bool
-gl_shader_stage_can_set_fragment_shading_rate(gl_shader_stage stage)
+mesa_shader_stage_can_set_fragment_shading_rate(mesa_shader_stage stage)
 {
    /* According to EXT_fragment_shading_rate :
     *
@@ -143,16 +132,16 @@ gl_shader_stage_can_set_fragment_shading_rate(gl_shader_stage stage)
 
 typedef short gl_state_index16; /* see enum gl_state_index */
 
-const char *gl_shader_stage_name(gl_shader_stage stage);
+const char *mesa_shader_stage_name(mesa_shader_stage stage);
 
 /**
- * Translate a gl_shader_stage to a short shader stage name for debug
+ * Translate a mesa_shader_stage to a short shader stage name for debug
  * printouts and error messages.
  */
 const char *_mesa_shader_stage_to_string(unsigned stage);
 
 /**
- * Translate a gl_shader_stage to a shader stage abbreviation (VS, GS, FS)
+ * Translate a mesa_shader_stage to a shader stage abbreviation (VS, GS, FS)
  * for debug printouts and error messages.
  */
 const char *_mesa_shader_stage_to_abbrev(unsigned stage);
@@ -161,6 +150,11 @@ const char *_mesa_shader_stage_to_abbrev(unsigned stage);
  * GL related stages (not including CL)
  */
 #define MESA_SHADER_STAGES (MESA_SHADER_COMPUTE + 1)
+
+/**
+ * GL related stages with mesh shader (not including CL)
+ */
+#define MESA_SHADER_MESH_STAGES (MESA_SHADER_MESH + 1)
 
 /**
  * Vulkan stages (not including CL)
@@ -463,7 +457,7 @@ typedef enum
 #define MAX_VARYINGS_INCL_PATCH (VARYING_SLOT_TESS_MAX - VARYING_SLOT_VAR0)
 
 const char *gl_varying_slot_name_for_stage(gl_varying_slot slot,
-                                           gl_shader_stage stage);
+                                           mesa_shader_stage stage);
 
 /**
  * Determine if the given gl_varying_slot appears in the fragment shader.
@@ -938,6 +932,13 @@ typedef enum
    SYSTEM_VALUE_WARP_ID_NV,
    SYSTEM_VALUE_SM_ID_NV,
 
+   /* SPV_ARM_core_builtins */
+   SYSTEM_VALUE_CORE_ID,
+   SYSTEM_VALUE_CORE_COUNT_ARM,
+   SYSTEM_VALUE_CORE_MAX_ID_ARM,
+   SYSTEM_VALUE_WARP_ID_ARM,
+   SYSTEM_VALUE_WARP_MAX_ID_ARM,
+
    SYSTEM_VALUE_MAX             /**< Number of values */
 } gl_system_value;
 
@@ -1166,6 +1167,11 @@ enum gl_access_qualifier
     * Indicates that this load will use SMEM.
     */
    ACCESS_SMEM_AMD = (1 << 16),
+
+   /**
+    * Indicates that this load must be skipped by helper invocations.
+    */
+   ACCESS_SKIP_HELPERS = (1 << 17),
 };
 
 /**

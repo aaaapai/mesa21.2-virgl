@@ -91,7 +91,7 @@ pandecode_rt(struct pandecode_context *ctx, unsigned index, uint64_t gpu_va)
                     "AFRC YUV Color Render Target %d:\n", index);
       break;
    default:
-      unreachable("Invalid writeback mode");
+      UNREACHABLE("Invalid writeback mode");
    }
 #endif
 
@@ -180,7 +180,7 @@ pandecode_zs_crc_ext(struct pandecode_context *ctx, uint64_t gpu_va)
       break;
 
    default:
-      unreachable("Invalid block format");
+      UNREACHABLE("Invalid block format");
    }
 
    switch (zs_crc.s.block_format) {
@@ -201,7 +201,7 @@ pandecode_zs_crc_ext(struct pandecode_context *ctx, uint64_t gpu_va)
 #endif
 
    default:
-      unreachable("Invalid block format");
+      UNREACHABLE("Invalid block format");
    }
 
    pandecode_log(ctx, "\n");
@@ -465,7 +465,7 @@ pandecode_tex_plane(struct pandecode_context *ctx, uint64_t u, unsigned idx)
       break;
 #endif
    default:
-      unreachable("Unknown plane type");
+      UNREACHABLE("Unknown plane type");
    }
 }
 #endif
@@ -565,14 +565,16 @@ GENX(pandecode_shader)(struct pandecode_context *ctx, uint64_t addr,
 
 static unsigned
 pandecode_buffer(struct pandecode_context *ctx,
-                 const struct mali_buffer_packed *cl, uint64_t addr)
+                 const struct mali_buffer_packed *cl, uint64_t addr,
+                 uint64_t entry_size)
 {
    pan_unpack(cl, BUFFER, buffer)
       ;
    DUMP_UNPACKED(ctx, BUFFER, buffer, "Buffer @%" PRIx64 ":\n", addr);
 
-   /* If the address is the following descriptor, this descriptor is an IUB. */
-   if (buffer.address == (addr + 0x20)) {
+   /* If the address is the following descriptor and is within the resource
+    * entry, this descriptor is an IUB. */
+   if (buffer.address == (addr + 0x20) && buffer.address < addr + entry_size) {
       assert((buffer.size % 0x20) == 0);
 
       const uint8_t *cl_bytes = (uint8_t *)cl;
@@ -621,7 +623,7 @@ pandecode_resources(struct pandecode_context *ctx, uint64_t addr, unsigned size)
          break;
       case MALI_DESCRIPTOR_TYPE_BUFFER:
          i += pandecode_buffer(ctx, (const struct mali_buffer_packed *)&cl[i],
-                               addr + i);
+                               addr + i, size);
          break;
       default:
          fprintf(ctx->dump_stream, "Unknown descriptor type %X\n", header.type);
@@ -634,6 +636,9 @@ void
 GENX(pandecode_resource_tables)(struct pandecode_context *ctx, uint64_t addr,
                                 const char *label)
 {
+   if (!addr)
+      return;
+
    unsigned count = addr & 0x3F;
    addr = addr & ~0x3F;
 
@@ -672,8 +677,7 @@ GENX(pandecode_shader_environment)(struct pandecode_context *ctx,
    if (p->shader)
       GENX(pandecode_shader)(ctx, p->shader, "Shader", gpu_id);
 
-   if (p->resources)
-      GENX(pandecode_resource_tables)(ctx, p->resources, "Resources");
+   GENX(pandecode_resource_tables)(ctx, p->resources, "Resources");
 
    if (p->thread_storage)
       DUMP_ADDR(ctx, LOCAL_STORAGE, p->thread_storage, "Local Storage:\n");
@@ -714,9 +718,8 @@ GENX(pandecode_dcd)(struct pandecode_context *ctx, const struct MALI_DRAW *p,
    if (p->vertex_shader)
       GENX(pandecode_shader)(ctx, p->vertex_shader, "Vertex Shader", gpu_id);
 
-   if (p->vertex_resources)
-      GENX(pandecode_resource_tables)(ctx, p->vertex_resources,
-                                      "Vertex Resources");
+   GENX(pandecode_resource_tables)(ctx, p->vertex_resources,
+                                   "Vertex Resources");
 
    if (p->vertex_fau.pointer)
       GENX(pandecode_fau)(ctx, p->vertex_fau.pointer, p->vertex_fau.count,
@@ -726,9 +729,8 @@ GENX(pandecode_dcd)(struct pandecode_context *ctx, const struct MALI_DRAW *p,
       GENX(pandecode_shader)(ctx, p->fragment_shader, "Fragment Shader",
                              gpu_id);
 
-   if (p->fragment_resources)
-      GENX(pandecode_resource_tables)(ctx, p->fragment_resources,
-                                      "Fragment Resources");
+   GENX(pandecode_resource_tables)(ctx, p->fragment_resources,
+                                   "Fragment Resources");
 
    if (p->fragment_fau.pointer)
       GENX(pandecode_fau)(ctx, p->fragment_fau.pointer, p->fragment_fau.count,

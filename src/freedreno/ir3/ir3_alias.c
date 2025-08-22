@@ -16,7 +16,7 @@ supports_alias_srcs(struct ir3_instruction *instr)
    if (is_tex_shuffle(instr))
       return false;
    /* Descriptor prefetches don't support alias.tex. */
-   if (instr->opc == OPC_SAM && instr->dsts_count == 0)
+   if (instr->opc == OPC_SAM && has_dummy_dst(instr))
       return false;
    /* Seems to not always work properly. Blob disables it as well. */
    if (instr->opc == OPC_ISAM && (instr->flags & IR3_INSTR_IMM_OFFSET))
@@ -44,8 +44,12 @@ can_alias_srcs_of_def(struct ir3_register *src)
       return true;
    }
    if (def_instr->opc == OPC_MOV) {
+      /* We haven't seen any indication that aliasing supports the address
+       * register, nor does it seem important to do so based on how many fossils
+       * it took to find a case of it being attempted during alias setup.
+       */
       return is_same_type_mov(def_instr) &&
-             !(def_instr->srcs[0]->flags & IR3_REG_SHARED);
+             !(def_instr->srcs[0]->flags & (IR3_REG_SHARED | IR3_REG_RELATIV));
    }
 
    return false;

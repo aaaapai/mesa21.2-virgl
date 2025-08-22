@@ -16,9 +16,9 @@
 #define VG(x) ((void)0)
 #endif
 
-#include "radv_instance.h"
 #include "radv_debug.h"
 #include "radv_entrypoints.h"
+#include "radv_instance.h"
 #include "radv_wsi.h"
 
 #include "util/driconf.h"
@@ -87,6 +87,8 @@ static const struct debug_control radv_debug_options[] = {{"nofastclears", RADV_
                                                           {"ir", RADV_DEBUG_DUMP_BACKEND_IR},
                                                           {"pso_history", RADV_DEBUG_PSO_HISTORY},
                                                           {"bvh4", RADV_DEBUG_BVH4},
+                                                          {"novideo", RADV_DEBUG_NO_VIDEO},
+                                                          {"validatevas", RADV_DEBUG_VALIDATE_VAS},
                                                           {NULL, 0}};
 
 const char *
@@ -118,6 +120,7 @@ static const struct debug_control radv_perftest_options[] = {{"localbos", RADV_P
                                                              {"rtwave32", RADV_PERFTEST_RT_WAVE_32},
                                                              {"video_encode", RADV_PERFTEST_VIDEO_ENCODE},
                                                              {"nogttspill", RADV_PERFTEST_NO_GTT_SPILL},
+                                                             {"hic", RADV_PERFTEST_HIC},
                                                              {NULL, 0}};
 
 static const struct debug_control radv_trap_excp_options[] = {
@@ -153,7 +156,6 @@ static const driOptionDescription radv_dri_options[] = {
       DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(0)
       DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(false)
       DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(false)
-      DRI_CONF_VK_KHR_PRESENT_WAIT(false)
       DRI_CONF_VK_XWAYLAND_WAIT_READY(false)
       DRI_CONF_RADV_REPORT_LLVM9_VERSION_STRING(false)
       DRI_CONF_RADV_ENABLE_MRT_OUTPUT_NAN_FIXUP(false)
@@ -279,8 +281,6 @@ radv_init_dri_options(struct radv_instance *instance)
 
    instance->drirc.override_vram_size = driQueryOptioni(&instance->drirc.options, "override_vram_size");
 
-   instance->drirc.enable_khr_present_wait = driQueryOptionb(&instance->drirc.options, "vk_khr_present_wait");
-
    instance->drirc.override_uniform_offset_alignment =
       driQueryOptioni(&instance->drirc.options, "radv_override_uniform_offset_alignment");
 
@@ -346,7 +346,7 @@ static const struct vk_instance_extension_table radv_instance_extensions_support
 };
 
 static enum radeon_ctx_pstate
-radv_parse_pstate(const char* str)
+radv_parse_pstate(const char *str)
 {
    if (!strcmp(str, "peak")) {
       return RADEON_CTX_PSTATE_PEAK;
@@ -502,12 +502,6 @@ radv_GetInstanceProcAddr(VkInstance _instance, const char *pName)
    VK_FROM_HANDLE(vk_instance, instance, _instance);
    return vk_instance_get_proc_addr(instance, &radv_instance_entrypoints, pName);
 }
-
-/* Windows will use a dll definition file to avoid build errors. */
-#ifdef _WIN32
-#undef PUBLIC
-#define PUBLIC
-#endif
 
 /* The loader wants us to expose a second GetInstanceProcAddr function
  * to work around certain LD_PRELOAD issues seen in apps.

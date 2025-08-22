@@ -143,7 +143,7 @@ blend_factor_rgb(enum pipe_blendfactor factor)
    case PIPE_BLENDFACTOR_CONST_ALPHA: return D3D12_BLEND_BLEND_FACTOR; /* Doesn't exist in D3D12 */
    case PIPE_BLENDFACTOR_INV_CONST_ALPHA: return D3D12_BLEND_INV_BLEND_FACTOR; /* Doesn't exist in D3D12 */
    }
-   unreachable("unexpected blend factor");
+   UNREACHABLE("unexpected blend factor");
 }
 
 static D3D12_BLEND
@@ -170,7 +170,7 @@ blend_factor_alpha(enum pipe_blendfactor factor)
    case PIPE_BLENDFACTOR_INV_CONST_COLOR:
    case PIPE_BLENDFACTOR_INV_CONST_ALPHA: return D3D12_BLEND_INV_BLEND_FACTOR;
    }
-   unreachable("unexpected blend factor");
+   UNREACHABLE("unexpected blend factor");
 }
 
 static unsigned
@@ -214,7 +214,7 @@ blend_op(enum pipe_blend_func func)
    case PIPE_BLEND_MIN: return D3D12_BLEND_OP_MIN;
    case PIPE_BLEND_MAX: return D3D12_BLEND_OP_MAX;
    }
-   unreachable("unexpected blend function");
+   UNREACHABLE("unexpected blend function");
 }
 
 static D3D12_COMPARISON_FUNC
@@ -230,7 +230,7 @@ compare_op(enum pipe_compare_func op)
       case PIPE_FUNC_GEQUAL: return D3D12_COMPARISON_FUNC_GREATER_EQUAL;
       case PIPE_FUNC_ALWAYS: return D3D12_COMPARISON_FUNC_ALWAYS;
    }
-   unreachable("unexpected compare");
+   UNREACHABLE("unexpected compare");
 }
 
 static D3D12_LOGIC_OP
@@ -254,7 +254,7 @@ logic_op(enum pipe_logicop func)
    case PIPE_LOGICOP_OR: return D3D12_LOGIC_OP_OR;
    case PIPE_LOGICOP_SET: return D3D12_LOGIC_OP_SET;
    }
-   unreachable("unexpected logicop function");
+   UNREACHABLE("unexpected logicop function");
 }
 
 static UINT8
@@ -369,7 +369,7 @@ stencil_op(enum pipe_stencil_op op)
    case PIPE_STENCIL_OP_DECR_WRAP: return D3D12_STENCIL_OP_DECR;
    case PIPE_STENCIL_OP_INVERT: return D3D12_STENCIL_OP_INVERT;
    }
-   unreachable("unexpected op");
+   UNREACHABLE("unexpected op");
 }
 
 static d3d12_depth_stencil_op_desc_type
@@ -465,7 +465,7 @@ fill_mode(unsigned mode)
       return D3D12_FILL_MODE_SOLID;
 
    default:
-      unreachable("unsupported fill-mode");
+      UNREACHABLE("unsupported fill-mode");
    }
 }
 
@@ -523,7 +523,7 @@ d3d12_create_rasterizer_state(struct pipe_context *pctx,
       break;
 
    default:
-      unreachable("unsupported cull-mode");
+      UNREACHABLE("unsupported cull-mode");
    }
 
    cso->desc.FrontCounterClockwise = rs_state->front_ccw;
@@ -566,7 +566,7 @@ sampler_address_mode(enum pipe_tex_wrap wrap, enum pipe_tex_filter filter)
    case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE: return D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE;
    case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_BORDER: return D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE; /* FIXME: Doesn't exist in D3D12 */
    }
-   unreachable("unexpected wrap");
+   UNREACHABLE("unexpected wrap");
 }
 
 static D3D12_FILTER
@@ -637,7 +637,7 @@ d3d12_create_sampler_state(struct pipe_context *pctx,
       desc.MinLOD = 0;
       desc.MaxLOD = 0;
    } else {
-      unreachable("unexpected mip filter");
+      UNREACHABLE("unexpected mip filter");
    }
 
    if (state->compare_mode == PIPE_TEX_COMPARE_R_TO_TEXTURE) {
@@ -645,7 +645,7 @@ d3d12_create_sampler_state(struct pipe_context *pctx,
    } else if (state->compare_mode == PIPE_TEX_COMPARE_NONE) {
       desc.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
    } else
-      unreachable("unexpected comparison mode");
+      UNREACHABLE("unexpected comparison mode");
 
    desc.MaxAnisotropy = state->max_anisotropy;
    desc.Filter = get_filter(state);
@@ -694,7 +694,7 @@ pipe_to_dxil_tex_wrap(enum pipe_tex_wrap wrap)
 
 static void
 d3d12_bind_sampler_states(struct pipe_context *pctx,
-                          enum pipe_shader_type shader,
+                          mesa_shader_stage shader,
                           unsigned start_slot,
                           unsigned num_samplers,
                           void **samplers)
@@ -768,7 +768,7 @@ view_dimension(enum pipe_texture_target target, unsigned samples)
    case PIPE_TEXTURE_CUBE_ARRAY: return D3D12_SRV_DIMENSION_TEXTURECUBEARRAY;
    case PIPE_TEXTURE_3D: return D3D12_SRV_DIMENSION_TEXTURE3D;
    default:
-      unreachable("unexpected target");
+      UNREACHABLE("unexpected target");
    }
 }
 
@@ -783,7 +783,7 @@ component_mapping(enum pipe_swizzle swizzle)
    case PIPE_SWIZZLE_0: return D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0;
    case PIPE_SWIZZLE_1: return D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1;
    default:
-      unreachable("unexpected swizzle");
+      UNREACHABLE("unexpected swizzle");
    }
 }
 
@@ -904,7 +904,7 @@ d3d12_init_sampler_view_descriptor(struct d3d12_sampler_view *sampler_view)
                                      1 << D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP);
       break;
    default:
-      unreachable("Invalid SRV dimension");
+      UNREACHABLE("Invalid SRV dimension");
    }
 
    screen->dev->CreateShaderResourceView(d3d12_res, &desc,
@@ -953,7 +953,7 @@ d3d12_create_sampler_view(struct pipe_context *pctx,
 
 static void
 d3d12_increment_sampler_view_bind_count(struct pipe_context *ctx,
-   enum pipe_shader_type shader_type,
+   mesa_shader_stage shader_type,
    struct pipe_sampler_view *view) {
       struct d3d12_resource *res = d3d12_resource(view->texture);
       if (res)
@@ -962,7 +962,7 @@ d3d12_increment_sampler_view_bind_count(struct pipe_context *ctx,
 
 static void
 d3d12_decrement_sampler_view_bind_count(struct pipe_context *ctx,
-                              enum pipe_shader_type shader_type,
+                              mesa_shader_stage shader_type,
                               struct pipe_sampler_view *view) {
    struct d3d12_resource *res = d3d12_resource(view->texture);
    if (res) {
@@ -973,7 +973,7 @@ d3d12_decrement_sampler_view_bind_count(struct pipe_context *ctx,
 
 static void
 d3d12_set_sampler_views(struct pipe_context *pctx,
-                        enum pipe_shader_type shader_type,
+                        mesa_shader_stage shader_type,
                         unsigned start_slot,
                         unsigned num_views,
                         unsigned unbind_num_trailing_slots,
@@ -1044,7 +1044,7 @@ d3d12_destroy_sampler_view(struct pipe_context *pctx,
 }
 
 static void
-delete_shader(struct d3d12_context *ctx, enum pipe_shader_type stage,
+delete_shader(struct d3d12_context *ctx, mesa_shader_stage stage,
               struct d3d12_shader_selector *shader)
 {
    d3d12_gfx_pipeline_state_cache_invalidate_shader(ctx, stage, shader);
@@ -1063,7 +1063,7 @@ delete_shader(struct d3d12_context *ctx, enum pipe_shader_type stage,
 }
 
 static void
-bind_stage(struct d3d12_context *ctx, enum pipe_shader_type stage,
+bind_stage(struct d3d12_context *ctx, mesa_shader_stage stage,
            struct d3d12_shader_selector *shader)
 {
    assert(stage < D3D12_GFX_SHADER_STAGES);
@@ -1074,14 +1074,14 @@ static void *
 d3d12_create_vs_state(struct pipe_context *pctx,
                       const struct pipe_shader_state *shader)
 {
-   return d3d12_create_shader(d3d12_context(pctx), PIPE_SHADER_VERTEX, shader);
+   return d3d12_create_shader(d3d12_context(pctx), MESA_SHADER_VERTEX, shader);
 }
 
 static void
 d3d12_bind_vs_state(struct pipe_context *pctx,
                     void *vss)
 {
-   bind_stage(d3d12_context(pctx), PIPE_SHADER_VERTEX,
+   bind_stage(d3d12_context(pctx), MESA_SHADER_VERTEX,
               (struct d3d12_shader_selector *) vss);
 }
 
@@ -1089,7 +1089,7 @@ static void
 d3d12_delete_vs_state(struct pipe_context *pctx,
                       void *vs)
 {
-   delete_shader(d3d12_context(pctx), PIPE_SHADER_VERTEX,
+   delete_shader(d3d12_context(pctx), MESA_SHADER_VERTEX,
                  (struct d3d12_shader_selector *) vs);
 }
 
@@ -1097,7 +1097,7 @@ static void *
 d3d12_create_fs_state(struct pipe_context *pctx,
                       const struct pipe_shader_state *shader)
 {
-   return d3d12_create_shader(d3d12_context(pctx), PIPE_SHADER_FRAGMENT, shader);
+   return d3d12_create_shader(d3d12_context(pctx), MESA_SHADER_FRAGMENT, shader);
 }
 
 static void
@@ -1105,7 +1105,7 @@ d3d12_bind_fs_state(struct pipe_context *pctx,
                     void *fss)
 {
    struct d3d12_context* ctx = d3d12_context(pctx);
-   bind_stage(ctx, PIPE_SHADER_FRAGMENT,
+   bind_stage(ctx, MESA_SHADER_FRAGMENT,
               (struct d3d12_shader_selector *) fss);
    ctx->has_flat_varyings = has_flat_varyings(ctx);
    ctx->missing_dual_src_outputs = missing_dual_src_outputs(ctx) != 0;
@@ -1116,7 +1116,7 @@ static void
 d3d12_delete_fs_state(struct pipe_context *pctx,
                       void *fs)
 {
-   delete_shader(d3d12_context(pctx), PIPE_SHADER_FRAGMENT,
+   delete_shader(d3d12_context(pctx), MESA_SHADER_FRAGMENT,
                  (struct d3d12_shader_selector *) fs);
 }
 
@@ -1124,20 +1124,20 @@ static void *
 d3d12_create_gs_state(struct pipe_context *pctx,
                       const struct pipe_shader_state *shader)
 {
-   return d3d12_create_shader(d3d12_context(pctx), PIPE_SHADER_GEOMETRY, shader);
+   return d3d12_create_shader(d3d12_context(pctx), MESA_SHADER_GEOMETRY, shader);
 }
 
 static void
 d3d12_bind_gs_state(struct pipe_context *pctx, void *gss)
 {
-   bind_stage(d3d12_context(pctx), PIPE_SHADER_GEOMETRY,
+   bind_stage(d3d12_context(pctx), MESA_SHADER_GEOMETRY,
               (struct d3d12_shader_selector *) gss);
 }
 
 static void
 d3d12_delete_gs_state(struct pipe_context *pctx, void *gs)
 {
-   delete_shader(d3d12_context(pctx), PIPE_SHADER_GEOMETRY,
+   delete_shader(d3d12_context(pctx), MESA_SHADER_GEOMETRY,
                  (struct d3d12_shader_selector *) gs);
 }
 
@@ -1145,20 +1145,20 @@ static void *
 d3d12_create_tcs_state(struct pipe_context *pctx,
    const struct pipe_shader_state *shader)
 {
-   return d3d12_create_shader(d3d12_context(pctx), PIPE_SHADER_TESS_CTRL, shader);
+   return d3d12_create_shader(d3d12_context(pctx), MESA_SHADER_TESS_CTRL, shader);
 }
 
 static void
 d3d12_bind_tcs_state(struct pipe_context *pctx, void *tcss)
 {
-   bind_stage(d3d12_context(pctx), PIPE_SHADER_TESS_CTRL,
+   bind_stage(d3d12_context(pctx), MESA_SHADER_TESS_CTRL,
       (struct d3d12_shader_selector *)tcss);
 }
 
 static void
 d3d12_delete_tcs_state(struct pipe_context *pctx, void *tcs)
 {
-   delete_shader(d3d12_context(pctx), PIPE_SHADER_TESS_CTRL,
+   delete_shader(d3d12_context(pctx), MESA_SHADER_TESS_CTRL,
       (struct d3d12_shader_selector *)tcs);
 }
 
@@ -1166,20 +1166,20 @@ static void *
 d3d12_create_tes_state(struct pipe_context *pctx,
    const struct pipe_shader_state *shader)
 {
-   return d3d12_create_shader(d3d12_context(pctx), PIPE_SHADER_TESS_EVAL, shader);
+   return d3d12_create_shader(d3d12_context(pctx), MESA_SHADER_TESS_EVAL, shader);
 }
 
 static void
 d3d12_bind_tes_state(struct pipe_context *pctx, void *tess)
 {
-   bind_stage(d3d12_context(pctx), PIPE_SHADER_TESS_EVAL,
+   bind_stage(d3d12_context(pctx), MESA_SHADER_TESS_EVAL,
       (struct d3d12_shader_selector *)tess);
 }
 
 static void
 d3d12_delete_tes_state(struct pipe_context *pctx, void *tes)
 {
-   delete_shader(d3d12_context(pctx), PIPE_SHADER_TESS_EVAL,
+   delete_shader(d3d12_context(pctx), MESA_SHADER_TESS_EVAL,
       (struct d3d12_shader_selector *)tes);
 }
 
@@ -1319,9 +1319,7 @@ d3d12_set_viewport_states(struct pipe_context *pctx,
 
       bool reverse_depth_range = near_depth > far_depth;
       if (reverse_depth_range) {
-         float tmp = near_depth;
-         near_depth = far_depth;
-         far_depth = tmp;
+         std::swap(near_depth, far_depth);
          ctx->reverse_depth_range |= (1 << (start_slot + i));
       } else
          ctx->reverse_depth_range &= ~(1 << (start_slot + i));
@@ -1353,7 +1351,7 @@ d3d12_set_scissor_states(struct pipe_context *pctx,
 
 static void
 d3d12_decrement_constant_buffer_bind_count(struct d3d12_context *ctx,
-                                           enum pipe_shader_type shader,
+                                           mesa_shader_stage shader,
                                            struct d3d12_resource *res) {
    assert(res->bind_counts[shader][D3D12_RESOURCE_BINDING_TYPE_CBV] > 0);
    res->bind_counts[shader][D3D12_RESOURCE_BINDING_TYPE_CBV]--;
@@ -1361,14 +1359,14 @@ d3d12_decrement_constant_buffer_bind_count(struct d3d12_context *ctx,
 
 static void
 d3d12_increment_constant_buffer_bind_count(struct d3d12_context *ctx,
-                                           enum pipe_shader_type shader,
+                                           mesa_shader_stage shader,
                                            struct d3d12_resource *res) {
    res->bind_counts[shader][D3D12_RESOURCE_BINDING_TYPE_CBV]++;
 }
 
 static void
 d3d12_set_constant_buffer(struct pipe_context *pctx,
-                          enum pipe_shader_type shader, uint index,
+                          mesa_shader_stage shader, uint index,
                           bool take_ownership,
                           const struct pipe_constant_buffer *buf)
 {
@@ -1585,7 +1583,7 @@ d3d12_set_stream_output_targets(struct pipe_context *pctx,
 
 static void
 d3d12_decrement_ssbo_bind_count(struct d3d12_context *ctx,
-                               enum pipe_shader_type shader,
+                               mesa_shader_stage shader,
                                struct d3d12_resource *res) {
    assert(res->bind_counts[shader][D3D12_RESOURCE_BINDING_TYPE_SSBO] > 0);
    res->bind_counts[shader][D3D12_RESOURCE_BINDING_TYPE_SSBO]--;
@@ -1593,14 +1591,14 @@ d3d12_decrement_ssbo_bind_count(struct d3d12_context *ctx,
 
 static void
 d3d12_increment_ssbo_bind_count(struct d3d12_context *ctx,
-                               enum pipe_shader_type shader,
+                               mesa_shader_stage shader,
                                struct d3d12_resource *res) {
    res->bind_counts[shader][D3D12_RESOURCE_BINDING_TYPE_SSBO]++;
 }
 
 static void
 d3d12_set_shader_buffers(struct pipe_context *pctx,
-                         enum pipe_shader_type shader,
+                         mesa_shader_stage shader,
                          unsigned start_slot, unsigned count,
                          const struct pipe_shader_buffer *buffers,
                          unsigned writable_bitmask)
@@ -1640,7 +1638,7 @@ d3d12_set_shader_buffers(struct pipe_context *pctx,
 
 static void
 d3d12_decrement_image_bind_count(struct d3d12_context *ctx,
-                               enum pipe_shader_type shader,
+                               mesa_shader_stage shader,
                                struct d3d12_resource *res) {
    assert(res->bind_counts[shader][D3D12_RESOURCE_BINDING_TYPE_IMAGE] > 0);
    res->bind_counts[shader][D3D12_RESOURCE_BINDING_TYPE_IMAGE]--;
@@ -1648,7 +1646,7 @@ d3d12_decrement_image_bind_count(struct d3d12_context *ctx,
 
 static void
 d3d12_increment_image_bind_count(struct d3d12_context *ctx,
-                               enum pipe_shader_type shader,
+                               mesa_shader_stage shader,
                                struct d3d12_resource *res) {
    res->bind_counts[shader][D3D12_RESOURCE_BINDING_TYPE_IMAGE]++;
 }
@@ -1690,13 +1688,13 @@ get_shader_image_emulation_format(enum pipe_format resource_format)
    case DXGI_FORMAT_R11G11B10_FLOAT:
       return PIPE_FORMAT_R11G11B10_FLOAT;
    default:
-      unreachable("Unexpected shader image resource format");
+      UNREACHABLE("Unexpected shader image resource format");
    }
 }
 
 static void
 d3d12_set_shader_images(struct pipe_context *pctx,
-                        enum pipe_shader_type shader,
+                        mesa_shader_stage shader,
                         unsigned start_slot, unsigned count,
                         unsigned unbind_num_trailing_slots,
                         const struct pipe_image_view *images)
@@ -1841,7 +1839,7 @@ d3d12_disable_fake_so_buffers(struct d3d12_context *ctx)
       new_cs_ssbos[1].buffer = target->fill_buffer;
       new_cs_ssbos[1].buffer_offset = target->fill_buffer_offset;
       new_cs_ssbos[1].buffer_size = target->fill_buffer->width0 - target->fill_buffer_offset;
-      ctx->base.set_shader_buffers(&ctx->base, PIPE_SHADER_COMPUTE, 0, 2, new_cs_ssbos, 2);
+      ctx->base.set_shader_buffers(&ctx->base, MESA_SHADER_COMPUTE, 0, 2, new_cs_ssbos, 2);
 
       pipe_grid_info grid = {};
       grid.block[0] = grid.block[1] = grid.block[2] = 1;
@@ -1877,13 +1875,13 @@ d3d12_disable_fake_so_buffers(struct d3d12_context *ctx)
       new_cs_ssbos[1].buffer = fake_target->base.buffer;
       new_cs_ssbos[1].buffer_offset = fake_target->base.buffer_offset;
       new_cs_ssbos[1].buffer_size = fake_target->base.buffer_size;
-      ctx->base.set_shader_buffers(&ctx->base, PIPE_SHADER_COMPUTE, 0, 2, new_cs_ssbos, 2);
+      ctx->base.set_shader_buffers(&ctx->base, MESA_SHADER_COMPUTE, 0, 2, new_cs_ssbos, 2);
 
       pipe_constant_buffer cbuf = {};
       cbuf.buffer = fake_target->fill_buffer;
       cbuf.buffer_offset = fake_target->fill_buffer_offset;
       cbuf.buffer_size = fake_target->fill_buffer->width0 - cbuf.buffer_offset;
-      ctx->base.set_constant_buffer(&ctx->base, PIPE_SHADER_COMPUTE, 1, false, &cbuf);
+      ctx->base.set_constant_buffer(&ctx->base, MESA_SHADER_COMPUTE, 1, false, &cbuf);
 
       grid.indirect = fake_target->fill_buffer;
       grid.indirect_offset = fake_target->fill_buffer_offset + 4;
@@ -1952,22 +1950,22 @@ d3d12_clear_render_target(struct pipe_context *pctx,
       util_blitter_save_vertex_elements(ctx->blitter, ctx->gfx_pipeline_state.ves);
       util_blitter_save_stencil_ref(ctx->blitter, &ctx->stencil_ref);
       util_blitter_save_rasterizer(ctx->blitter, ctx->gfx_pipeline_state.rast);
-      util_blitter_save_fragment_shader(ctx->blitter, ctx->gfx_stages[PIPE_SHADER_FRAGMENT]);
-      util_blitter_save_vertex_shader(ctx->blitter, ctx->gfx_stages[PIPE_SHADER_VERTEX]);
-      util_blitter_save_geometry_shader(ctx->blitter, ctx->gfx_stages[PIPE_SHADER_GEOMETRY]);
-      util_blitter_save_tessctrl_shader(ctx->blitter, ctx->gfx_stages[PIPE_SHADER_TESS_CTRL]);
-      util_blitter_save_tesseval_shader(ctx->blitter, ctx->gfx_stages[PIPE_SHADER_TESS_EVAL]);
+      util_blitter_save_fragment_shader(ctx->blitter, ctx->gfx_stages[MESA_SHADER_FRAGMENT]);
+      util_blitter_save_vertex_shader(ctx->blitter, ctx->gfx_stages[MESA_SHADER_VERTEX]);
+      util_blitter_save_geometry_shader(ctx->blitter, ctx->gfx_stages[MESA_SHADER_GEOMETRY]);
+      util_blitter_save_tessctrl_shader(ctx->blitter, ctx->gfx_stages[MESA_SHADER_TESS_CTRL]);
+      util_blitter_save_tesseval_shader(ctx->blitter, ctx->gfx_stages[MESA_SHADER_TESS_EVAL]);
 
       util_blitter_save_framebuffer(ctx->blitter, &ctx->fb);
       util_blitter_save_viewport(ctx->blitter, ctx->viewport_states);
       util_blitter_save_scissor(ctx->blitter, ctx->scissor_states);
       util_blitter_save_fragment_sampler_states(ctx->blitter,
-                                                ctx->num_samplers[PIPE_SHADER_FRAGMENT],
-                                                (void **)ctx->samplers[PIPE_SHADER_FRAGMENT]);
+                                                ctx->num_samplers[MESA_SHADER_FRAGMENT],
+                                                (void **)ctx->samplers[MESA_SHADER_FRAGMENT]);
       util_blitter_save_fragment_sampler_views(ctx->blitter,
-                                               ctx->num_sampler_views[PIPE_SHADER_FRAGMENT],
-                                               ctx->sampler_views[PIPE_SHADER_FRAGMENT]);
-      util_blitter_save_fragment_constant_buffer_slot(ctx->blitter, ctx->cbufs[PIPE_SHADER_FRAGMENT]);
+                                               ctx->num_sampler_views[MESA_SHADER_FRAGMENT],
+                                               ctx->sampler_views[MESA_SHADER_FRAGMENT]);
+      util_blitter_save_fragment_constant_buffer_slot(ctx->blitter, ctx->cbufs[MESA_SHADER_FRAGMENT]);
       util_blitter_save_vertex_buffers(ctx->blitter, ctx->vbs, ctx->num_vbs);
       util_blitter_save_sample_mask(ctx->blitter, ctx->gfx_pipeline_state.sample_mask, 0);
       util_blitter_save_so_targets(ctx->blitter, ctx->gfx_pipeline_state.num_so_targets, ctx->so_targets,
@@ -2167,7 +2165,7 @@ d3d12_set_tess_state(struct pipe_context *pctx,
 bool
 d3d12_need_zero_one_depth_range(struct d3d12_context *ctx)
 {
-   struct d3d12_shader_selector *fs = ctx->gfx_stages[PIPE_SHADER_FRAGMENT];
+   struct d3d12_shader_selector *fs = ctx->gfx_stages[MESA_SHADER_FRAGMENT];
 
    /**
     * OpenGL Compatibility spec, section 15.2.3 (Shader Outputs) says
@@ -2210,7 +2208,7 @@ void
 d3d12_invalidate_context_bindings(struct d3d12_context *ctx, struct d3d12_resource *res) {
    // For each shader type, if the resource is currently bound as CBV, SRV, or UAV
    // set the context shader_dirty bit.
-   for (uint i = 0; i < PIPE_SHADER_TYPES; ++i) {
+   for (uint i = 0; i < MESA_SHADER_STAGES; ++i) {
       if (res->bind_counts[i][D3D12_RESOURCE_BINDING_TYPE_CBV] > 0) {
          ctx->shader_dirty[i] |= D3D12_SHADER_DIRTY_CONSTBUF;
       }

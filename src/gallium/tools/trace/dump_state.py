@@ -410,15 +410,15 @@ class Context(Dispatcher):
         sys.stdout.flush()
 
     def _get_stage_state(self, shader):
-        if shader == 'PIPE_SHADER_VERTEX':
+        if shader == 'MESA_SHADER_VERTEX':
             return self._state.vs
-        if shader == 'PIPE_SHADER_TESS_CTRL':
+        if shader == 'MESA_SHADER_TESS_CTRL':
             return self._state.tcs
-        if shader == 'PIPE_SHADER_TESS_EVAL':
+        if shader == 'MESA_SHADER_TESS_EVAL':
             return self._state.tes
-        if shader == 'PIPE_SHADER_GEOMETRY':
+        if shader == 'MESA_SHADER_GEOMETRY':
             return self._state.gs
-        if shader == 'PIPE_SHADER_FRAGMENT':
+        if shader == 'MESA_SHADER_FRAGMENT':
             return self._state.fs
         assert False
 
@@ -759,7 +759,6 @@ class Interpreter(parser.SimpleTraceDumper):
             ('pipe_screen', 'get_vendor'),
             ('pipe_screen', 'get_device_uuid'),
             ('pipe_screen', 'get_driver_uuid'),
-            ('pipe_screen', 'get_compiler_options'),
             ('pipe_screen', 'get_param'),
             ('pipe_screen', 'get_paramf'),
             ('pipe_screen', 'get_shader_param'),

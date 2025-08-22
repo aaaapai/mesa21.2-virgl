@@ -8,7 +8,7 @@ radv-stoney-vkcts:
     - .radv-stoney-test:x86_64
   parallel: 5
   variables:
-    DEQP_SUITE: radv-stoney
+    DEQP_SUITE: radv
     DEQP_FRACTION: 18
 
 radv-stoney-angle:
@@ -56,7 +56,7 @@ radv-raven-vkcts:
     - .lava-asus-CM1400CXA-dalboz:x86_64
   parallel: 9
   variables:
-    DEQP_SUITE: radv-raven
+    DEQP_SUITE: radv
     DEQP_FRACTION: 6
 
 amd-raven-skqp:
@@ -95,7 +95,7 @@ radv-raven-traces-restricted:
     PIGLIT_TRACES_FILE: restricted-traces-amd.yml
     PIGLIT_REPLAY_DEVICE_NAME: "vk-${GPU_VERSION}"
     PIGLIT_REPLAY_EXTRA_ARGS: --keep-image --minio_bucket=${S3_TRACIE_PRIVATE_BUCKET} --jwt-file=${S3_JWT_FILE}
-    FDO_CI_CONCURRENT: 10
+    FDO_CI_CONCURRENT: 5  # Run the 10 traces in 2 sets of 5 to avoid OOMs
   allow_failure: true
 
 radeonsi-raven-piglit:
@@ -142,12 +142,13 @@ radeonsi-raven-va:
 
 radeonsi-raven-vaapi-fluster:
   extends:
-    - radeonsi-raven-va
+    - .lava-x86_64-test-video
+    - .radeonsi-raven-test:x86_64
     - .radeonsi-vaapi-fluster-rules
-  timeout: 30m
-  parallel: 2
+    - .lava-hp-x360-14a-cb0001xx-zork:x86_64
   variables:
-    FLUSTER_CODECS: VP9 H.264 H.265
+    DEQP_SUITE: fluster-vaapi
+    GPU_VERSION: radeonsi-raven-fluster
 
 radeonsi-mendocino-glcts-piglit:
   extends:
@@ -161,6 +162,16 @@ radeonsi-mendocino-glcts-piglit:
     GPU_VERSION: radeonsi-mendocino
     HWCI_START_WESTON: 1
 
+radv-cezanne-vkcts-asan:
+  extends:
+    - .lava-x86_64-test-asan-vk
+    - .radv-cezanne-test:x86_64
+    - .radv-collabora-rules
+  parallel: 2
+  variables:
+    DEQP_SUITE: radv
+    DEQP_FRACTION: 25
+
 ############### VKCTS tests ###############
 
 # VKCTS never finishes on gfx7 due to all the GPU resets and hangs.
@@ -172,8 +183,6 @@ radeonsi-mendocino-glcts-piglit:
     - .radv-valve-manual-rules  # Make sure this job is *always* run manually
   timeout: 12h
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-kabini
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 710
 
 radv-tahiti-vkcts:
@@ -183,8 +192,6 @@ radv-tahiti-vkcts:
     - .radv-valve-manual-rules  # Make sure this job is *always* run manually
   timeout: 1h
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-tahiti
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 50
     RADV_PERFTEST: video_decode,video_encode
 
@@ -195,8 +202,6 @@ radv-hawaii-vkcts:
     - .radv-valve-manual-rules
   timeout: 1h
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-hawaii
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 50
     RADV_PERFTEST: video_decode,video_encode
 
@@ -207,8 +212,6 @@ radv-polaris10-vkcts:
     - .radv-valve-manual-rules
   timeout: 1h 35m
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-polaris10
     CI_TRON_TIMEOUT__BOOT_CYCLE__RETRIES: 4
     CI_TRON_TIMEOUT__BOOT_CYCLE__MINUTES: 70
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 90
@@ -222,8 +225,6 @@ radv-vega10-vkcts:
     - .radv-valve-manual-rules
   timeout: 1h 15m
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-vega10
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 70
     RADV_PERFTEST: transfer_queue,video_decode,video_encode
 
@@ -234,8 +235,6 @@ radv-renoir-vkcts:
     - .radv-valve-manual-rules
   timeout: 2h 15m
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-renoir
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 130
     RADV_PERFTEST: transfer_queue
     FDO_CI_CONCURRENT: 12  # HACK: Reduce the memory pressure
@@ -247,9 +246,7 @@ radv-navi10-vkcts:
     - .navi10-test-valve-kws
     - .radv-valve-manual-rules
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-navi10
-    RADV_PERFTEST: transfer_queue
+    RADV_PERFTEST: transfer_queue,hic
 
 radv-navi21-vkcts:
   timeout: 35m
@@ -259,10 +256,8 @@ radv-navi21-vkcts:
     - .navi21-test-valve
     - .radv-valve-rules
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-navi21
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 30
-    RADV_PERFTEST: transfer_queue
+    RADV_PERFTEST: transfer_queue,hic
 
 radv-vangogh-vkcts:
   parallel: 2
@@ -272,32 +267,31 @@ radv-vangogh-vkcts:
     - .radv-valve-manual-rules
   timeout: 90m
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-vangogh
-    RADV_PERFTEST: transfer_queue
+    RADV_PERFTEST: transfer_queue,hic
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 89
 
-radeonsi-vangogh-glcts-full:
+radeonsi-vangogh-glcts:
   extends:
     - .ci-tron-x86_64-test-gl
     - .ci-tron-test-amdgpu
     - .test-piglit
     - .vangogh-test-valve
-    - .radeonsi-valve-manual-rules
-  timeout: 90m
-  variables:
-    GPU_VERSION: radeonsi-vangogh
-    DEQP_SUITE: radeonsi-vangogh
-    CI_TRON_TIMEOUT__OVERALL__MINUTES: 89
-
-radeonsi-vangogh-glcts:
-  extends:
-    - radeonsi-vangogh-glcts-full
     - .radeonsi-valve-rules
   timeout: 20m
   variables:
+    GPU_VERSION: radeonsi-vangogh
+    DEQP_SUITE: radeonsi-vangogh
     DEQP_FRACTION: 6
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 19
+
+radeonsi-vangogh-glcts-full:
+  extends:
+    - radeonsi-vangogh-glcts
+    - .radeonsi-valve-manual-rules
+  timeout: 90m
+  variables:
+    DEQP_FRACTION: 1
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 89
 
 radv-raphael-vkcts:
   extends:
@@ -306,10 +300,8 @@ radv-raphael-vkcts:
     - .radv-valve-manual-rules
   timeout: 45m
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-raphael
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 40
-    RADV_PERFTEST: transfer_queue
+    RADV_PERFTEST: transfer_queue,hic
 
 radv-navi31-vkcts:
   timeout: 25m
@@ -319,12 +311,25 @@ radv-navi31-vkcts:
     - .navi31-test-valve
     - .radv-valve-rules
   variables:
-    DEQP_SUITE: radv-valve
-    GPU_VERSION: radv-navi31
     RADV_DEBUG: nomeshshader # Disable mesh shaders until task shaders stop hanging
     # TODO: Remove video_encode,video_decode with next kernel.
-    RADV_PERFTEST: transfer_queue,video_decode,video_encode
+    RADV_PERFTEST: transfer_queue,video_decode,video_encode,hic
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 20
+
+
+radv-gfx1201-vkcts:
+  timeout: 20m
+  parallel: 3
+  extends:
+    - .ci-tron-test-radv-vk
+    - .gfx1201-test-valve
+    - .radv-valve-rules
+  variables:
+    # TODO: Verify that task shaders don't hang.
+    # TODO: Fix GPU hangs with video
+    RADV_DEBUG: nomeshshader,novideo
+    RADV_PERFTEST: transfer_queue,hic
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 15
 
 ############### Fossilize
 radv-fossils:
@@ -381,8 +386,9 @@ radv-tahiti-vkd3d:
     - .test-vkd3d-proton
     - .tahiti-test-valve
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-tahiti
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
     # Random tests fail/crash when trying to run them in parallel
     FDO_CI_CONCURRENT: 1
 
@@ -392,8 +398,9 @@ radv-hawaii-vkd3d:
     - .test-vkd3d-proton
     - .hawaii-test-valve
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-hawaii
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
     # Random tests fail/crash when trying to run them in parallel
     FDO_CI_CONCURRENT: 1
 
@@ -403,8 +410,9 @@ radv-polaris10-vkd3d:
     - .test-vkd3d-proton
     - .polaris10-test-valve-kws
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-polaris10
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
     # Random tests fail/crash when trying to run them in parallel
     FDO_CI_CONCURRENT: 1
 
@@ -414,8 +422,9 @@ radv-vega10-vkd3d:
     - .test-vkd3d-proton
     - .vega10-test-valve
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-vega10
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
     # Random tests fail/crash when trying to run them in parallel
     FDO_CI_CONCURRENT: 1
 
@@ -425,8 +434,9 @@ radv-renoir-vkd3d:
     - .test-vkd3d-proton
     - .renoir-test-valve
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-renoir
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
     # Random tests fail/crash when trying to run them in parallel
     FDO_CI_CONCURRENT: 1
 
@@ -436,8 +446,9 @@ radv-navi10-vkd3d:
     - .test-vkd3d-proton
     - .navi10-test-valve-mupuf
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-navi10
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
     # Random tests fail/crash when trying to run them in parallel
     FDO_CI_CONCURRENT: 1
 
@@ -447,8 +458,9 @@ radv-navi21-vkd3d:
     - .test-vkd3d-proton
     - .navi21-test-valve
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-navi21
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
     # Random tests fail/crash when trying to run them in parallel
     FDO_CI_CONCURRENT: 1
 
@@ -458,8 +470,9 @@ radv-vangogh-vkd3d:
     - .test-vkd3d-proton
     - .vangogh-test-valve
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-vangogh
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
     # Random tests fail/crash when trying to run them in parallel
     FDO_CI_CONCURRENT: 1
 
@@ -469,8 +482,9 @@ radv-raphael-vkd3d:
     - .test-vkd3d-proton
     - .raphael-test-valve
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-raphael
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
     # Random tests fail/crash when trying to run them in parallel
     FDO_CI_CONCURRENT: 1
 
@@ -480,8 +494,21 @@ radv-navi31-vkd3d:
     - .test-vkd3d-proton
     - .navi31-test-valve
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-navi31
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
+    # Random tests fail/crash when trying to run them in parallel
+    FDO_CI_CONCURRENT: 1
+
+radv-gfx1201-vkd3d:
+  extends:
+    - .ci-tron-test-radv-vk
+    - .test-vkd3d-proton
+    - .gfx1201-test-valve
+    - .radv-valve-manual-rules
+  timeout: 10m
+  variables:
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8
     # Random tests fail/crash when trying to run them in parallel
     FDO_CI_CONCURRENT: 1
 
@@ -491,5 +518,6 @@ radv-navi31-vkd3d:
     - .test-vkd3d-proton
     - .kabini-test-valve
     - .radv-valve-manual-rules
+  timeout: 10m
   variables:
-    GPU_VERSION: radv-kabini
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 8

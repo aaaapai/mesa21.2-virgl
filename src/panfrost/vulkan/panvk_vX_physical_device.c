@@ -44,6 +44,7 @@ panvk_per_arch(get_physical_device_extensions)(
    *ext = (struct vk_device_extension_table){
       .KHR_8bit_storage = true,
       .KHR_16bit_storage = true,
+      .KHR_shader_atomic_int64 = PAN_ARCH >= 9,
       .KHR_bind_memory2 = true,
       .KHR_buffer_device_address = true,
       .KHR_calibrated_timestamps = true,
@@ -111,6 +112,7 @@ panvk_per_arch(get_physical_device_extensions)(
 #endif
       .KHR_synchronization2 = true,
       .KHR_timeline_semaphore = true,
+      .KHR_unified_image_layouts = true,
       .KHR_uniform_buffer_standard_layout = true,
       .KHR_variable_pointers = true,
       .KHR_vertex_attribute_divisor = true,
@@ -136,6 +138,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_global_priority_query = true,
       .EXT_graphics_pipeline_library = true,
       .EXT_hdr_metadata = true,
+      .EXT_host_image_copy = true,
       .EXT_host_query_reset = true,
       .EXT_image_2d_view_of_3d = true,
       /* EXT_image_drm_format_modifier depends on KHR_sampler_ycbcr_conversion */
@@ -144,6 +147,8 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_index_type_uint8 = true,
       .EXT_line_rasterization = true,
       .EXT_load_store_op_none = true,
+      .EXT_non_seamless_cube_map = true,
+      .EXT_mutable_descriptor_type = PAN_ARCH >= 9,
       .EXT_physical_device_drm = true,
       .EXT_pipeline_creation_cache_control = true,
       .EXT_pipeline_creation_feedback = true,
@@ -173,6 +178,9 @@ panvk_per_arch(get_physical_device_extensions)(
       .GOOGLE_decorate_string = true,
       .GOOGLE_hlsl_functionality1 = true,
       .GOOGLE_user_type = true,
+
+      .ARM_shader_core_builtins = true,
+      .ARM_shader_core_properties = has_vk1_1,
    };
 }
 
@@ -283,8 +291,8 @@ panvk_per_arch(get_physical_device_features)(
       .storageBuffer8BitAccess = true,
       .uniformAndStorageBuffer8BitAccess = true,
       .storagePushConstant8 = true,
-      .shaderBufferInt64Atomics = false,
-      .shaderSharedInt64Atomics = false,
+      .shaderBufferInt64Atomics = PAN_ARCH >= 9,
+      .shaderSharedInt64Atomics = PAN_ARCH >= 9,
       .shaderFloat16 = PAN_ARCH >= 10,
       .shaderInt8 = true,
 
@@ -372,6 +380,9 @@ panvk_per_arch(get_physical_device_features)(
       /* VK_KHR_global_priority */
       .globalPriorityQuery = true,
 
+      /* VK_EXT_host_image_copy */
+      .hostImageCopy = true,
+
       /* VK_KHR_index_type_uint8 */
       .indexTypeUint8 = true,
 
@@ -431,7 +442,7 @@ panvk_per_arch(get_physical_device_features)(
       .pipelineRobustness = true,
 
       /* VK_EXT_robustness2 */
-      .robustBufferAccess2 = false,
+      .robustBufferAccess2 = PAN_ARCH >= 11,
       .robustImageAccess2 = false,
       .nullDescriptor = PAN_ARCH >= 10,
 
@@ -474,6 +485,28 @@ panvk_per_arch(get_physical_device_features)(
 
       /* VK_KHR_push_descriptor */
       .pushDescriptor = true,
+
+      /* VK_EXT_non_seamless_cube_map */
+      .nonSeamlessCubeMap = true,
+
+      /* VK_KHR_unified_image_layouts */
+      .unifiedImageLayouts = true,
+      /* Video is not currently supported, so set to false */
+      .unifiedImageLayoutsVideo = false,
+
+      /* VK_EXT_mutable_descriptor_type */
+      .mutableDescriptorType = PAN_ARCH >= 9,
+
+#ifdef PANVK_USE_WSI_PLATFORM
+      /* VK_KHR_present_id2 */
+      .presentId2 = true,
+
+      /* VK_KHR_present_wait2 */
+      .presentWait2 = true,
+#endif
+
+      /* VK_ARM_shader_core_builtins */
+      .shaderCoreBuiltins = PAN_ARCH >= 9,
    };
 }
 
@@ -485,7 +518,7 @@ get_api_version()
       return version_override;
 
    if (PAN_ARCH >= 10)
-      return VK_MAKE_API_VERSION(0, 1, 3, VK_HEADER_VERSION);
+      return VK_MAKE_API_VERSION(0, 1, 4, VK_HEADER_VERSION);
 
    return VK_MAKE_API_VERSION(0, 1, 0, VK_HEADER_VERSION);
 }
@@ -539,7 +572,8 @@ panvk_per_arch(get_physical_device_properties)(
       /* Collect arch_major, arch_minor, arch_rev and product_major,
        * as done by the Arm driver.
        */
-      .deviceID = device->kmod.props.gpu_prod_id << 16,
+      .deviceID =
+         device->kmod.props.gpu_id & (ARCH_MAJOR | ARCH_MINOR | ARCH_REV | PRODUCT_MAJOR),
       .deviceType = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
 
       /* Vulkan 1.0 limits */
@@ -924,6 +958,20 @@ panvk_per_arch(get_physical_device_properties)(
 
       /* VK_KHR_push_descriptor */
       .maxPushDescriptors = MAX_PUSH_DESCS,
+
+      /* VK_ARM_shader_core_properties */
+      .pixelRate = device->model->rates.pixel,
+      .texelRate = device->model->rates.texel,
+      .fmaRate = device->model->rates.fma,
+
+      /* VK_EXT_host_image_copy */
+      .identicalMemoryTypeRequirements = true,
+
+      /* VK_ARM_shader_core_builtins */
+      .shaderCoreMask = device->kmod.props.shader_present,
+      .shaderCoreCount = util_bitcount(device->kmod.props.shader_present),
+      .shaderWarpsPerCore = device->kmod.props.max_threads_per_core /
+                            (pan_subgroup_size(PAN_ARCH) * 2),
    };
 
    snprintf(properties->deviceName, sizeof(properties->deviceName), "%s",
@@ -937,7 +985,7 @@ panvk_per_arch(get_physical_device_properties)(
       uint8_t pad[8];
    } dev_uuid = {
       .vendor_id = ARM_VENDOR_ID,
-      .device_id = device->model->gpu_id,
+      .device_id = properties->deviceID,
    };
 
    STATIC_ASSERT(sizeof(dev_uuid) == VK_UUID_SIZE);
@@ -967,4 +1015,44 @@ panvk_per_arch(get_physical_device_properties)(
    memcpy(properties->shaderModuleIdentifierAlgorithmUUID,
           vk_shaderModuleIdentifierAlgorithmUUID,
           sizeof(properties->shaderModuleIdentifierAlgorithmUUID));
+
+   /* VK_EXT_host_image_copy */
+   /* We don't use image layouts, advertise all of them */
+   static VkImageLayout supported_host_copy_layouts[] = {
+      VK_IMAGE_LAYOUT_GENERAL,
+      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_PREINITIALIZED,
+
+      /* Only if vk1.1+ is supported */
+#if PAN_ARCH >= 10
+      /*  Vulkan 1.1 */
+      VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
+
+      /*  Vulkan 1.2 */
+      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL,
+
+      /* Vulkan 1.3 */
+      VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+      VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+
+      /* Vulkan 1.4 */
+      VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ,
+#endif
+   };
+   properties->pCopySrcLayouts = supported_host_copy_layouts;
+   properties->copySrcLayoutCount = ARRAY_SIZE(supported_host_copy_layouts);
+   properties->pCopyDstLayouts = supported_host_copy_layouts;
+   properties->copyDstLayoutCount = ARRAY_SIZE(supported_host_copy_layouts);
+   /* All HW has the same tiling layout, key off build hash only */
+   STATIC_ASSERT(sizeof(instance->driver_build_sha) >= VK_UUID_SIZE);
+   memcpy(properties->optimalTilingLayoutUUID, instance->driver_build_sha,
+          VK_UUID_SIZE);
 }

@@ -45,6 +45,8 @@ extern "C" {
 #define VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_NIR_CREATE_INFO_MESA_cast \
    VkPipelineShaderStageNirCreateInfoMESA
 
+static const VkPipelineCreateFlagBits2 VK_PIPELINE_CREATE_2_UNALIGNED_DISPATCH_BIT_MESA = 0x20000000000ull;
+
 typedef struct VkPipelineShaderStageNirCreateInfoMESA {
    VkStructureType sType;
    const void *pNext;
@@ -67,7 +69,7 @@ vk_pipeline_shader_stage_to_nir(struct vk_device *device,
 
 enum gl_subgroup_size
 vk_get_subgroup_size(uint32_t spirv_version,
-                     gl_shader_stage stage,
+                     mesa_shader_stage stage,
                      const void *info_pNext,
                      bool allow_varying,
                      bool require_full);
@@ -196,7 +198,7 @@ struct vk_pipeline_ops {
                     struct vk_pipeline *pipeline);
 
    struct vk_shader *(*get_shader)(struct vk_pipeline *pipeline,
-                                   gl_shader_stage stage);
+                                   mesa_shader_stage stage);
 };
 
 void *vk_pipeline_zalloc(struct vk_device *device,
@@ -219,7 +221,7 @@ void vk_pipeline_free(struct vk_device *device,
 
 static inline struct vk_shader *
 vk_pipeline_get_shader(struct vk_pipeline *pipeline,
-                       gl_shader_stage stage)
+                       mesa_shader_stage stage)
 {
    if (pipeline->ops->get_shader == NULL)
       return NULL;

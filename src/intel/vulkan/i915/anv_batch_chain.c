@@ -246,27 +246,16 @@ anv_execbuf_add_sync(struct anv_device *device,
    if ((sync->flags & VK_SYNC_IS_TIMELINE) && value == 0)
       return VK_SUCCESS;
 
-   if (vk_sync_is_anv_bo_sync(sync)) {
-      struct anv_bo_sync *bo_sync =
-         container_of(sync, struct anv_bo_sync, sync);
+   assert(vk_sync_type_is_drm_syncobj(sync->type));
+   struct vk_drm_syncobj *syncobj = vk_sync_as_drm_syncobj(sync);
 
-      assert(is_signal == (bo_sync->state == ANV_BO_SYNC_STATE_RESET));
+   if (!(sync->flags & VK_SYNC_IS_TIMELINE))
+      value = 0;
 
-      return anv_execbuf_add_bo(device, execbuf, bo_sync->bo, NULL,
-                                is_signal ? EXEC_OBJECT_WRITE : 0);
-   } else if (vk_sync_type_is_drm_syncobj(sync->type)) {
-      struct vk_drm_syncobj *syncobj = vk_sync_as_drm_syncobj(sync);
-
-      if (!(sync->flags & VK_SYNC_IS_TIMELINE))
-         value = 0;
-
-      return anv_execbuf_add_syncobj(device, execbuf, syncobj->syncobj,
-                                     is_signal ? I915_EXEC_FENCE_SIGNAL :
-                                                 I915_EXEC_FENCE_WAIT,
-                                     value);
-   }
-
-   unreachable("Invalid sync type");
+   return anv_execbuf_add_syncobj(device, execbuf, syncobj->syncobj,
+                                  is_signal ? I915_EXEC_FENCE_SIGNAL :
+                                              I915_EXEC_FENCE_WAIT,
+                                  value);
 }
 
 static VkResult
@@ -714,9 +703,9 @@ anv_i915_debug_submit(const struct anv_execbuf *execbuf)
    for (uint32_t i = 0; i < execbuf->bo_count; i++) {
       const struct anv_bo *bo = execbuf->bos[i];
 
-      fprintf(stderr, "   BO: addr=0x%016"PRIx64"-0x%016"PRIx64" size=%7"PRIu64
+      fprintf(stderr, "   BO: addr=0x%016"PRIx64"-0x%016"PRIx64" map=%16p size=%7"PRIu64
               "KB handle=%05u capture=%u vram_only=%u name=%s\n",
-              bo->offset, bo->offset + bo->size - 1, bo->size / 1024,
+              bo->offset, bo->offset + bo->size - 1, bo->map, bo->size / 1024,
               bo->gem_handle, (bo->flags & EXEC_OBJECT_CAPTURE) != 0,
               anv_bo_is_vram_only(bo), bo->name);
    }
@@ -747,6 +736,7 @@ i915_queue_exec_async(struct anv_async_submit *submit,
 
    if (INTEL_DEBUG(DEBUG_SUBMIT))
       anv_i915_debug_submit(&execbuf);
+   anv_async_submit_print_batch(submit);
 
    ANV_RMV(bos_gtt_map, device, execbuf.bos, execbuf.bo_count);
 

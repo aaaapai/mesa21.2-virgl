@@ -348,7 +348,7 @@ struct ra_ctx {
    struct ir3_block *block;
 
    const struct ir3_compiler *compiler;
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
 
    /* Pending moves of top-level intervals that will be emitted once we're
     * finished:
@@ -1246,7 +1246,7 @@ compress_regs_left(struct ra_ctx *ctx, struct ra_file *file,
           reg_file_size(file, cur_reg)) {
          d("ran out of room for interval %u!\n",
            cur_reg->name);
-         unreachable("reg pressure calculation was wrong!");
+         UNREACHABLE("reg pressure calculation was wrong!");
          return 0;
       }
 
@@ -1330,7 +1330,9 @@ find_best_gap(struct ra_ctx *ctx, struct ra_file *file,
    BITSET_WORD *available =
       is_early_clobber(dst) ? file->available_to_evict : file->available;
 
-   unsigned start = ALIGN(file->start, alignment) % (file_size - size + alignment);
+   unsigned start = ALIGN(file->start, alignment);
+   if (start + size > file_size)
+      start = 0;
    unsigned candidate = start;
    do {
       bool is_available = true;
@@ -1941,7 +1943,7 @@ handle_precolored_source(struct ra_ctx *ctx, struct ir3_register *src)
       unsigned eviction_count;
       if (!try_evict_regs(ctx, file, src, physreg, &eviction_count, true,
                           false)) {
-         unreachable("failed to evict for precolored source!");
+         UNREACHABLE("failed to evict for precolored source!");
          return;
       }
    }
@@ -2670,7 +2672,7 @@ ir3_ra(struct ir3_shader_variant *v)
    limit_pressure.shared = RA_SHARED_SIZE;
    limit_pressure.shared_half = RA_SHARED_HALF_SIZE;
 
-   if (gl_shader_stage_is_compute(v->type) && v->has_barrier) {
+   if (mesa_shader_stage_is_compute(v->type) && v->has_barrier) {
       calc_limit_pressure_for_cs_with_barrier(v, &limit_pressure);
    }
 

@@ -28,6 +28,7 @@ const LUID_SIZE: usize = PIPE_LUID_SIZE as usize;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ResourceType {
+    Immutable,
     Normal,
     Staging,
 }
@@ -41,6 +42,9 @@ impl ResourceType {
                 tmpl.bind |= PIPE_BIND_LINEAR;
             }
             Self::Normal => {}
+            Self::Immutable => {
+                tmpl.set_usage(pipe_resource_usage::PIPE_USAGE_IMMUTABLE);
+            }
         }
     }
 }
@@ -293,7 +297,7 @@ impl PipeScreen {
         }
     }
 
-    pub fn shader_caps(&self, t: pipe_shader_type) -> &pipe_shader_caps {
+    pub fn shader_caps(&self, t: mesa_shader_stage) -> &pipe_shader_caps {
         &self.screen().shader_caps[t as usize]
     }
 
@@ -412,16 +416,9 @@ impl PipeScreen {
 
     pub fn nir_shader_compiler_options(
         &self,
-        shader: pipe_shader_type,
+        shader: mesa_shader_stage,
     ) -> *const nir_shader_compiler_options {
-        unsafe {
-            self.screen().get_compiler_options.unwrap()(
-                self.screen.as_ptr(),
-                pipe_shader_ir::PIPE_SHADER_IR_NIR,
-                shader,
-            )
-            .cast()
-        }
+        self.screen().nir_options[shader as usize]
     }
 
     pub fn shader_cache(&self) -> Option<DiskCacheBorrowed> {
@@ -452,14 +449,14 @@ impl PipeScreen {
         }
     }
 
-    pub(super) fn fence_finish(&self, fence: *mut pipe_fence_handle) {
+    pub(super) fn fence_finish(&self, fence: *mut pipe_fence_handle) -> bool {
         unsafe {
             self.screen().fence_finish.unwrap()(
                 self.screen.as_ptr(),
                 ptr::null_mut(),
                 fence,
                 OS_TIMEOUT_INFINITE as u64,
-            );
+            )
         }
     }
 
@@ -486,7 +483,6 @@ fn has_required_cbs(screen: *mut pipe_screen) -> bool {
         & has_required_feature!(screen, destroy)
         & has_required_feature!(screen, fence_finish)
         & has_required_feature!(screen, fence_reference)
-        & has_required_feature!(screen, get_compiler_options)
         & has_required_feature!(screen, get_name)
         & has_required_feature!(screen, is_format_supported)
         & has_required_feature!(screen, resource_create)

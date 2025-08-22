@@ -43,7 +43,7 @@ struct table_state {
 };
 
 struct state {
-   gl_shader_stage stage, hw_stage;
+   mesa_shader_stage stage, hw_stage;
 
    /* Array of nir_intrinsic_instr's to fix up at the end */
    struct util_dynarray loads;
@@ -95,11 +95,11 @@ load_sysval_indirect(nir_builder *b, unsigned dim, unsigned bitsize,
 static unsigned
 stage_table(nir_builder *b)
 {
-   gl_shader_stage stage = b->shader->info.stage;
+   mesa_shader_stage stage = b->shader->info.stage;
    if (stage == MESA_SHADER_VERTEX && b->shader->info.vs.tes_agx)
       stage = MESA_SHADER_TESS_EVAL;
 
-   assert(stage < PIPE_SHADER_TYPES);
+   assert(stage < MESA_SHADER_STAGES);
    return AGX_SYSVAL_STAGE(stage);
 }
 
@@ -118,13 +118,12 @@ load_ubo(nir_builder *b, nir_intrinsic_instr *intr, void *bases)
 static nir_def *
 load_texture_handle(nir_builder *b, nir_intrinsic_instr *intr, void *base)
 {
-   nir_def *uniform =
-      nir_load_sysval_agx(b, 1, 64, .desc_set = stage_table(b),
-                          .binding = (uintptr_t)base, .flags = ~0);
+   nir_def *offs_B =
+      nir_imul_imm(b, nir_u2u32(b, intr->src[0].ssa), AGX_TEXTURE_DESC_STRIDE);
 
-   return nir_vec2(
-      b, nir_u2u32(b, uniform),
-      nir_imul_imm(b, nir_u2u32(b, intr->src[0].ssa), AGX_TEXTURE_DESC_STRIDE));
+   nir_load_sysval_agx(b, 1, 64, .desc_set = stage_table(b),
+                       .binding = (uintptr_t)base, .flags = ~0);
+   return nir_bindless_image_agx(b, offs_B);
 }
 
 static nir_def *
@@ -327,7 +326,7 @@ find_push_range_containing(struct agx_compiled_shader *shader, uint8_t table,
          return range;
    }
 
-   unreachable("no containing range");
+   UNREACHABLE("no containing range");
 }
 
 static unsigned
@@ -382,8 +381,8 @@ lay_out_uniforms(struct agx_compiled_shader *shader, struct state *state)
 {
    unsigned uniform = 0;
 
-   if (state->stage == PIPE_SHADER_VERTEX ||
-       state->stage == PIPE_SHADER_TESS_EVAL) {
+   if (state->stage == MESA_SHADER_VERTEX ||
+       state->stage == MESA_SHADER_TESS_EVAL) {
       unsigned count =
          DIV_ROUND_UP(BITSET_LAST_BIT(shader->attrib_components_read), 4);
 
@@ -412,7 +411,7 @@ lay_out_uniforms(struct agx_compiled_shader *shader, struct state *state)
          .length = 4,
       };
 
-      bool sw = state->hw_stage == PIPE_SHADER_COMPUTE;
+      bool sw = state->hw_stage == MESA_SHADER_COMPUTE;
       if (sw) {
          shader->push[shader->push_range_count++] = (struct agx_push_range){
             .uniform = AGX_ABI_VUNI_INPUT_ASSEMBLY(count),
@@ -423,7 +422,7 @@ lay_out_uniforms(struct agx_compiled_shader *shader, struct state *state)
       }
 
       uniform = AGX_ABI_VUNI_COUNT_GL(count, sw);
-   } else if (state->stage == PIPE_SHADER_FRAGMENT) {
+   } else if (state->stage == MESA_SHADER_FRAGMENT) {
       struct agx_draw_uniforms *u = NULL;
       struct agx_stage_uniforms *s = NULL;
       shader->push[shader->push_range_count++] = (struct agx_push_range){
@@ -461,36 +460,40 @@ lay_out_uniforms(struct agx_compiled_shader *shader, struct state *state)
       nir_intrinsic_instr *intr = *intr_;
       uint8_t table = nir_intrinsic_desc_set(intr);
       uint16_t offset = nir_intrinsic_binding(intr);
-      bool load_uniform_location = nir_intrinsic_flags(intr);
+      bool bindless_image = nir_intrinsic_flags(intr);
 
       struct agx_push_range *range =
          find_push_range_containing(shader, table, offset);
       unsigned base = range->uniform + ((offset - range->offset) / 2);
 
-      nir_builder b = nir_builder_at(nir_instr_remove(&(intr->instr)));
-      nir_def *repl;
+      nir_builder b = nir_builder_at(nir_before_instr(&intr->instr));
 
-      if (load_uniform_location) {
-         repl = nir_imm_int(&b, base);
+      if (bindless_image) {
+         nir_instr *next = nir_instr_next(&intr->instr);
+         assert(next->type == nir_instr_type_intrinsic);
+
+         nir_intrinsic_instr *nintr = nir_instr_as_intrinsic(next);
+         assert(nintr->intrinsic == nir_intrinsic_bindless_image_agx);
+
+         nir_intrinsic_set_desc_set(nintr, base);
       } else {
-         repl = nir_load_preamble(&b, intr->def.num_components,
-                                  intr->def.bit_size, .base = base);
+         nir_def *repl = nir_load_preamble(&b, intr->def.num_components,
+                                           intr->def.bit_size, .base = base);
+         nir_def_replace(&intr->def, repl);
       }
-
-      nir_def_rewrite_uses(&intr->def, repl);
    }
 
    return uniform;
 }
 
 bool
-agx_nir_lower_sysvals(nir_shader *shader, enum pipe_shader_type desc_stage,
+agx_nir_lower_sysvals(nir_shader *shader, mesa_shader_stage desc_stage,
                       bool lower_draw_params)
 {
    /* override stage for the duration on the pass. XXX: should refactor, but
     * it's annoying!
     */
-   enum pipe_shader_type phys_stage = shader->info.stage;
+   mesa_shader_stage phys_stage = shader->info.stage;
    shader->info.stage = desc_stage;
 
    bool progress = nir_shader_instructions_pass(

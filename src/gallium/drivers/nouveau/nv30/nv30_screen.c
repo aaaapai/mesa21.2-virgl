@@ -54,7 +54,7 @@ nv30_init_shader_caps(struct nv30_screen *screen)
    struct nouveau_object *eng3d = screen->eng3d;
 
    struct pipe_shader_caps *caps =
-      (struct pipe_shader_caps *)&screen->base.base.shader_caps[PIPE_SHADER_VERTEX];
+      (struct pipe_shader_caps *)&screen->base.base.shader_caps[MESA_SHADER_VERTEX];
 
    caps->max_instructions =
    caps->max_alu_instructions = (eng3d->oclass >= NV40_3D_CLASS) ? 512 : 256;
@@ -68,7 +68,7 @@ nv30_init_shader_caps(struct nv30_screen *screen)
    caps->max_temps = (eng3d->oclass >= NV40_3D_CLASS) ? 32 : 13;
    caps->supported_irs = (1 << PIPE_SHADER_IR_NIR) | (1 << PIPE_SHADER_IR_TGSI);
 
-   caps = (struct pipe_shader_caps *)&screen->base.base.shader_caps[PIPE_SHADER_FRAGMENT];
+   caps = (struct pipe_shader_caps *)&screen->base.base.shader_caps[MESA_SHADER_FRAGMENT];
 
    caps->max_instructions =
    caps->max_alu_instructions =
@@ -358,23 +358,6 @@ static const nir_shader_compiler_options nv30_base_compiler_options = {
    .no_integers = true,
 };
 
-static const void *
-nv30_screen_get_compiler_options(struct pipe_screen *pscreen,
-                                 enum pipe_shader_ir ir,
-                                 enum pipe_shader_type shader)
-{
-   struct nv30_screen *screen = nv30_screen(pscreen);
-   assert(ir == PIPE_SHADER_IR_NIR);
-
-   /* The FS compiler options are different between nv30 and nv40, and are set
-    * up at screen creation time.
-    */
-   if (shader == PIPE_SHADER_FRAGMENT)
-      return &screen->fs_compiler_options;
-
-   return &nv30_base_compiler_options;
-}
-
 static void
 nv30_screen_fence_emit(struct pipe_context *pcontext, uint32_t *sequence,
                        struct nouveau_bo *wait)
@@ -506,7 +489,9 @@ nv30_screen_create(struct nouveau_device *dev)
 
    pscreen->context_create = nv30_context_create;
    pscreen->is_format_supported = nv30_screen_is_format_supported;
-   pscreen->get_compiler_options = nv30_screen_get_compiler_options;
+
+   pscreen->nir_options[MESA_SHADER_VERTEX] = &nv30_base_compiler_options;
+   pscreen->nir_options[MESA_SHADER_FRAGMENT] = &screen->fs_compiler_options;
 
    nv30_resource_screen_init(pscreen);
    nouveau_screen_init_vdec(&screen->base);

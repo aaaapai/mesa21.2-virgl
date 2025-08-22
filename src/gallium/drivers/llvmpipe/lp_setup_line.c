@@ -336,7 +336,7 @@ try_setup_line(struct lp_setup_context *setup,
    info.v1 = v1;
    info.v2 = v2;
 
-   const float pixel_offset = setup->multisample ? 0.0 : setup->pixel_offset;
+   const float pixel_offset = setup->pixel_offset;
 
    int x[4], y[4];
    if (setup->rectangular_lines) {
@@ -418,9 +418,7 @@ try_setup_line(struct lp_setup_context *setup,
 
          if (dx < 0.0f) {
             /* if v2 is to the right of v1, swap pointers */
-            const float (*temp)[4] = v1;
-            v1 = v2;
-            v2 = temp;
+            SWAP(v1, v2);
 
             /* Otherwise shift planes appropriately */
             /* left edge */
@@ -517,9 +515,7 @@ try_setup_line(struct lp_setup_context *setup,
 
          if (dy > 0.0f) {
             /* if v2 is on top of v1, swap pointers */
-            const float (*temp)[4] = v1;
-            v1 = v2;
-            v2 = temp;
+            SWAP(v1, v2);
 
             if (setup->bottom_edge_rule) {
                will_draw_start = y1diff >= 0.f;

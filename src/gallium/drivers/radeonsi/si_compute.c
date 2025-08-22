@@ -16,7 +16,7 @@
 
 #define COMPUTE_DBG(sscreen, fmt, args...)                                                         \
    do {                                                                                            \
-      if ((sscreen->debug_flags & DBG(COMPUTE)))                                                   \
+      if ((sscreen->shader_debug_flags & DBG(COMPUTE)))                                            \
          fprintf(stderr, fmt, ##args);                                                             \
    } while (0);
 
@@ -164,9 +164,9 @@ static void *si_create_compute_state(struct pipe_context *ctx, const struct pipe
    sel->screen = sscreen;
    simple_mtx_init(&sel->mutex, mtx_plain);
    sel->const_and_shader_buf_descriptors_index =
-      si_const_and_shader_buffer_descriptors_idx(PIPE_SHADER_COMPUTE);
+      si_const_and_shader_buffer_descriptors_idx(MESA_SHADER_COMPUTE);
    sel->sampler_and_images_descriptors_index =
-      si_sampler_and_image_descriptors_idx(PIPE_SHADER_COMPUTE);
+      si_sampler_and_image_descriptors_idx(MESA_SHADER_COMPUTE);
    sel->info.base.shared_size = cso->static_shared_mem;
    program->shader.selector = &program->sel;
 
@@ -220,11 +220,7 @@ static void si_bind_compute_state(struct pipe_context *ctx, void *state)
    /* Wait because we need active slot usage masks. */
    util_queue_fence_wait(&sel->ready);
 
-   si_set_active_descriptors(sctx,
-                             SI_DESCS_FIRST_COMPUTE + SI_SHADER_DESCS_CONST_AND_SHADER_BUFFERS,
-                             sel->active_const_and_shader_buffers);
-   si_set_active_descriptors(sctx, SI_DESCS_FIRST_COMPUTE + SI_SHADER_DESCS_SAMPLERS_AND_IMAGES,
-                             sel->active_samplers_and_images);
+   si_update_common_shader_state(sctx, sel, MESA_SHADER_COMPUTE);
 
    sctx->compute_shaderbuf_sgprs_dirty = true;
    sctx->compute_image_sgprs_dirty = true;
@@ -263,7 +259,7 @@ static void si_set_global_binding(struct pipe_context *ctx, unsigned first, unsi
       sctx->global_buffers = realloc(
          sctx->global_buffers, sctx->max_global_buffers * sizeof(sctx->global_buffers[0]));
       if (!sctx->global_buffers) {
-         fprintf(stderr, "radeonsi: failed to allocate compute global_buffers\n");
+         mesa_loge("failed to allocate compute global_buffers");
          return;
       }
 
@@ -294,7 +290,7 @@ static bool si_setup_compute_scratch_buffer(struct si_context *sctx, struct si_s
 {
    uint64_t scratch_bo_size =
       sctx->compute_scratch_buffer ? sctx->compute_scratch_buffer->b.b.width0 : 0;
-   uint64_t scratch_needed = sctx->max_seen_compute_scratch_bytes_per_wave *
+   uint64_t scratch_needed = (uint64_t)sctx->max_seen_compute_scratch_bytes_per_wave *
                              sctx->screen->info.max_scratch_waves;
    assert(scratch_needed);
 
@@ -700,7 +696,7 @@ static void si_emit_dispatch_packets(struct si_context *sctx, const struct pipe_
       /* Set PING_PONG_EN for every other dispatch.
        * Only allowed on a gfx queue, and PARTIAL_TG_EN and USE_THREAD_DIMENSIONS must be 0.
        */
-      if (sctx->has_graphics && !partial_block_en &&
+      if (sctx->is_gfx_queue && !partial_block_en &&
           !sctx->cs_shader_state.program->sel.info.uses_atomic_ordered_add) {
          dispatch_initiator |= S_00B800_PING_PONG_EN(sctx->compute_ping_pong_launch);
          sctx->compute_ping_pong_launch ^= 1;
@@ -749,7 +745,7 @@ static void si_emit_dispatch_packets(struct si_context *sctx, const struct pipe_
        * - COMPUTE_START_X/Y are in units of 2D subgrids, not workgroups
        *   (program COMPUTE_START_X to start_x >> log_x, COMPUTE_START_Y to start_y >> log_y).
        */
-      if (sctx->has_graphics && !partial_block_en &&
+      if (sctx->is_gfx_queue && !partial_block_en &&
           (info->indirect || info->grid[1] >= 4) && MIN2(info->block[0], info->block[1]) >= 4 &&
           si_get_2d_interleave_size(info, &log_x, &log_y)) {
          dispatch_interleave = S_00B8BC_INTERLEAVE_1D(1) || /* 1D is disabled */
@@ -758,7 +754,7 @@ static void si_emit_dispatch_packets(struct si_context *sctx, const struct pipe_
          dispatch_initiator |= S_00B800_INTERLEAVE_2D_EN(1);
       }
 
-      if (sctx->has_graphics) {
+      if (sctx->is_gfx_queue) {
          radeon_opt_set_sh_reg_idx(R_00B8BC_COMPUTE_DISPATCH_INTERLEAVE,
                                    SI_TRACKED_COMPUTE_DISPATCH_INTERLEAVE, 2, dispatch_interleave);
       } else {
@@ -846,7 +842,7 @@ static bool si_check_needs_implicit_sync(struct si_context *sctx, uint32_t usage
     * TODO: Bindless textures are not handled, and thus are not synchronized.
     */
    struct si_shader_info *info = &sctx->cs_shader_state.program->sel.info;
-   struct si_samplers *samplers = &sctx->samplers[PIPE_SHADER_COMPUTE];
+   struct si_samplers *samplers = &sctx->samplers[MESA_SHADER_COMPUTE];
    unsigned mask = samplers->enabled_mask & info->base.textures_used;
 
    while (mask) {
@@ -858,7 +854,7 @@ static bool si_check_needs_implicit_sync(struct si_context *sctx, uint32_t usage
          return true;
    }
 
-   struct si_images *images = &sctx->images[PIPE_SHADER_COMPUTE];
+   struct si_images *images = &sctx->images[MESA_SHADER_COMPUTE];
    mask = BITFIELD_MASK(info->base.num_images) & images->enabled_mask;
 
    while (mask) {
@@ -890,7 +886,7 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
 
    si_check_dirty_buffers_textures(sctx);
 
-   if (sctx->has_graphics) {
+   if (sctx->is_gfx_queue) {
       if (sctx->num_draw_calls_sh_coherent.with_cb != sctx->num_draw_calls ||
           sctx->num_draw_calls_sh_coherent.with_db != sctx->num_draw_calls) {
          bool sync_cb = sctx->force_shader_coherency.with_cb ||
@@ -911,9 +907,9 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
       }
 
       if (sctx->gfx_level < GFX11)
-         gfx6_decompress_textures(sctx, 1 << PIPE_SHADER_COMPUTE);
+         gfx6_decompress_textures(sctx, 1 << MESA_SHADER_COMPUTE);
       else if (sctx->gfx_level < GFX12)
-         gfx11_decompress_textures(sctx, 1 << PIPE_SHADER_COMPUTE);
+         gfx11_decompress_textures(sctx, 1 << MESA_SHADER_COMPUTE);
    }
 
    if (info->indirect) {
@@ -945,7 +941,7 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
       si_compute_resources_add_all_to_bo_list(sctx);
 
    /* Skipping setting redundant registers on compute queues breaks compute. */
-   if (!sctx->has_graphics) {
+   if (!sctx->is_gfx_queue) {
       BITSET_CLEAR_RANGE(sctx->tracked_regs.reg_saved_mask,
                          SI_FIRST_TRACKED_OTHER_REG, SI_NUM_ALL_TRACKED_REGS - 1);
    }
@@ -980,7 +976,7 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
    /* Registers that are not read from memory should be set before this: */
    si_emit_barrier_direct(sctx);
 
-   if (sctx->has_graphics && si_is_atom_dirty(sctx, &sctx->atoms.s.render_cond)) {
+   if (sctx->is_gfx_queue && si_is_atom_dirty(sctx, &sctx->atoms.s.render_cond)) {
       sctx->atoms.s.render_cond.emit(sctx, -1);
       si_set_atom_dirty(sctx, &sctx->atoms.s.render_cond, false);
    }
@@ -1000,11 +996,11 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
 
    if (sctx->gfx_level < GFX12) {
       /* Mark displayable DCC as dirty for bound images. */
-      unsigned display_dcc_store_mask = sctx->images[PIPE_SHADER_COMPUTE].display_dcc_store_mask &
+      unsigned display_dcc_store_mask = sctx->images[MESA_SHADER_COMPUTE].display_dcc_store_mask &
                                   BITFIELD_MASK(program->sel.info.base.num_images);
       while (display_dcc_store_mask) {
          struct si_texture *tex = (struct si_texture *)
-            sctx->images[PIPE_SHADER_COMPUTE].views[u_bit_scan(&display_dcc_store_mask)].resource;
+            sctx->images[MESA_SHADER_COMPUTE].views[u_bit_scan(&display_dcc_store_mask)].resource;
 
          si_mark_display_dcc_dirty(sctx, tex);
       }

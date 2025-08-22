@@ -98,7 +98,7 @@ static void ppir_node_add_src(ppir_compiler *comp, ppir_node *node,
    nir_intrinsic_instr *load = nir_load_reg_for_def(ns->ssa);
 
    if (!load) { /* is ssa */
-      child = comp->var_nodes[ns->ssa->index];
+      child = comp->var_nodes[ns->ssa->index << 2];
       if (child->op != ppir_op_undef)
          ppir_node_add_dep(node, child, ppir_dep_src);
    }
@@ -389,7 +389,7 @@ static bool ppir_emit_intrinsic(ppir_block *block, nir_instr *ni)
          op = ppir_op_load_frontface;
          break;
       default:
-         unreachable("bad intrinsic");
+         UNREACHABLE("bad intrinsic");
          break;
       }
 
@@ -444,7 +444,7 @@ static bool ppir_emit_intrinsic(ppir_block *block, nir_instr *ni)
       }
 
       if (!block->comp->uses_discard) {
-         node = block->comp->var_nodes[instr->src->ssa->index];
+         node = block->comp->var_nodes[instr->src->ssa->index << 2];
          assert(node);
          switch (node->op) {
          case ppir_op_load_uniform:
@@ -598,7 +598,7 @@ static bool ppir_emit_tex(ppir_block *block, nir_instr *ni)
          FALLTHROUGH;
       case nir_tex_src_coord: {
          nir_src *ns = &instr->src[i].src;
-         ppir_node *child = block->comp->var_nodes[ns->ssa->index];
+         ppir_node *child = block->comp->var_nodes[ns->ssa->index << 2];
          if (child->op == ppir_op_load_varying) {
             /* If the successor is load_texture, promote it to load_coords */
             nir_tex_src *nts = (nir_tex_src *)ns;
@@ -964,7 +964,7 @@ static void ppir_print_shader_db(struct nir_shader *nir, ppir_compiler *comp,
    char *shaderdb;
    ASSERTED int ret = asprintf(&shaderdb,
                                "%s shader: %d inst, %d loops, %d:%d spills:fills\n",
-                               gl_shader_stage_name(info->stage),
+                               mesa_shader_stage_name(info->stage),
                                comp->cur_instr_index,
                                comp->num_loops,
                                comp->num_spills,

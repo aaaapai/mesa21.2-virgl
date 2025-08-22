@@ -88,10 +88,10 @@ st_update_single_texture(struct st_context *st,
 
 unsigned
 st_get_sampler_views(struct st_context *st,
-                     enum pipe_shader_type shader_stage,
+                     mesa_shader_stage shader_stage,
                      const struct gl_program *prog,
                      struct pipe_sampler_view **sampler_views,
-                     unsigned *num_owned_views)
+                     unsigned *extra_sampler_views)
 {
    struct pipe_context *pipe = st->pipe;
    const GLuint old_max = st->state.num_sampler_views[shader_stage];
@@ -100,7 +100,7 @@ st_get_sampler_views(struct st_context *st,
    GLbitfield free_slots = ~prog->SamplersUsed;
    GLbitfield external_samplers_used = prog->ExternalSamplersUsed;
    GLuint unit;
-   *num_owned_views = 0;
+   *extra_sampler_views = 0;
 
    if (samplers_used == 0x0 && old_max == 0)
       return 0;
@@ -302,7 +302,7 @@ st_get_sampler_views(struct st_context *st,
       }
 
       if (extra)
-         (*num_owned_views) = extra;
+         (*extra_sampler_views) |= 1 << extra;
 
       num_textures = MAX2(num_textures, extra + 1);
    }
@@ -312,14 +312,14 @@ st_get_sampler_views(struct st_context *st,
 
 static void
 update_textures(struct st_context *st,
-                enum pipe_shader_type shader_stage,
+                mesa_shader_stage shader_stage,
                 const struct gl_program *prog)
 {
    struct pipe_sampler_view *sampler_views[PIPE_MAX_SAMPLERS];
    struct pipe_context *pipe = st->pipe;
-   unsigned num_owned_views = 0;
+   unsigned extra_sampler_views = 0;
    unsigned num_textures =
-      st_get_sampler_views(st, shader_stage, prog, sampler_views, &num_owned_views);
+      st_get_sampler_views(st, shader_stage, prog, sampler_views, &extra_sampler_views);
 
    unsigned old_num_textures = st->state.num_sampler_views[shader_stage];
    unsigned num_unbind = old_num_textures > num_textures ?
@@ -331,9 +331,9 @@ update_textures(struct st_context *st,
 
    /* release YUV views back to driver */
    if (pipe->sampler_view_release) {
-      unsigned base_idx = num_textures - num_owned_views;
-      for (unsigned i = 0; i < num_owned_views; i++)
-         pipe->sampler_view_release(pipe, sampler_views[base_idx + i]);
+      u_foreach_bit (i, extra_sampler_views) {
+         pipe->sampler_view_release(pipe, sampler_views[i]);
+      }
    }
 }
 
@@ -343,7 +343,7 @@ st_update_vertex_textures(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    if (ctx->Const.Program[MESA_SHADER_VERTEX].MaxTextureImageUnits > 0) {
-      update_textures(st, PIPE_SHADER_VERTEX,
+      update_textures(st, MESA_SHADER_VERTEX,
                             ctx->VertexProgram._Current);
    }
 }
@@ -354,7 +354,7 @@ st_update_fragment_textures(struct st_context *st)
 {
    const struct gl_context *ctx = st->ctx;
 
-   update_textures(st, PIPE_SHADER_FRAGMENT,
+   update_textures(st, MESA_SHADER_FRAGMENT,
                          ctx->FragmentProgram._Current);
 }
 
@@ -365,7 +365,7 @@ st_update_geometry_textures(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    if (ctx->GeometryProgram._Current) {
-      update_textures(st, PIPE_SHADER_GEOMETRY,
+      update_textures(st, MESA_SHADER_GEOMETRY,
                             ctx->GeometryProgram._Current);
    }
 }
@@ -377,7 +377,7 @@ st_update_tessctrl_textures(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    if (ctx->TessCtrlProgram._Current) {
-      update_textures(st, PIPE_SHADER_TESS_CTRL,
+      update_textures(st, MESA_SHADER_TESS_CTRL,
                             ctx->TessCtrlProgram._Current);
    }
 }
@@ -389,7 +389,7 @@ st_update_tesseval_textures(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    if (ctx->TessEvalProgram._Current) {
-      update_textures(st, PIPE_SHADER_TESS_EVAL,
+      update_textures(st, MESA_SHADER_TESS_EVAL,
                             ctx->TessEvalProgram._Current);
    }
 }
@@ -401,7 +401,7 @@ st_update_compute_textures(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    if (ctx->ComputeProgram._Current) {
-      update_textures(st, PIPE_SHADER_COMPUTE,
+      update_textures(st, MESA_SHADER_COMPUTE,
                             ctx->ComputeProgram._Current);
    }
 }

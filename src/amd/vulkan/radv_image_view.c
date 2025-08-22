@@ -10,11 +10,11 @@
 
 #include "vk_log.h"
 
-#include "radv_image_view.h"
 #include "radv_buffer_view.h"
 #include "radv_entrypoints.h"
 #include "radv_formats.h"
 #include "radv_image.h"
+#include "radv_image_view.h"
 
 #include "ac_descriptors.h"
 #include "ac_formats.h"
@@ -44,7 +44,7 @@ radv_tex_dim(VkImageType image_type, VkImageViewType view_type, unsigned nr_laye
       else
          return V_008F1C_SQ_RSRC_IMG_2D_ARRAY;
    default:
-      unreachable("illegal image type");
+      UNREACHABLE("illegal image type");
    }
 }
 
@@ -67,12 +67,9 @@ radv_set_mutable_tex_desc_fields(struct radv_device *device, struct radv_image *
       .va = gpu_address,
       .gfx10 =
          {
+            .nbc_view = nbc_view,
             .write_compress_enable = dcc_enabled && is_storage_image && enable_write_compression,
             .iterate_256 = radv_image_get_iterate256(device, image),
-         },
-      .gfx9 =
-         {
-            .nbc_view = nbc_view,
          },
       .gfx6 =
          {
@@ -181,11 +178,8 @@ gfx10_make_texture_descriptor(struct radv_device *device, struct radv_image *ima
       .min_lod = min_lod,
       .gfx10 =
          {
-            .uav3d = array_pitch,
-         },
-      .gfx9 =
-         {
             .nbc_view = nbc_view,
+            .uav3d = array_pitch,
          },
       .dcc_enabled = radv_dcc_enabled(image, first_level),
       .tc_compat_htile_enabled = radv_tc_compat_htile_enabled(image, first_level),
@@ -397,8 +391,8 @@ radv_image_view_make_descriptor(struct radv_image_view *iview, struct radv_devic
          first_layer = 0;
       } else {
          /* Video decode target uses custom height alignment. */
-         if (image->vk.usage & VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR) {
-            assert(image->planes[plane_id].surface.u.gfx9.swizzle_mode == 0);
+         if (image->vk.usage & VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR &&
+             image->planes[plane_id].surface.u.gfx9.swizzle_mode == 0) {
             offset += first_layer * image->planes[plane_id].surface.u.gfx9.surf_slice_size;
             first_layer = 0;
          }
@@ -646,6 +640,41 @@ radv_image_view_init(struct radv_image_view *iview, struct radv_device *device,
       radv_image_view_make_descriptor(iview, device, format, &pCreateInfo->components, true, disable_compression,
                                       enable_compression, iview->plane_id + i, i, sliced_3d);
    }
+}
+
+void
+radv_hiz_image_view_init(struct radv_image_view *iview, struct radv_device *device,
+                         const VkImageViewCreateInfo *pCreateInfo)
+{
+   VK_FROM_HANDLE(radv_image, image, pCreateInfo->image);
+
+   vk_image_view_init(&device->vk, &iview->vk, true, pCreateInfo);
+
+   assert(vk_format_has_depth(image->vk.format) && vk_format_has_stencil(image->vk.format));
+   assert(iview->vk.aspects == VK_IMAGE_ASPECT_DEPTH_BIT);
+
+   memset(&iview->descriptor, 0, sizeof(iview->descriptor));
+
+   iview->image = image;
+
+   const uint32_t type =
+      radv_tex_dim(image->vk.image_type, iview->vk.view_type, image->vk.array_layers, image->vk.samples, true, false);
+
+   const struct ac_gfx12_hiz_state hiz_state = {
+      .surf = &image->planes[0].surface,
+      .va = image->bindings[0].addr,
+      .type = type,
+      .num_samples = image->vk.samples,
+      .first_level = iview->vk.base_mip_level,
+      .last_level = iview->vk.base_mip_level + iview->vk.level_count - 1,
+      .num_levels = image->vk.mip_levels,
+      .first_layer = iview->vk.base_array_layer,
+      .last_layer = iview->vk.base_array_layer + iview->vk.layer_count - 1,
+   };
+
+   uint32_t *desc = iview->storage_descriptor.plane_descriptors[0];
+
+   ac_build_gfx12_hiz_descriptor(&hiz_state, desc);
 }
 
 void

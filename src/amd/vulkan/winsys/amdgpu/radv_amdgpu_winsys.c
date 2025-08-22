@@ -73,7 +73,7 @@ radv_amdgpu_winsys_query_value(struct radeon_winsys *rws, enum radeon_value_id v
       ac_drm_query_sensor_info(ws->dev, AMDGPU_INFO_SENSOR_GFX_MCLK, 4, &retval);
       return retval;
    default:
-      unreachable("invalid query value");
+      UNREACHABLE("invalid query value");
    }
 
    return 0;
@@ -179,6 +179,13 @@ radv_amdgpu_winsys_get_sync_provider(struct radeon_winsys *rws)
    return p->clone(p);
 }
 
+static uint64_t
+radv_amdgpu_winsys_filter_perftest_flags(uint64_t perftest_flags)
+{
+   return perftest_flags & (RADV_PERFTEST_NO_GTT_SPILL | RADV_PERFTEST_LOCAL_BOS | RADV_PERFTEST_NO_SAM |
+                            RADV_PERFTEST_SAM | RADV_PERFTEST_BO_LIST);
+}
+
 VkResult
 radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags, bool reserve_vmid, bool is_virtio,
                           struct radeon_winsys **winsys)
@@ -188,6 +195,8 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
    uint32_t drm_major, drm_minor, r;
    ac_drm_device *dev;
    struct radv_amdgpu_winsys *ws = NULL;
+
+   perftest_flags = radv_amdgpu_winsys_filter_perftest_flags(perftest_flags);
 
    r = ac_drm_device_initialize(fd, is_virtio, &drm_major, &drm_minor, &dev);
    if (r) {
@@ -211,8 +220,7 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
       ++ws->refcount;
    }
 
-   if (is_virtio &&
-       (perftest_flags & (RADV_PERFTEST_BO_LIST | RADV_PERFTEST_LOCAL_BOS))) {
+   if (is_virtio && (perftest_flags & (RADV_PERFTEST_BO_LIST | RADV_PERFTEST_LOCAL_BOS))) {
       /* virtio doesn't support VM_ALWAYS_VALID, so disable options that requires it. */
       fprintf(stderr, "localbos and bolist options are not supported values for RADV_PERFTEST with virtio.\n");
       return VK_ERROR_INITIALIZATION_FAILED;
@@ -292,9 +300,6 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
 
    ws->syncobj_sync_type = vk_drm_syncobj_get_type_from_provider(ac_drm_device_get_sync_provider(dev));
    if (ws->syncobj_sync_type.features) {
-      /* multi wait is always supported */
-      ws->syncobj_sync_type.features |= VK_SYNC_FEATURE_GPU_MULTI_WAIT;
-
       if (!ws->info.has_timeline_syncobj && ws->syncobj_sync_type.features & VK_SYNC_FEATURE_TIMELINE) {
          /* Disable timeline feature if it was disabled in the driver. */
          assert(is_virtio);

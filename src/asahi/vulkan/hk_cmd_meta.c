@@ -240,7 +240,7 @@ aspect_format(VkFormat fmt, VkImageAspectFlags aspect)
       case VK_IMAGE_ASPECT_PLANE_2_BIT:
          return ycbcr_info->planes[2].format;
       default:
-         unreachable("invalid ycbcr aspect");
+         UNREACHABLE("invalid ycbcr aspect");
       }
    }
 
@@ -377,7 +377,7 @@ is_format_native(enum pipe_format format)
    case PIPE_FORMAT_B5G5R5A1_UNORM:
       return false;
    default:
-      unreachable("expected canonical");
+      UNREACHABLE("expected canonical");
    }
 }
 
@@ -490,7 +490,7 @@ build_image_copy_shader(const struct vk_meta_image_copy_key *key)
       assert(isa_format != PIPE_FORMAT_NONE);
    }
 
-   nir_def *local_offset = nir_imm_intN_t(b, 0, 16);
+   nir_def *local_offset = nir_imm_int(b, 0);
    nir_def *lid = nir_trim_vector(b, nir_load_local_invocation_id(b), 2);
    lid = nir_u2u16(b, lid);
 
@@ -543,9 +543,10 @@ build_image_copy_shader(const struct vk_meta_image_copy_key *key)
                                           NULL, key->dst_format);
          } else {
             if (msaa) {
-               value1 = nir_txf_ms_deref(b, deref, src_coord, ms_index);
+               value1 =
+                  nir_txf_ms(b, src_coord, ms_index, .texture_deref = deref);
             } else {
-               value1 = nir_txf_deref(b, deref, src_coord, NULL);
+               value1 = nir_txf(b, src_coord, .texture_deref = deref);
             }
 
             nir_instr_as_tex(value1->parent_instr)->backend_flags =
@@ -1318,7 +1319,7 @@ hk_meta_copy_get_image_properties(struct hk_image *img)
          props.depth.component_mask = BITFIELD_BIT(0);
          break;
       default:
-         unreachable("Invalid ZS format");
+         UNREACHABLE("Invalid ZS format");
       }
    }
 

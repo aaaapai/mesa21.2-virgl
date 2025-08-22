@@ -72,6 +72,8 @@ enum {
    RADV_DEBUG_DUMP_BACKEND_IR = 1ull << 57,
    RADV_DEBUG_PSO_HISTORY = 1ull << 58,
    RADV_DEBUG_BVH4 = 1ull << 59,
+   RADV_DEBUG_NO_VIDEO = 1ull << 60,
+   RADV_DEBUG_VALIDATE_VAS = 1ull << 61,
    RADV_DEBUG_DUMP_SHADERS = RADV_DEBUG_DUMP_VS | RADV_DEBUG_DUMP_TCS | RADV_DEBUG_DUMP_TES | RADV_DEBUG_DUMP_GS |
                              RADV_DEBUG_DUMP_PS | RADV_DEBUG_DUMP_TASK | RADV_DEBUG_DUMP_MESH | RADV_DEBUG_DUMP_CS |
                              RADV_DEBUG_DUMP_NIR | RADV_DEBUG_DUMP_ASM | RADV_DEBUG_DUMP_BACKEND_IR,
@@ -96,6 +98,7 @@ enum {
    RADV_PERFTEST_RT_WAVE_32 = 1u << 15,
    RADV_PERFTEST_VIDEO_ENCODE = 1u << 16,
    RADV_PERFTEST_NO_GTT_SPILL = 1u << 17,
+   RADV_PERFTEST_HIC = 1u << 18,
 };
 
 enum {
@@ -117,7 +120,6 @@ void radv_trap_handler_finish(struct radv_device *device);
 void radv_check_trap_handler(struct radv_queue *queue);
 
 bool radv_vm_fault_occurred(struct radv_device *device, struct radv_winsys_gpuvm_fault_info *fault_info);
-
 
 ALWAYS_INLINE static bool
 radv_device_fault_detection_enabled(const struct radv_device *device)

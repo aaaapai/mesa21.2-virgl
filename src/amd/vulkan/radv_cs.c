@@ -17,7 +17,7 @@
 #include "sid.h"
 
 void
-radv_cs_emit_write_event_eop(struct radeon_cmdbuf *cs, enum amd_gfx_level gfx_level, enum radv_queue_family qf,
+radv_cs_emit_write_event_eop(struct radv_cmd_stream *cs, enum amd_gfx_level gfx_level, enum radv_queue_family qf,
                              unsigned event, unsigned event_flags, unsigned dst_sel, unsigned data_sel, uint64_t va,
                              uint32_t new_fence, uint64_t gfx9_eop_bug_va)
 {
@@ -111,7 +111,7 @@ radv_cs_emit_write_event_eop(struct radeon_cmdbuf *cs, enum amd_gfx_level gfx_le
 }
 
 static void
-radv_emit_acquire_mem(struct radeon_cmdbuf *cs, bool is_mec, bool is_gfx9, unsigned cp_coher_cntl)
+radv_emit_acquire_mem(struct radv_cmd_stream *cs, bool is_mec, bool is_gfx9, unsigned cp_coher_cntl)
 {
    radeon_begin(cs);
 
@@ -137,7 +137,7 @@ radv_emit_acquire_mem(struct radeon_cmdbuf *cs, bool is_mec, bool is_gfx9, unsig
 }
 
 static void
-gfx10_cs_emit_cache_flush(struct radeon_cmdbuf *cs, enum amd_gfx_level gfx_level, uint32_t *flush_cnt,
+gfx10_cs_emit_cache_flush(struct radv_cmd_stream *cs, enum amd_gfx_level gfx_level, uint32_t *flush_cnt,
                           uint64_t flush_va, enum radv_queue_family qf, enum radv_cmd_flush_bits flush_bits,
                           enum rgp_flush_bits *sqtt_flush_bits, uint64_t gfx9_eop_bug_va)
 {
@@ -381,7 +381,7 @@ gfx10_cs_emit_cache_flush(struct radeon_cmdbuf *cs, enum amd_gfx_level gfx_level
 }
 
 void
-radv_cs_emit_cache_flush(struct radeon_winsys *ws, struct radeon_cmdbuf *cs, enum amd_gfx_level gfx_level,
+radv_cs_emit_cache_flush(struct radeon_winsys *ws, struct radv_cmd_stream *cs, enum amd_gfx_level gfx_level,
                          uint32_t *flush_cnt, uint64_t flush_va, enum radv_queue_family qf,
                          enum radv_cmd_flush_bits flush_bits, enum rgp_flush_bits *sqtt_flush_bits,
                          uint64_t gfx9_eop_bug_va)
@@ -389,7 +389,7 @@ radv_cs_emit_cache_flush(struct radeon_winsys *ws, struct radeon_cmdbuf *cs, enu
    unsigned cp_coher_cntl = 0;
    uint32_t flush_cb_db = flush_bits & (RADV_CMD_FLAG_FLUSH_AND_INV_CB | RADV_CMD_FLAG_FLUSH_AND_INV_DB);
 
-   radeon_check_space(ws, cs, 128);
+   radeon_check_space(ws, cs->b, 128);
 
    if (gfx_level >= GFX10) {
       /* GFX10 cache flush handling is quite different. */
@@ -592,7 +592,7 @@ radv_cs_emit_cache_flush(struct radeon_winsys *ws, struct radeon_cmdbuf *cs, enu
 }
 
 void
-radv_emit_cond_exec(const struct radv_device *device, struct radeon_cmdbuf *cs, uint64_t va, uint32_t count)
+radv_emit_cond_exec(const struct radv_device *device, struct radv_cmd_stream *cs, uint64_t va, uint32_t count)
 {
    const struct radv_physical_device *pdev = radv_device_physical(device);
    const enum amd_gfx_level gfx_level = pdev->info.gfx_level;
@@ -616,7 +616,7 @@ radv_emit_cond_exec(const struct radv_device *device, struct radeon_cmdbuf *cs, 
 }
 
 void
-radv_cs_write_data_imm(struct radeon_cmdbuf *cs, unsigned engine_sel, uint64_t va, uint32_t imm)
+radv_cs_write_data_imm(struct radv_cmd_stream *cs, unsigned engine_sel, uint64_t va, uint32_t imm)
 {
    radeon_begin(cs);
    radeon_emit(PKT3(PKT3_WRITE_DATA, 3, 0));
@@ -625,4 +625,80 @@ radv_cs_write_data_imm(struct radeon_cmdbuf *cs, unsigned engine_sel, uint64_t v
    radeon_emit(va >> 32);
    radeon_emit(imm);
    radeon_end();
+}
+
+static void
+radv_init_tracked_regs(struct radv_cmd_stream *cs)
+{
+   struct radv_tracked_regs *tracked_regs = &cs->tracked_regs;
+
+   /* Mark all registers as unknown. */
+   memset(tracked_regs->reg_value, 0, RADV_NUM_ALL_TRACKED_REGS * sizeof(uint32_t));
+   BITSET_ZERO(tracked_regs->reg_saved_mask);
+
+   /* 0xffffffff is an impossible value for these registers */
+   memset(tracked_regs->spi_ps_input_cntl, 0xff, sizeof(uint32_t) * 32);
+   memset(tracked_regs->cb_blend_control, 0xff, sizeof(uint32_t) * MAX_RTS);
+   memset(tracked_regs->sx_mrt_blend_opt, 0xff, sizeof(uint32_t) * MAX_RTS);
+}
+
+void
+radv_init_cmd_stream(struct radv_cmd_stream *cs)
+{
+   cs->context_roll_without_scissor_emitted = false;
+   cs->num_buffered_sh_regs = 0;
+
+   radv_init_tracked_regs(cs);
+}
+
+VkResult
+radv_create_cmd_stream(const struct radv_device *device, enum radv_queue_family family, bool is_secondary,
+                       struct radv_cmd_stream **cs_out)
+{
+   const struct radv_physical_device *pdev = radv_device_physical(device);
+   const enum amd_ip_type ip_type = radv_queue_family_to_ring(pdev, family);
+   struct radeon_winsys *ws = device->ws;
+   struct radv_cmd_stream *cs;
+
+   cs = malloc(sizeof(*cs));
+   if (!cs)
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   radv_init_cmd_stream(cs);
+
+   cs->b = ws->cs_create(ws, ip_type, is_secondary);
+   if (!cs->b) {
+      free(cs);
+      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+   }
+
+   *cs_out = cs;
+   return VK_SUCCESS;
+}
+
+void
+radv_reset_cmd_stream(const struct radv_device *device, struct radv_cmd_stream *cs)
+{
+   struct radeon_winsys *ws = device->ws;
+
+   radv_init_cmd_stream(cs);
+
+   ws->cs_reset(cs->b);
+}
+
+VkResult
+radv_finalize_cmd_stream(const struct radv_device *device, struct radv_cmd_stream *cs)
+{
+   struct radeon_winsys *ws = device->ws;
+
+   return ws->cs_finalize(cs->b);
+}
+
+void
+radv_destroy_cmd_stream(const struct radv_device *device, struct radv_cmd_stream *cs)
+{
+   struct radeon_winsys *ws = device->ws;
+
+   ws->cs_destroy(cs->b);
+   free(cs);
 }

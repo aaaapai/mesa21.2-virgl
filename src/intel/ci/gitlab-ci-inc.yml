@@ -125,10 +125,6 @@
     - changes:
         *iris_file_list
       when: manual
-  allow_failure: true # see comment in .performance-rules, which we don't inherit this line from.
-  variables:
-    JOB_PRIORITY: 40
-    S3_ARTIFACT_NAME: mesa-x86_64-default-release
   needs:
     - job: debian/x86_64_test-gl
       optional: true
@@ -145,6 +141,13 @@
     - changes: &anv_file_list
         - src/intel/vulkan/**/*
       when: on_success
+
+.anv-restricted-rules:
+  stage: intel
+  rules:
+    - !reference [.test, rules]
+    - !reference [.restricted-rules, rules]
+    - !reference [.anv-rules, rules]
 
 .anv-manual-rules:
   stage: intel-nightly
@@ -329,7 +332,7 @@
   variables:
     DEVICE_TYPE: acer-chromebox-cxi4-puff
     FARM: collabora
-    FDO_CI_CONCURRENT: 9
+    FDO_CI_CONCURRENT: 3
     GPU_VERSION: iris-cml
     HWCI_KERNEL_MODULES: i915
     RUNNER_TAG: mesa-ci-x86-64-lava-acer-chromebox-cxi4-puff
@@ -410,6 +413,13 @@
   variables:
     LAVA_FORCE_UART: 1
 
+.iris-adl-test:
+  extends:
+    - .iris-test
+    - .lava-acer-n20q11-r856ltn-p1s2-nissa:x86_64
+  variables:
+    DEQP_SUITE: iris-adl
+
 .iris-whl-deqp:
   extends:
     - .iris-whl-test
@@ -435,22 +445,10 @@
   extends:
     - .iris-traces
     - .iris-rules-performance
-  variables:
-    PIGLIT_REPLAY_SUBCOMMAND: "profile"
-    PIGLIT_REPLAY_EXTRA_ARGS: "--db-path ${CI_PROJECT_DIR}/replayer-db/"
-    # More than this can hit OOM due to BOs leaked during the replay of the last frame
-    PIGLIT_REPLAY_LOOP_TIMES: 150
-    # We don't want for more than one workload to be submitted to the GPU at a time
-    FDO_CI_CONCURRENT: 1
-    # Piglit is very sparse in its status output and downloads of big traces can take a while
-    DEVICE_HANGING_TIMEOUT_SEC: 600
-    # So we aren't capped by VSync by the X server
-    EGL_PLATFORM: surfaceless
-    GIT_STRATEGY: none
-    HWCI_FREQ_MAX: "true"
-    LAVA_TAGS: "cbg-0"
-    # Ensure that we are using the release build artifact
-    S3_ARTIFACT_NAME: mesa-x86_64-default-release
+    - .piglit-performance-base
+  rules:
+    - !reference [.piglit-performance-base, rules]
+    - !reference [.iris-rules-performance, rules]
 
 .iris-whl-traces-performance:
   extends:

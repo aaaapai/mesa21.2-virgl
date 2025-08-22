@@ -66,7 +66,7 @@ format_to_ifmt(enum pipe_format format)
    case 32:
       return is_int ? R2D_INT32 : R2D_FLOAT32;
     default:
-      unreachable("bad format");
+      UNREACHABLE("bad format");
    }
 }
 
@@ -509,9 +509,17 @@ r2d_setup_common(struct tu_cmd_buffer *cmd,
    if (fmt == FMT6_10_10_10_2_UNORM_DEST)
       fmt = FMT6_16_16_16_16_FLOAT;
 
+   enum a6xx_sp_a2d_output_ifmt_type output_ifmt_type;
+   if (util_format_is_pure_uint(dst_format))
+      output_ifmt_type = OUTPUT_IFMT_2D_UINT;
+   else if (util_format_is_pure_sint(dst_format))
+      output_ifmt_type = OUTPUT_IFMT_2D_SINT;
+   else
+      output_ifmt_type = OUTPUT_IFMT_2D_FLOAT;
+
    tu_cs_emit_regs(cs, SP_A2D_OUTPUT_INFO(CHIP,
-         .sint = util_format_is_pure_sint(dst_format),
-         .uint = util_format_is_pure_uint(dst_format),
+         .half_precision = util_format_is_float16(src_format),
+         .ifmt_type = output_ifmt_type,
          .color_format = fmt,
          .srgb = util_format_is_srgb(dst_format),
          .mask = 0xf));
@@ -584,13 +592,11 @@ build_blit_vs_shader(void)
    nir_builder _b =
       nir_builder_init_simple_shader(MESA_SHADER_VERTEX, NULL, "blit vs");
    nir_builder *b = &_b;
-   b->shader->info.internal = true;
 
    nir_variable *out_pos =
-      nir_variable_create(b->shader, nir_var_shader_out, glsl_vec4_type(),
-                          "gl_Position");
-   out_pos->data.location = VARYING_SLOT_POS;
-
+      nir_create_variable_with_location(b->shader, nir_var_shader_out,
+                                        VARYING_SLOT_POS,
+                                        glsl_vec4_type());
    nir_def *vert0_pos = load_const(b, 0, 2);
    nir_def *vert1_pos = load_const(b, 4, 2);
    nir_def *vertex = nir_load_vertex_id(b);
@@ -604,10 +610,9 @@ build_blit_vs_shader(void)
    nir_store_var(b, out_pos, pos, 0xf);
 
    nir_variable *out_coords =
-      nir_variable_create(b->shader, nir_var_shader_out, glsl_vec_type(3),
-                          "coords");
-   out_coords->data.location = VARYING_SLOT_VAR0;
-
+      nir_create_variable_with_location(b->shader, nir_var_shader_out,
+                                        VARYING_SLOT_VAR0,
+                                        glsl_vec_type(3));
    nir_def *vert0_coords = load_const(b, 2, 2);
    nir_def *vert1_coords = load_const(b, 6, 2);
 
@@ -629,13 +634,11 @@ build_clear_vs_shader(void)
    nir_builder _b =
       nir_builder_init_simple_shader(MESA_SHADER_VERTEX, NULL, "blit vs");
    nir_builder *b = &_b;
-   b->shader->info.internal = true;
 
    nir_variable *out_pos =
-      nir_variable_create(b->shader, nir_var_shader_out, glsl_vec4_type(),
-                          "gl_Position");
-   out_pos->data.location = VARYING_SLOT_POS;
-
+      nir_create_variable_with_location(b->shader, nir_var_shader_out,
+                                        VARYING_SLOT_POS,
+                                        glsl_vec4_type());
    nir_def *vert0_pos = load_const(b, 0, 2);
    nir_def *vert1_pos = load_const(b, 4, 2);
    /* c0.z is used to clear depth */
@@ -650,9 +653,9 @@ build_clear_vs_shader(void)
    nir_store_var(b, out_pos, pos, 0xf);
 
    nir_variable *out_layer =
-      nir_variable_create(b->shader, nir_var_shader_out, glsl_uint_type(),
-                          "gl_Layer");
-   out_layer->data.location = VARYING_SLOT_LAYER;
+      nir_create_variable_with_location(b->shader, nir_var_shader_out,
+                                        VARYING_SLOT_LAYER,
+                                        glsl_uint_type());
    nir_def *layer = load_const(b, 3, 1);
    nir_store_var(b, out_layer, layer, 1);
 
@@ -666,44 +669,31 @@ build_blit_fs_shader(bool zscale)
       nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT, NULL,
                                      zscale ? "zscale blit fs" : "blit fs");
    nir_builder *b = &_b;
-   b->shader->info.internal = true;
 
    nir_variable *out_color =
-      nir_variable_create(b->shader, nir_var_shader_out, glsl_vec4_type(),
-                          "color0");
-   out_color->data.location = FRAG_RESULT_DATA0;
+      nir_create_variable_with_location(b->shader, nir_var_shader_out,
+                                        FRAG_RESULT_DATA0, glsl_vec4_type());
 
    unsigned coord_components = zscale ? 3 : 2;
    nir_variable *in_coords =
-      nir_variable_create(b->shader, nir_var_shader_in,
-                          glsl_vec_type(coord_components),
-                          "coords");
-   in_coords->data.location = VARYING_SLOT_VAR0;
-
-   nir_tex_instr *tex = nir_tex_instr_create(b->shader, 1);
-   /* Note: since we're just copying data, we rely on the HW ignoring the
-    * dest_type.
-    */
-   tex->dest_type = nir_type_int32;
-   tex->is_array = false;
-   tex->is_shadow = false;
-   tex->sampler_dim = zscale ? GLSL_SAMPLER_DIM_3D : GLSL_SAMPLER_DIM_2D;
-
-   tex->texture_index = 0;
-   tex->sampler_index = 0;
+      nir_create_variable_with_location(b->shader, nir_var_shader_in,
+                                        VARYING_SLOT_VAR0,
+                                        glsl_vec_type(coord_components));
 
    b->shader->info.num_textures = 1;
    BITSET_SET(b->shader->info.textures_used, 0);
 
-   tex->src[0] = nir_tex_src_for_ssa(nir_tex_src_coord,
-                                     nir_load_var(b, in_coords));
-   tex->coord_components = coord_components;
+   nir_def *res =
+      nir_tex(b, nir_load_var(b, in_coords),
+              .texture_index = 0, .sampler_index = 0,
+              .dim = zscale ? GLSL_SAMPLER_DIM_3D : GLSL_SAMPLER_DIM_2D,
 
-   nir_def_init(&tex->instr, &tex->def, 4, 32);
-   nir_builder_instr_insert(b, &tex->instr);
+              /* Note: since we're just copying data, we rely on the HW ignoring
+               * the base type.
+               */
+              .dest_type = nir_type_int32);
 
-   nir_store_var(b, out_color, &tex->def, 0xf);
-
+   nir_store_var(b, out_color, res, 0xf);
    return b->shader;
 }
 
@@ -711,40 +701,19 @@ build_blit_fs_shader(bool zscale)
  * variant for them.
  */
 static nir_shader *
-build_ms_copy_fs_shader(bool half_float)
+build_ms_copy_fs_shader(void)
 {
    nir_builder _b =
       nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT, NULL,
                                      "multisample copy fs");
    nir_builder *b = &_b;
-   b->shader->info.internal = true;
 
    nir_variable *out_color =
-      nir_variable_create(b->shader, nir_var_shader_out,
-                          half_float ? glsl_f16vec_type(4) : glsl_vec4_type(),
-                          "color0");
-   out_color->data.location = FRAG_RESULT_DATA0;
-
+      nir_create_variable_with_location(b->shader, nir_var_shader_out,
+                                        FRAG_RESULT_DATA0, glsl_vec4_type());
    nir_variable *in_coords =
-      nir_variable_create(b->shader, nir_var_shader_in,
-                          glsl_vec_type(2),
-                          "coords");
-   in_coords->data.location = VARYING_SLOT_VAR0;
-
-   nir_tex_instr *tex = nir_tex_instr_create(b->shader, 2);
-
-   tex->op = nir_texop_txf_ms;
-
-   /* Note: since we're just copying data, we rely on the HW ignoring the
-    * dest_type.
-    */
-   tex->dest_type = half_float ? nir_type_float16 : nir_type_int32;
-   tex->is_array = false;
-   tex->is_shadow = false;
-   tex->sampler_dim = GLSL_SAMPLER_DIM_MS;
-
-   tex->texture_index = 0;
-   tex->sampler_index = 0;
+      nir_create_variable_with_location(b->shader, nir_var_shader_in,
+                                        VARYING_SLOT_VAR0, glsl_vec_type(2));
 
    b->shader->info.num_textures = 1;
    BITSET_SET(b->shader->info.textures_used, 0);
@@ -752,17 +721,16 @@ build_ms_copy_fs_shader(bool half_float)
 
    nir_def *coord = nir_f2i32(b, nir_load_var(b, in_coords));
 
-   tex->src[0] = nir_tex_src_for_ssa(nir_tex_src_coord, coord);
-   tex->coord_components = 2;
+   nir_def *tex = nir_txf_ms(b, coord, nir_load_sample_id(b),
+                             .texture_index = 0, .sampler_index = 0,
+                             .dim = GLSL_SAMPLER_DIM_MS,
 
-   tex->src[1] = nir_tex_src_for_ssa(nir_tex_src_ms_index,
-                                     nir_load_sample_id(b));
+                             /* Note: since we're just copying data, we rely on
+                              * the HW ignoring the dest_type.
+                               */
+                             .dest_type = nir_type_int32);
 
-   nir_def_init(&tex->instr, &tex->def, 4, half_float ? 16 : 32);
-   nir_builder_instr_insert(b, &tex->instr);
-
-   nir_store_var(b, out_color, &tex->def, 0xf);
-
+   nir_store_var(b, out_color, tex, 0xf);
    return b->shader;
 }
 
@@ -773,14 +741,12 @@ build_clear_fs_shader(unsigned mrts)
       nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT, NULL,
                                      "mrt%u clear fs", mrts);
    nir_builder *b = &_b;
-   b->shader->info.internal = true;
 
    for (unsigned i = 0; i < mrts; i++) {
       nir_variable *out_color =
-         nir_variable_create(b->shader, nir_var_shader_out, glsl_vec4_type(),
-                             "color");
-      out_color->data.location = FRAG_RESULT_DATA0 + i;
-
+         nir_create_variable_with_location(b->shader, nir_var_shader_out,
+                                           FRAG_RESULT_DATA0 + i,
+                                           glsl_vec4_type());
       nir_def *color = load_const(b, 4 * i, 4);
       nir_store_var(b, out_color, color, 0xf);
    }
@@ -839,8 +805,7 @@ tu_init_clear_blit_shaders(struct tu_device *dev)
    compile_shader(dev, build_clear_vs_shader(), 2, &offset, GLOBAL_SH_VS_CLEAR);
    compile_shader(dev, build_blit_fs_shader(false), 0, &offset, GLOBAL_SH_FS_BLIT);
    compile_shader(dev, build_blit_fs_shader(true), 0, &offset, GLOBAL_SH_FS_BLIT_ZSCALE);
-   compile_shader(dev, build_ms_copy_fs_shader(false), 0, &offset, GLOBAL_SH_FS_COPY_MS);
-   compile_shader(dev, build_ms_copy_fs_shader(true), 0, &offset, GLOBAL_SH_FS_COPY_MS_HALF);
+   compile_shader(dev, build_ms_copy_fs_shader(), 0, &offset, GLOBAL_SH_FS_COPY_MS);
 
    for (uint32_t num_rts = 0; num_rts <= MAX_RTS; num_rts++) {
       compile_shader(dev, build_clear_fs_shader(num_rts), num_rts, &offset,
@@ -860,7 +825,6 @@ tu_destroy_clear_blit_shaders(struct tu_device *dev)
 enum r3d_type {
    R3D_CLEAR,
    R3D_BLIT,
-   R3D_COPY_HALF,
 };
 
 template <chip CHIP>
@@ -876,18 +840,10 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
 
    enum global_shader fs_id = GLOBAL_SH_FS_BLIT;
 
-   if (z_scale) {
+   if (z_scale)
       fs_id = GLOBAL_SH_FS_BLIT_ZSCALE;
-   } else if (type == R3D_COPY_HALF) {
-      /* Avoid canonicalizing NaNs due to implicit conversions in the shader.
-       *
-       * TODO: Add a half-float blit shader that uses texture() but with half
-       * registers to avoid NaN canonicaliztion for the single-sampled case.
-       */
-      fs_id = GLOBAL_SH_FS_COPY_MS_HALF;
-   } else if (samples != VK_SAMPLE_COUNT_1_BIT) {
+   else if (samples != VK_SAMPLE_COUNT_1_BIT)
       fs_id = GLOBAL_SH_FS_COPY_MS;
-   }
 
    unsigned num_rts = util_bitcount(rts_mask);
    if (type == R3D_CLEAR)
@@ -932,7 +888,7 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
 
    /* REPL_MODE for varying with RECTLIST (2 vertices only) */
    tu_cs_emit_regs(cs, A6XX_VPC_VARYING_INTERP_MODE_MODE(0, 0));
-   tu_cs_emit_regs(cs, A6XX_VPC_VARYING_REPLACE_MODE_0_MODE(0, 2 << 2 | 1 << 0));
+   tu_cs_emit_regs(cs, A6XX_VPC_VARYING_REPLACE_MODE_MODE(0, 2 << 2 | 1 << 0));
 
    tu6_emit_vs<CHIP>(cs, vs, 0);
    tu6_emit_hs<CHIP>(cs, NULL);
@@ -981,9 +937,7 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
          unsigned regid = 0;
          if (rts_mask & (1u << i))
             regid = ir3_find_output_regid(fs, FRAG_RESULT_DATA0 + rt++);
-         tu_cs_emit(cs, A6XX_SP_PS_OUTPUT_REG_REGID(regid) |
-                        COND(regid & HALF_REG_ID,
-                             A6XX_SP_PS_OUTPUT_REG_HALF_PRECISION));
+         tu_cs_emit(cs, A6XX_SP_PS_OUTPUT_REG_REGID(regid));
       }
    }
 
@@ -1579,6 +1533,10 @@ r3d_setup(struct tu_cmd_buffer *cmd,
    if (!cmd->state.pass) {
       tu_emit_cache_flush_ccu<CHIP>(cmd, cs, TU_CMD_CCU_SYSMEM);
       tu6_emit_window_scissor(cs, 0, 0, 0x3fff, 0x3fff);
+      if (cmd->device->physical_device->info->a7xx.has_hw_bin_scaling) {
+         tu_cs_emit_regs(cs, A7XX_GRAS_BIN_FOVEAT());
+         tu_cs_emit_regs(cs, A7XX_RB_BIN_FOVEAT());
+      }
    }
 
    if (!(blit_param & R3D_DST_GMEM)) {
@@ -1597,18 +1555,7 @@ r3d_setup(struct tu_cmd_buffer *cmd,
       }
    }
 
-   enum r3d_type type;
-   if (clear) {
-      type = R3D_CLEAR;
-   } else if ((blit_param & R3D_COPY) && util_format_is_float16(src_format)) {
-      /* Avoid canonicalizing NaNs in copies by using the special half-float
-       * path that uses half regs.
-       */
-      type = R3D_COPY_HALF;
-   } else {
-      type = R3D_BLIT;
-   }
-
+   const enum r3d_type type = (clear) ? R3D_CLEAR : R3D_BLIT;
    r3d_common<CHIP>(cmd, cs, type, 1, blit_param & R3D_Z_SCALE, samples);
 
    tu_cs_emit_regs(cs, A6XX_SP_PS_MRT_CNTL(.mrt = 1));
@@ -1811,7 +1758,7 @@ copy_format(VkFormat vk_format, VkImageAspectFlags aspect_mask)
       case 8: return PIPE_FORMAT_R32G32_UINT;
       case 16:return PIPE_FORMAT_R32G32B32A32_UINT;
       default:
-         unreachable("unhandled format size");
+         UNREACHABLE("unhandled format size");
       }
    }
 
@@ -1912,7 +1859,7 @@ pack_blit_event_clear_value(const VkClearValue *val, enum pipe_format format, ui
       PACK_F(a8_unorm);
       break;
    default:
-      unreachable("unexpected channel size");
+      UNREACHABLE("unexpected channel size");
    }
 #undef PACK_F
 }
@@ -2445,8 +2392,7 @@ tu_copy_buffer_to_image(struct tu_cmd_buffer *cmd,
    /* note: could use "R8_UNORM" when no UBWC */
    bool has_unaligned = CHIP >= A7XX; /* If unaligned buffer copies are supported. */
    unsigned blit_param = 0;
-   if (src_format == PIPE_FORMAT_Y8_UNORM ||
-       util_format_is_float16(src_format)) {
+   if (src_format == PIPE_FORMAT_Y8_UNORM) {
       ops = &r3d_ops<CHIP>;
       blit_param = R3D_COPY;
       has_unaligned = false;
@@ -2642,8 +2588,7 @@ tu_copy_image_to_buffer(struct tu_cmd_buffer *cmd,
 
    /* note: could use "R8_UNORM" when no UBWC */
    unsigned blit_param = 0;
-   if (dst_format == PIPE_FORMAT_Y8_UNORM ||
-       util_format_is_float16(src_format)) {
+   if (dst_format == PIPE_FORMAT_Y8_UNORM) {
       ops = &r3d_ops<CHIP>;
       blit_param = R3D_COPY;
    }
@@ -2872,9 +2817,7 @@ tu_copy_image_to_image(struct tu_cmd_buffer *cmd,
    /* note: could use "R8_UNORM" when no UBWC */
    unsigned blit_param = 0;
    if (dst_format == PIPE_FORMAT_Y8_UNORM ||
-       src_format == PIPE_FORMAT_Y8_UNORM ||
-       util_format_is_float16(src_format) ||
-       util_format_is_float16(dst_format)) {
+       src_format == PIPE_FORMAT_Y8_UNORM) {
       ops = &r3d_ops<CHIP>;
       blit_param = R3D_COPY;
    }
@@ -2940,25 +2883,24 @@ tu_copy_image_to_image(struct tu_cmd_buffer *cmd,
       struct fdl_layout staging_layout = { 0 };
       VkOffset3D staging_offset = { 0 };
 
-      staging_layout.tile_mode = TILE6_LINEAR;
-      staging_layout.ubwc = false;
-
       uint32_t layer_count =
          vk_image_subresource_layer_count(&src_image->vk,
                                           &info->srcSubresource);
-      fdl6_layout(&staging_layout,
-                  &cmd->device->physical_device->dev_info,
-                  src_format,
-                  src_image->layout[0].nr_samples,
-                  extent.width,
-                  extent.height,
-                  extent.depth,
-                  1,
-                  layer_count,
-                  extent.depth > 1,
-                  false,
-                  false,
-                  NULL);
+
+      struct fdl_image_params params = {
+         .format = src_format,
+         .nr_samples = src_image->layout[0].nr_samples,
+         .width0 = extent.width,
+         .height0 = extent.height,
+         .depth0 = extent.depth,
+         .mip_levels = 1,
+         .array_size = layer_count,
+         .tile_mode = TILE6_LINEAR,
+         .is_3d = extent.depth > 1,
+      };
+
+      fdl6_layout_image(&staging_layout, &cmd->device->physical_device->dev_info,
+                        &params, NULL);
 
       struct tu_bo *staging_bo;
       VkResult result = tu_get_scratch_bo(cmd->device,
@@ -3973,16 +3915,16 @@ fdm_apply_sysmem_clear_coords(struct tu_cmd_buffer *cmd,
                               struct tu_cs *cs,
                               void *data,
                               VkOffset2D common_bin_offset,
+                              const VkOffset2D *hw_viewport_offsets,
                               unsigned views,
                               const VkExtent2D *frag_areas,
                               const VkRect2D *bins)
 {
    const struct apply_sysmem_clear_coords_state *state =
       (const struct apply_sysmem_clear_coords_state *)data;
-   assert(state->view < views);
 
-   VkExtent2D frag_area = frag_areas[state->view];
-   VkRect2D bin = bins[state->view];
+   VkExtent2D frag_area = frag_areas[MIN2(state->view, views - 1)];
+   VkRect2D bin = bins[MIN2(state->view, views - 1)];
 
    VkOffset2D offset = tu_fdm_per_bin_offset(frag_area, bin, common_bin_offset);
 
@@ -4247,16 +4189,16 @@ fdm_apply_gmem_clear_coords(struct tu_cmd_buffer *cmd,
                             struct tu_cs *cs,
                             void *data,
                             VkOffset2D common_bin_offset,
+                            const VkOffset2D *hw_viewport_offsets,
                             unsigned views,
                             const VkExtent2D *frag_areas,
                             const VkRect2D *bins)
 {
    const struct apply_gmem_clear_coords_state *state =
       (const struct apply_gmem_clear_coords_state *)data;
-   assert(state->view < views);
 
-   VkExtent2D frag_area = frag_areas[state->view];
-   VkRect2D bin = bins[state->view];
+   VkExtent2D frag_area = frag_areas[MIN2(state->view, views - 1)];
+   VkRect2D bin = bins[MIN2(state->view, views - 1)];
 
    VkOffset2D offset = tu_fdm_per_bin_offset(frag_area, bin, common_bin_offset);
 
@@ -4883,15 +4825,15 @@ fdm_apply_load_coords(struct tu_cmd_buffer *cmd,
                       struct tu_cs *cs,
                       void *data,
                       VkOffset2D common_bin_offset,
+                      const VkOffset2D *hw_viewport_offsets,
                       unsigned views,
                       const VkExtent2D *frag_areas,
                       const VkRect2D *bins)
 {
    const struct apply_load_coords_state *state =
       (const struct apply_load_coords_state *)data;
-   assert(state->view < views);
-   VkExtent2D frag_area = frag_areas[state->view];
-   VkRect2D bin = bins[state->view];
+   VkExtent2D frag_area = frag_areas[MIN2(state->view, views - 1)];
+   VkRect2D bin = bins[MIN2(state->view, views - 1)];
 
    assert(bin.extent.width % frag_area.width == 0);
    assert(bin.extent.height % frag_area.height == 0);
@@ -4943,7 +4885,7 @@ load_3d_blit(struct tu_cmd_buffer *cmd,
    for_each_layer(i, att->clear_views, cmd->state.framebuffer->layers) {
       if (cmd->state.pass->has_fdm) {
          struct apply_load_coords_state state = {
-            .view = att->clear_views ? i : 0,
+            .view = i,
          };
          tu_create_fdm_bin_patchpoint(cmd, cs, 4, TU_FDM_SKIP_BINNING,
                                       fdm_apply_load_coords, state);
@@ -5356,15 +5298,15 @@ fdm_apply_store_coords(struct tu_cmd_buffer *cmd,
                        struct tu_cs *cs,
                        void *data,
                        VkOffset2D common_bin_offset,
+                       const VkOffset2D *hw_viewport_offsets,
                        unsigned views,
                        const VkExtent2D *frag_areas,
                        const VkRect2D *bins)
 {
    const struct apply_store_coords_state *state =
       (const struct apply_store_coords_state *)data;
-   assert(state->view < views);
-   VkExtent2D frag_area = frag_areas[state->view];
-   VkRect2D bin = bins[state->view];
+   VkExtent2D frag_area = frag_areas[MIN2(state->view, views - 1)];
+   VkRect2D bin = bins[MIN2(state->view, views - 1)];
 
    /* The bin width/height must be a multiple of the frag_area to make sure
     * that the scaling happens correctly. This means there may be some
@@ -5516,9 +5458,8 @@ tu_store_gmem_attachment(struct tu_cmd_buffer *cmd,
 
       for_each_layer (i, layer_mask, layers) {
          if (cmd->state.pass->has_fdm) {
-            unsigned view = layer_mask ? i : 0;
             struct apply_store_coords_state state = {
-               .view = view,
+               .view = i,
             };
             tu_create_fdm_bin_patchpoint(cmd, cs, 8, TU_FDM_SKIP_BINNING,
                                          fdm_apply_store_coords, state);

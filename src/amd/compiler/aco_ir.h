@@ -271,6 +271,12 @@ withoutVOP3(Format format)
    return (Format)((uint32_t)format & ~((uint32_t)Format::VOP3));
 }
 
+constexpr Format
+withoutVOP2(Format format)
+{
+   return (Format)((uint32_t)format & ~((uint32_t)Format::VOP2));
+}
+
 enum class RegType {
    sgpr,
    vgpr,
@@ -324,14 +330,13 @@ struct RegClass {
    constexpr unsigned size() const { return (bytes() + 3) >> 2; }
    constexpr bool is_linear() const { return rc <= RC::s16 || is_linear_vgpr(); }
    constexpr RegClass as_linear() const { return RegClass((RC)(rc | (1 << 6))); }
-   constexpr RegClass as_subdword() const { return RegClass((RC)(rc | 1 << 7)); }
 
    static constexpr RegClass get(RegType type, unsigned bytes)
    {
       if (type == RegType::sgpr) {
          return RegClass(type, DIV_ROUND_UP(bytes, 4u));
       } else {
-         return bytes % 4u ? RegClass(type, bytes).as_subdword() : RegClass(type, bytes / 4u);
+         return bytes % 4u ? RegClass((RC)(1 << 5 | 1 << 7 | bytes)) : RegClass(type, bytes / 4u);
       }
    }
 
@@ -784,7 +789,7 @@ public:
          case 255:
             return (signext && (data_.i & 0x80000000u) ? 0xffffffff00000000ull : 0ull) | data_.i;
          }
-         unreachable("invalid register for 64-bit constant");
+         UNREACHABLE("invalid register for 64-bit constant");
       } else {
          return data_.i;
       }
@@ -1599,6 +1604,14 @@ static_assert(sizeof(VINTRP_instruction) == sizeof(Instruction) + 4, "Unexpected
  * Operand(n-1): M0 - LDS size.
  * Definition(0): VDST - Destination VGPR when results returned to VGPRs.
  *
+ * For ds_bvh_stack* instructions:
+ *
+ * Operand(0): ADDR - VGPR supplying the stack address (overwritten with stack address after push)
+ * Operand(1): LVADDR - VGPR supplying the last visited node ID
+ * Operand(2): DATA - VGPR supplying the result of bvh*_intersect_ray
+ * Definition(0) - new ADDR (tied to operand 0, contains new stack address)
+ * Definition(1): VDST - next node ID to test for intersection
+ *
  */
 struct DS_instruction : public Instruction {
    memory_sync_info sync;
@@ -1712,7 +1725,8 @@ struct FLAT_instruction : public Instruction {
    uint32_t lds : 1;
    uint32_t nv : 1;
    uint32_t disable_wqm : 1; /* Require an exec mask without helper invocations */
-   uint32_t padding0 : 5;
+   uint32_t may_use_lds : 1; /* FLAT only: indicates that it might access LDS */
+   uint32_t padding0 : 4;
 };
 static_assert(sizeof(FLAT_instruction) == sizeof(Instruction) + 8, "Unexpected padding");
 
@@ -1723,7 +1737,8 @@ struct Export_instruction : public Instruction {
    bool done : 1;
    bool valid_mask : 1;
    bool row_en : 1;
-   uint8_t padding0 : 4;
+   bool disable_wqm : 1;
+   uint8_t padding0 : 3;
    uint8_t padding1;
 };
 static_assert(sizeof(Export_instruction) == sizeof(Instruction) + 4, "Unexpected padding");
@@ -1902,11 +1917,17 @@ bool can_swap_operands(aco_ptr<Instruction>& instr, aco_opcode* new_op, unsigned
 
 uint32_t get_reduction_identity(ReduceOp op, unsigned idx);
 
+bool instr_disables_wqm(Instruction* instr);
+Operand& instr_exact_mask(Instruction* instr);
+Operand& instr_wqm_mask(Instruction* instr);
+
 unsigned get_mimg_nsa_dwords(const Instruction* instr);
 
 unsigned get_vopd_opy_start(const Instruction* instr);
 
 bool should_form_clause(const Instruction* a, const Instruction* b);
+
+bool instr_is_vmem_fp_atomic(Instruction* instr);
 
 enum vmem_type : uint8_t {
    vmem_nosampler = 1 << 0,
@@ -2140,6 +2161,7 @@ public:
    Stage stage;
    bool needs_exact = false; /* there exists an instruction with disable_wqm = true */
    bool needs_wqm = false;   /* there exists a p_wqm instruction */
+   bool needs_fp_mode_insertion = false; /* insert_fp_mode should be run */
    bool has_smem_buffer_or_global_loads = false;
    bool has_pops_overlapped_waves_wait = false;
    bool has_color_exports = false;
@@ -2273,6 +2295,7 @@ void live_var_analysis(Program* program);
 std::vector<uint16_t> dead_code_analysis(Program* program);
 void dominator_tree(Program* program);
 void insert_exec_mask(Program* program);
+void disable_wqm(Program* program);
 void value_numbering(Program* program);
 void optimize(Program* program);
 void optimize_postRA(Program* program);
@@ -2286,6 +2309,7 @@ void lower_to_hw_instr(Program* program);
 void schedule_program(Program* program);
 void schedule_ilp(Program* program);
 void schedule_vopd(Program* program);
+void insert_fp_mode(Program* program);
 void spill(Program* program);
 void insert_waitcnt(Program* program);
 void insert_delay_alu(Program* program);

@@ -46,13 +46,46 @@ struct vk_physical_device;
 struct vk_pipeline;
 struct vk_pipeline_robustness_state;
 
-int vk_shader_cmp_graphics_stages(gl_shader_stage a, gl_shader_stage b);
+int vk_shader_cmp_graphics_stages(mesa_shader_stage a, mesa_shader_stage b);
+int vk_shader_cmp_rt_stages(mesa_shader_stage a, mesa_shader_stage b);
 
 #define VK_SHADER_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_MESA 0x1000
+#define VK_SHADER_CREATE_UNALIGNED_DISPATCH_BIT_MESA               0x2000
+
+#define MESA_VK_PIPELINE_RAY_TRACING_FLAGS ( \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_SKIP_BUILT_IN_PRIMITIVES_BIT_KHR | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_ALLOW_SPHERES_AND_LINEAR_SWEPT_SPHERES_BIT_NV | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_SKIP_TRIANGLES_BIT_KHR | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_SKIP_AABBS_BIT_KHR | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_ANY_HIT_SHADERS_BIT_KHR | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_CLOSEST_HIT_SHADERS_BIT_KHR | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_MISS_SHADERS_BIT_KHR | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_INTERSECTION_SHADERS_BIT_KHR | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_SHADER_GROUP_HANDLE_CAPTURE_REPLAY_BIT_KHR | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_ALLOW_MOTION_BIT_NV | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT | \
+   VK_PIPELINE_CREATE_2_RAY_TRACING_DISPLACEMENT_MICROMAP_BIT_NV | \
+   VK_PIPELINE_CREATE_2_DISALLOW_OPACITY_MICROMAP_BIT_ARM)
 
 struct vk_shader_compile_info {
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
    VkShaderCreateFlagsEXT flags;
+   /* RT flags only includes :
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_SKIP_BUILT_IN_PRIMITIVES_BIT_KHR
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_ALLOW_SPHERES_AND_LINEAR_SWEPT_SPHERES_BIT_NV
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_SKIP_TRIANGLES_BIT_KHR
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_SKIP_AABBS_BIT_KHR
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_ANY_HIT_SHADERS_BIT_KHR
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_CLOSEST_HIT_SHADERS_BIT_KHR
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_MISS_SHADERS_BIT_KHR
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_INTERSECTION_SHADERS_BIT_KHR
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_SHADER_GROUP_HANDLE_CAPTURE_REPLAY_BIT_KHR
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_ALLOW_MOTION_BIT_NV
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT
+    *    - VK_PIPELINE_CREATE_2_RAY_TRACING_DISPLACEMENT_MICROMAP_BIT_NV
+    *    - VK_PIPELINE_CREATE_2_DISALLOW_OPACITY_MICROMAP_BIT_ARM
+   */
+   VkPipelineCreateFlags2KHR rt_flags;
    VkShaderStageFlags next_stage_mask;
    struct nir_shader *nir;
 
@@ -72,7 +105,7 @@ struct vk_shader_ops;
 #pragma GCC diagnostic error "-Wpadded"
 #endif
 struct vk_shader_pipeline_cache_key {
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
    blake3_hash blake3;
 };
 #ifdef __GNUC__
@@ -84,7 +117,18 @@ struct vk_shader {
 
    const struct vk_shader_ops *ops;
 
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
+
+   /* Stack size for RT shaders */
+   VkDeviceSize stack_size;
+
+   /* Scratch size used by the shader */
+   VkDeviceSize scratch_size;
+
+   /* Number of ray queries used by the shader (useful to avoid going through
+    * all of the shaders in the RT pipelines)
+    */
+   uint32_t ray_queries;
 
    /* Used for the generic VkPipeline implementation */
    struct {
@@ -150,13 +194,13 @@ struct vk_shader_ops {
 
 void *vk_shader_zalloc(struct vk_device *device,
                        const struct vk_shader_ops *ops,
-                       gl_shader_stage stage,
+                       mesa_shader_stage stage,
                        const VkAllocationCallbacks *alloc,
                        size_t size);
 void *vk_shader_multizalloc(struct vk_device *device,
                             struct vk_multialloc *ma,
                             const struct vk_shader_ops *ops,
-                            gl_shader_stage stage,
+                            mesa_shader_stage stage,
                             const VkAllocationCallbacks *alloc);
 void vk_shader_free(struct vk_device *device,
                     const VkAllocationCallbacks *alloc,
@@ -178,7 +222,7 @@ struct vk_device_shader_ops {
     */
    const struct nir_shader_compiler_options *(*get_nir_options)(
       struct vk_physical_device *device,
-      gl_shader_stage stage,
+      mesa_shader_stage stage,
       const struct vk_pipeline_robustness_state *rs);
 
    /** Retrieves a SPIR-V options struct
@@ -188,7 +232,7 @@ struct vk_device_shader_ops {
     */
    struct spirv_to_nir_options (*get_spirv_options)(
       struct vk_physical_device *device,
-      gl_shader_stage stage,
+      mesa_shader_stage stage,
       const struct vk_pipeline_robustness_state *rs);
 
    /** Preprocesses a NIR shader
@@ -207,12 +251,15 @@ struct vk_device_shader_ops {
       nir_shader *nir,
       const struct vk_pipeline_robustness_state *rs);
 
-   /** True if the driver wants geometry stages linked
+   /** Return shader stages that should be linked together in a group
     *
-    * If set to true, geometry stages will always be compiled with
-    * VK_SHADER_CREATE_LINK_STAGE_BIT_EXT when pipelines are used.
-    */
-   bool link_geom_stages;
+    * The driver should return 0 if it does not require any linking, otherwise
+    * it should return the stages that need to be linked together. The return
+    * value should have more than one shader stage and be included in the
+    * stages given as parameter.
+     */
+   VkShaderStageFlags (*get_rt_group_linking)(struct vk_physical_device *device,
+                                              VkShaderStageFlags stages);
 
    /** Hash a vk_graphics_state object and a vk_features object.
     *
@@ -256,18 +303,41 @@ struct vk_device_shader_ops {
                            const VkAllocationCallbacks* pAllocator,
                            struct vk_shader **shader_out);
 
+
+   /** Writes a HW shader record from a shader group */
+   void (*write_rt_shader_group)(struct vk_device *device,
+                                 VkRayTracingShaderGroupTypeKHR type,
+                                 const struct vk_shader **shaders,
+                                 uint32_t shader_count,
+                                 void *output);
+
+   /** Writes a group replay handle for a shader group */
+   void (*write_rt_shader_group_replay_handle)(struct vk_device *device,
+                                               const struct vk_shader **shaders,
+                                               uint32_t shader_count,
+                                               void *output);
+
    /** Bind a set of shaders
     *
     * This is roughly equivalent to vkCmdBindShadersEXT()
     */
    void (*cmd_bind_shaders)(struct vk_command_buffer *cmd_buffer,
                             uint32_t stage_count,
-                            const gl_shader_stage *stages,
+                            const mesa_shader_stage *stages,
                             struct vk_shader ** const shaders);
 
    /** Sets dynamic state */
    void (*cmd_set_dynamic_graphics_state)(struct vk_command_buffer *cmd_buffer,
                                           const struct vk_dynamic_graphics_state *state);
+
+   /** Sets scratch size & ray query count for RT pipelines */
+   void (*cmd_set_rt_state)(struct vk_command_buffer *cmd_buffer,
+                            VkDeviceSize scratch_size,
+                            uint32_t ray_queries);
+
+   /** Sets stack size for RT pipelines */
+   void (*cmd_set_stack_size)(struct vk_command_buffer *cmd_buffer,
+                              VkDeviceSize stack_size);
 };
 
 extern const struct vk_pipeline_robustness_state vk_robustness_disabled;

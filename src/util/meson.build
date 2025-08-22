@@ -140,6 +140,7 @@ files_mesa_util = files(
   'u_pointer.h',
   'u_queue.c',
   'u_queue.h',
+  'u_string.c',
   'u_string.h',
   'u_thread.c',
   'u_thread.h',
@@ -251,7 +252,6 @@ if with_platform_android
   files_debug_stack = files('u_debug_stack_android.cpp')
 else
   files_debug_stack = files(
-    'dbghelp.h',
     'u_debug_stack.c',
     'u_debug_symbol.c',
     'u_debug_symbol.h',
@@ -410,6 +410,7 @@ if with_tests
     'tests/u_call_once_test.cpp',
     'tests/u_debug_stack_test.cpp',
     'tests/u_debug_test.cpp',
+    'tests/u_dl_test.cpp',
     'tests/u_memstream_test.cpp',
     'tests/u_printf_test.cpp',
     'tests/u_qsort_test.cpp',

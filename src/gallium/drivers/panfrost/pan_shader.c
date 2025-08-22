@@ -136,8 +136,12 @@ panfrost_shader_compile(struct panfrost_screen *screen, const nir_shader *ir,
     * Compute CSOs call this function during create time, so preprocessing
     * happens at CSO create time regardless.
     */
-   if (gl_shader_stage_is_compute(s->info.stage))
+   if (mesa_shader_stage_is_compute(s->info.stage)) {
       pan_shader_preprocess(s, panfrost_device_gpu_id(dev));
+      pan_shader_lower_texture_early(s, panfrost_device_gpu_id(dev));
+      pan_shader_lower_texture(s, panfrost_device_gpu_id(dev));
+      pan_shader_postprocess(s, panfrost_device_gpu_id(dev));
+   }
 
    struct pan_compile_inputs inputs = {
       .gpu_id = panfrost_device_gpu_id(dev),
@@ -197,12 +201,14 @@ panfrost_shader_compile(struct panfrost_screen *screen, const nir_shader *ir,
    if (dev->arch <= 5 && s->info.stage == MESA_SHADER_FRAGMENT) {
       NIR_PASS(_, s, pan_lower_framebuffer, key->fs.rt_formats,
                pan_raw_format_mask_midgard(key->fs.rt_formats), 0,
-               panfrost_device_gpu_id(dev) < 0x700);
+               panfrost_device_gpu_prod_id(dev) < 0x700);
    }
 
-   if (s->info.stage == MESA_SHADER_VERTEX)
-      NIR_PASS(_, s, pan_nir_lower_static_noperspective,
+   if (s->info.stage == MESA_SHADER_VERTEX) {
+      NIR_PASS(_, s, nir_inline_sysval,
+               nir_intrinsic_load_noperspective_varyings_pan,
                key->vs.noperspective_varyings);
+   }
 
    NIR_PASS(_, s, panfrost_nir_lower_sysvals, dev->arch, &out->sysvals);
 
@@ -225,7 +231,7 @@ panfrost_shader_compile(struct panfrost_screen *screen, const nir_shader *ir,
 
    screen->vtbl.compile_shader(s, &inputs, &out->binary, &out->info);
 
-   pan_stats_util_debug(dbg, gl_shader_stage_name(s->info.stage),
+   pan_stats_util_debug(dbg, mesa_shader_stage_name(s->info.stage),
                         &out->info.stats);
 
    if (s->info.stage == MESA_SHADER_VERTEX && out->info.vs.idvs) {
@@ -388,7 +394,7 @@ panfrost_new_variant_locked(struct panfrost_context *ctx,
 
 static void
 panfrost_bind_shader_state(struct pipe_context *pctx, void *hwcso,
-                           enum pipe_shader_type type)
+                           mesa_shader_stage type)
 {
    struct panfrost_context *ctx = pan_context(pctx);
    ctx->uncompiled[type] = hwcso;
@@ -403,15 +409,15 @@ panfrost_bind_shader_state(struct pipe_context *pctx, void *hwcso,
 
 void
 panfrost_update_shader_variant(struct panfrost_context *ctx,
-                               enum pipe_shader_type type)
+                               mesa_shader_stage type)
 {
    /* No shader variants for compute */
-   if (type == PIPE_SHADER_COMPUTE)
+   if (type == MESA_SHADER_COMPUTE)
       return;
 
    /* We need linking information, defer this */
-   if ((type == PIPE_SHADER_FRAGMENT && !ctx->uncompiled[PIPE_SHADER_VERTEX]) ||
-       (type == PIPE_SHADER_VERTEX && !ctx->uncompiled[PIPE_SHADER_FRAGMENT]))
+   if ((type == MESA_SHADER_FRAGMENT && !ctx->uncompiled[MESA_SHADER_VERTEX]) ||
+       (type == MESA_SHADER_VERTEX && !ctx->uncompiled[MESA_SHADER_FRAGMENT]))
       return;
 
    /* Also defer, happens with GALLIUM_HUD */
@@ -446,21 +452,27 @@ panfrost_update_shader_variant(struct panfrost_context *ctx,
 static void
 panfrost_bind_vs_state(struct pipe_context *pctx, void *hwcso)
 {
-   panfrost_bind_shader_state(pctx, hwcso, PIPE_SHADER_VERTEX);
+   panfrost_bind_shader_state(pctx, hwcso, MESA_SHADER_VERTEX);
 
    /* Fragment shaders are linked with vertex shaders */
    struct panfrost_context *ctx = pan_context(pctx);
-   panfrost_update_shader_variant(ctx, PIPE_SHADER_FRAGMENT);
+   panfrost_update_shader_variant(ctx, MESA_SHADER_FRAGMENT);
 }
 
 static void
 panfrost_bind_fs_state(struct pipe_context *pctx, void *hwcso)
 {
-   panfrost_bind_shader_state(pctx, hwcso, PIPE_SHADER_FRAGMENT);
+   panfrost_bind_shader_state(pctx, hwcso, MESA_SHADER_FRAGMENT);
 
    /* Vertex shaders are linked with fragment shaders */
    struct panfrost_context *ctx = pan_context(pctx);
-   panfrost_update_shader_variant(ctx, PIPE_SHADER_VERTEX);
+   panfrost_update_shader_variant(ctx, MESA_SHADER_VERTEX);
+}
+
+static int
+glsl_type_size(const struct glsl_type *type, bool bindless)
+{
+   return glsl_count_attribute_slots(type, false);
 }
 
 static void *
@@ -495,6 +507,24 @@ panfrost_create_shader_state(struct pipe_context *pctx,
    /* Then run the suite of lowering and optimization, including I/O lowering */
    struct panfrost_device *dev = pan_device(pctx->screen);
    pan_shader_preprocess(nir, panfrost_device_gpu_id(dev));
+   pan_shader_lower_texture_early(nir, panfrost_device_gpu_id(dev));
+
+   NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
+            glsl_type_size, nir_lower_io_use_interpolated_input_intrinsics);
+
+   if (dev->arch >= 6 && nir->info.stage == MESA_SHADER_VERTEX)
+      NIR_PASS(_, nir, pan_nir_lower_noperspective_vs);
+   if (dev->arch >= 6 && nir->info.stage == MESA_SHADER_FRAGMENT)
+      NIR_PASS(_, nir, pan_nir_lower_noperspective_fs);
+
+   /* nir_lower[_explicit]_io is lazy and emits mul+add chains even for
+    * offsets it could figure out are constant.  Do some constant folding
+    * before bifrost_nir_lower_store_component below.
+    */
+   NIR_PASS(_, nir, nir_opt_constant_folding);
+
+   pan_shader_lower_texture(nir, panfrost_device_gpu_id(dev));
+   pan_shader_postprocess(nir, panfrost_device_gpu_id(dev));
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT)
       so->noperspective_varyings =
@@ -610,9 +640,9 @@ panfrost_bind_compute_state(struct pipe_context *pipe, void *cso)
    struct panfrost_context *ctx = pan_context(pipe);
    struct panfrost_uncompiled_shader *uncompiled = cso;
 
-   ctx->uncompiled[PIPE_SHADER_COMPUTE] = uncompiled;
+   ctx->uncompiled[MESA_SHADER_COMPUTE] = uncompiled;
 
-   ctx->prog[PIPE_SHADER_COMPUTE] =
+   ctx->prog[MESA_SHADER_COMPUTE] =
       uncompiled ? util_dynarray_begin(&uncompiled->variants) : NULL;
 }
 

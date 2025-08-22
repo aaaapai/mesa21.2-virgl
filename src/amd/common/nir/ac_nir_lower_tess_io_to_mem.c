@@ -804,7 +804,7 @@ lower_hs_output_access(nir_builder *b,
       update_hs_barrier(intrin, st);
       return NIR_LOWER_INSTR_PROGRESS;
    } else {
-      unreachable("intrinsic not supported by lower_hs_output_access");
+      UNREACHABLE("intrinsic not supported by lower_hs_output_access");
    }
 }
 
@@ -1499,7 +1499,8 @@ lower_tes_input_load(nir_builder *b,
    nir_def *load = NULL;
 
    AC_NIR_LOAD_IO(load, b, intrin->def.num_components, intrin->def.bit_size, io_sem.high_16bits,
-                  nir_load_buffer_amd, offchip_ring, off, offchip_offset, zero, .access = ACCESS_COHERENT,
+                  nir_load_buffer_amd, offchip_ring, off, offchip_offset, zero,
+                  .access = ACCESS_COHERENT | ACCESS_CAN_REORDER | ACCESS_CAN_SPECULATE,
                   .memory_modes = nir_var_shader_in);
 
    return load;
@@ -1624,7 +1625,7 @@ ac_nir_lower_hs_outputs_to_mem(nir_shader *shader, const nir_tcs_info *info,
    NIR_PASS(_, shader, nir_lower_vars_to_ssa);
    NIR_PASS(_, shader, nir_remove_dead_variables, nir_var_function_temp, NULL);
    NIR_PASS(_, shader, nir_lower_alu_to_scalar, NULL, NULL);
-   NIR_PASS(_, shader, nir_lower_phis_to_scalar, true);
+   NIR_PASS(_, shader, nir_lower_phis_to_scalar, ac_nir_lower_phis_to_scalar_cb, NULL);
 
    return true;
 }

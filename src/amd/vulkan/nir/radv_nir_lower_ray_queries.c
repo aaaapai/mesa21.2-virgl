@@ -21,6 +21,7 @@
 #define MAX_SCRATCH_STACK_ENTRY_COUNT 76
 
 enum radv_ray_intersection_field {
+   radv_ray_intersection_primitive_addr,
    radv_ray_intersection_primitive_id,
    radv_ray_intersection_geometry_id_and_flags,
    radv_ray_intersection_instance_addr,
@@ -44,6 +45,7 @@ radv_get_intersection_type()
       .name = #field_name,                                                                                             \
    }
 
+   FIELD(primitive_addr, glsl_uint64_t_type());
    FIELD(primitive_id, glsl_uint_type());
    FIELD(geometry_id_and_flags, glsl_uint_type());
    FIELD(instance_addr, glsl_uint64_t_type());
@@ -77,9 +79,12 @@ enum radv_ray_query_field {
    radv_ray_query_trav_stack_low_watermark,
    radv_ray_query_trav_current_node,
    radv_ray_query_trav_previous_node,
+   radv_ray_query_trav_parent_node,
    radv_ray_query_trav_instance_top_node,
    radv_ray_query_trav_instance_bottom_node,
+   radv_ray_query_trav_second_iteration,
    radv_ray_query_stack,
+   radv_ray_query_break_flag,
    radv_ray_query_field_count,
 };
 
@@ -113,9 +118,12 @@ radv_get_ray_query_type()
    FIELD(trav_stack_low_watermark, glsl_uint_type());
    FIELD(trav_current_node, glsl_uint_type());
    FIELD(trav_previous_node, glsl_uint_type());
+   FIELD(trav_parent_node, glsl_uint_type());
    FIELD(trav_instance_top_node, glsl_uint_type());
    FIELD(trav_instance_bottom_node, glsl_uint_type());
+   FIELD(trav_second_iteration, glsl_bool_type());
    FIELD(stack, glsl_array_type(glsl_uint_type(), MAX_SCRATCH_STACK_ENTRY_COUNT, 0));
+   FIELD(break_flag, glsl_bool_type());
 
 #undef FIELD
 
@@ -145,17 +153,20 @@ struct ray_query_vars {
 
 static void
 init_ray_query_vars(nir_shader *shader, const glsl_type *opaque_type, struct ray_query_vars *dst, const char *base_name,
-                    uint32_t max_shared_size)
+                    const struct radv_physical_device *pdev)
 {
    memset(dst, 0, sizeof(*dst));
 
    uint32_t workgroup_size =
       shader->info.workgroup_size[0] * shader->info.workgroup_size[1] * shader->info.workgroup_size[2];
    uint32_t shared_stack_entries = shader->info.ray_queries == 1 ? 16 : 8;
+   /* ds_bvh_stack* instructions use a fixed stride of 32 dwords. */
+   if (radv_use_bvh_stack_rtn(pdev))
+      workgroup_size = MAX2(workgroup_size, 32);
    uint32_t shared_stack_size = workgroup_size * shared_stack_entries * 4;
    uint32_t shared_offset = align(shader->info.shared_size, 4);
    if (shader->info.stage != MESA_SHADER_COMPUTE || glsl_type_is_array(opaque_type) ||
-       shared_offset + shared_stack_size > max_shared_size) {
+       shared_offset + shared_stack_size > pdev->max_shared_size) {
       dst->stack_entries = MAX_SCRATCH_STACK_ENTRY_COUNT;
    } else {
       dst->shared_stack = true;
@@ -170,11 +181,12 @@ init_ray_query_vars(nir_shader *shader, const glsl_type *opaque_type, struct ray
 }
 
 static void
-lower_ray_query(nir_shader *shader, nir_variable *ray_query, struct hash_table *ht, uint32_t max_shared_size)
+lower_ray_query(nir_shader *shader, nir_variable *ray_query, struct hash_table *ht,
+                const struct radv_physical_device *pdev)
 {
    struct ray_query_vars *vars = ralloc(ht, struct ray_query_vars);
 
-   init_ray_query_vars(shader, ray_query->type, vars, ray_query->name == NULL ? "" : ray_query->name, max_shared_size);
+   init_ray_query_vars(shader, ray_query->type, vars, ray_query->name == NULL ? "" : ray_query->name, pdev);
 
    _mesa_hash_table_insert(ht, ray_query, vars);
 }
@@ -186,6 +198,7 @@ copy_candidate_to_closest(nir_builder *b, nir_deref_instr *rq)
    nir_deref_instr *candidate = rq_deref(b, rq, candidate);
 
    isec_copy(b, closest, candidate, barycentrics);
+   isec_copy(b, closest, candidate, primitive_addr);
    isec_copy(b, closest, candidate, geometry_id_and_flags);
    isec_copy(b, closest, candidate, instance_addr);
    isec_copy(b, closest, candidate, intersection_type);
@@ -269,9 +282,19 @@ lower_rq_initialize(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query
    isec_store(b, closest, instance_addr, accel_struct);
    isec_store(b, candidate, instance_addr, accel_struct);
 
-   nir_def *bvh_offset = nir_build_load_global(
-      b, 1, 32, nir_iadd_imm(b, accel_struct, offsetof(struct radv_accel_struct_header, bvh_offset)),
-      .access = ACCESS_NON_WRITEABLE);
+   nir_def *accel_struct_non_null = nir_ine_imm(b, accel_struct, 0);
+
+   nir_def *zero = nir_imm_int(b, 0);
+   nir_def *bvh_offset = NULL;
+   nir_push_if(b, accel_struct_non_null);
+   {
+      bvh_offset = nir_build_load_global(
+         b, 1, 32, nir_iadd_imm(b, accel_struct, offsetof(struct radv_accel_struct_header, bvh_offset)),
+         .access = ACCESS_NON_WRITEABLE);
+   }
+   nir_pop_if(b, NULL);
+   bvh_offset = nir_if_phi(b, bvh_offset, zero);
+
    nir_def *bvh_base = nir_iadd(b, accel_struct, nir_u2u64(b, bvh_offset));
    bvh_base = build_addr_to_node(device, b, bvh_base, instr->src[2].ssa);
 
@@ -279,10 +302,18 @@ lower_rq_initialize(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query
    rq_store(b, rq, trav_bvh_base, bvh_base);
 
    if (vars->shared_stack) {
-      nir_def *base_offset = nir_imul_imm(b, nir_load_local_invocation_index(b), sizeof(uint32_t));
-      base_offset = nir_iadd_imm(b, base_offset, vars->shared_base);
-      rq_store(b, rq, trav_stack, base_offset);
-      rq_store(b, rq, trav_stack_low_watermark, base_offset);
+      if (radv_use_bvh_stack_rtn(pdev)) {
+         uint32_t workgroup_size =
+            b->shader->info.workgroup_size[0] * b->shader->info.workgroup_size[1] * b->shader->info.workgroup_size[2];
+         nir_def *addr = radv_build_bvh_stack_rtn_addr(b, pdev, workgroup_size, vars->shared_base, vars->stack_entries);
+         rq_store(b, rq, trav_stack, addr);
+         rq_store(b, rq, trav_stack_low_watermark, addr);
+      } else {
+         nir_def *base_offset = nir_imul_imm(b, nir_load_local_invocation_index(b), sizeof(uint32_t));
+         base_offset = nir_iadd_imm(b, base_offset, vars->shared_base);
+         rq_store(b, rq, trav_stack, base_offset);
+         rq_store(b, rq, trav_stack_low_watermark, base_offset);
+      }
    } else {
       rq_store(b, rq, trav_stack, nir_imm_int(b, 0));
       rq_store(b, rq, trav_stack_low_watermark, nir_imm_int(b, 0));
@@ -290,12 +321,14 @@ lower_rq_initialize(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query
 
    rq_store(b, rq, trav_current_node, nir_imm_int(b, RADV_BVH_ROOT_NODE));
    rq_store(b, rq, trav_previous_node, nir_imm_int(b, RADV_BVH_INVALID_NODE));
+   rq_store(b, rq, trav_parent_node, nir_imm_int(b, RADV_BVH_INVALID_NODE));
    rq_store(b, rq, trav_instance_top_node, nir_imm_int(b, RADV_BVH_INVALID_NODE));
    rq_store(b, rq, trav_instance_bottom_node, nir_imm_int(b, RADV_BVH_NO_INSTANCE_ROOT));
+   rq_store(b, rq, trav_second_iteration, nir_imm_false(b));
 
    rq_store(b, rq, trav_top_stack, nir_imm_int(b, -1));
 
-   rq_store(b, rq, incomplete, nir_imm_bool(b, !(instance->debug_flags & RADV_DEBUG_NO_RT)));
+   rq_store(b, rq, incomplete, nir_iand_imm(b, accel_struct_non_null, !(instance->debug_flags & RADV_DEBUG_NO_RT)));
 
    vars->initialize = instr;
 }
@@ -373,20 +406,18 @@ lower_rq_load(struct radv_device *device, nir_builder *b, nir_intrinsic_instr *i
    case nir_ray_query_value_world_ray_origin:
       return rq_load(b, rq, origin);
    case nir_ray_query_value_intersection_triangle_vertex_positions: {
-      nir_def *instance_node_addr = isec_load(b, intersection, instance_addr);
-      nir_def *primitive_id = isec_load(b, intersection, primitive_id);
-      nir_def *geometry_id = nir_iand_imm(b, isec_load(b, intersection, geometry_id_and_flags), 0xFFFFFF);
-      return radv_load_vertex_position(device, b, instance_node_addr, geometry_id, primitive_id,
-                                       nir_intrinsic_column(instr));
+      nir_def *primitive_addr = isec_load(b, intersection, primitive_addr);
+      return radv_load_vertex_position(device, b, primitive_addr, nir_intrinsic_column(instr));
    }
    default:
-      unreachable("Invalid nir_ray_query_value!");
+      UNREACHABLE("Invalid nir_ray_query_value!");
    }
 
    return NULL;
 }
 
 struct traversal_data {
+   const struct radv_device *device;
    struct ray_query_vars *vars;
    nir_deref_instr *rq;
 };
@@ -399,12 +430,16 @@ handle_candidate_aabb(nir_builder *b, struct radv_leaf_intersection *intersectio
 
    nir_deref_instr *candidate = rq_deref(b, data->rq, candidate);
 
+   isec_store(b, candidate, primitive_addr, intersection->node_addr);
    isec_store(b, candidate, primitive_id, intersection->primitive_id);
    isec_store(b, candidate, geometry_id_and_flags, intersection->geometry_id_and_flags);
    isec_store(b, candidate, opaque, intersection->opaque);
    isec_store(b, candidate, intersection_type, nir_imm_int(b, intersection_type_aabb));
 
-   nir_jump(b, nir_jump_break);
+   if (args->use_bvh_stack_rtn)
+      rq_store(b, data->rq, break_flag, nir_imm_true(b));
+   else
+      nir_jump(b, nir_jump_break);
 }
 
 static void
@@ -416,6 +451,7 @@ handle_candidate_triangle(nir_builder *b, struct radv_triangle_intersection *int
    nir_deref_instr *candidate = rq_deref(b, data->rq, candidate);
 
    isec_store(b, candidate, barycentrics, intersection->barycentrics);
+   isec_store(b, candidate, primitive_addr, intersection->base.node_addr);
    isec_store(b, candidate, primitive_id, intersection->base.primitive_id);
    isec_store(b, candidate, geometry_id_and_flags, intersection->base.geometry_id_and_flags);
    isec_store(b, candidate, t, intersection->t);
@@ -430,7 +466,10 @@ handle_candidate_triangle(nir_builder *b, struct radv_triangle_intersection *int
    }
    nir_push_else(b, NULL);
    {
-      nir_jump(b, nir_jump_break);
+      if (args->use_bvh_stack_rtn)
+         rq_store(b, data->rq, break_flag, nir_imm_true(b));
+      else
+         nir_jump(b, nir_jump_break);
    }
    nir_pop_if(b, NULL);
 }
@@ -489,13 +528,17 @@ lower_rq_proceed(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query_va
       .stack_low_watermark = rq_deref(b, rq, trav_stack_low_watermark),
       .current_node = rq_deref(b, rq, trav_current_node),
       .previous_node = rq_deref(b, rq, trav_previous_node),
+      .parent_node = rq_deref(b, rq, trav_parent_node),
       .instance_top_node = rq_deref(b, rq, trav_instance_top_node),
       .instance_bottom_node = rq_deref(b, rq, trav_instance_bottom_node),
+      .second_iteration = rq_deref(b, rq, trav_second_iteration),
       .instance_addr = isec_deref(b, candidate, instance_addr),
       .sbt_offset_and_flags = isec_deref(b, candidate, sbt_offset_and_flags),
+      .break_flag = rq_deref(b, rq, break_flag),
    };
 
    struct traversal_data data = {
+      .device = device,
       .vars = vars,
       .rq = rq,
    };
@@ -518,14 +561,22 @@ lower_rq_proceed(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query_va
    };
 
    if (vars->shared_stack) {
-      uint32_t workgroup_size =
-         b->shader->info.workgroup_size[0] * b->shader->info.workgroup_size[1] * b->shader->info.workgroup_size[2];
-      args.stack_stride = workgroup_size * 4;
-      args.stack_base = vars->shared_base;
+      args.use_bvh_stack_rtn = radv_use_bvh_stack_rtn(pdev);
+      if (args.use_bvh_stack_rtn) {
+         args.stack_stride = 1;
+         args.stack_base = 0;
+      } else {
+         uint32_t workgroup_size =
+            b->shader->info.workgroup_size[0] * b->shader->info.workgroup_size[1] * b->shader->info.workgroup_size[2];
+         args.stack_stride = workgroup_size * 4;
+         args.stack_base = vars->shared_base;
+      }
    } else {
       args.stack_stride = 1;
       args.stack_base = 0;
    }
+
+   rq_store(b, rq, break_flag, nir_imm_false(b));
 
    nir_push_if(b, rq_load(b, rq, incomplete));
    {
@@ -569,7 +620,7 @@ radv_nir_lower_ray_queries(struct nir_shader *shader, struct radv_device *device
       if (!var->data.ray_query)
          continue;
 
-      lower_ray_query(shader, var, query_ht, pdev->max_shared_size);
+      lower_ray_query(shader, var, query_ht, pdev);
 
       progress = true;
    }
@@ -581,7 +632,7 @@ radv_nir_lower_ray_queries(struct nir_shader *shader, struct radv_device *device
          if (!var->data.ray_query)
             continue;
 
-         lower_ray_query(shader, var, query_ht, pdev->max_shared_size);
+         lower_ray_query(shader, var, query_ht, pdev);
 
          progress = true;
       }
@@ -596,7 +647,7 @@ radv_nir_lower_ray_queries(struct nir_shader *shader, struct radv_device *device
             if (!nir_intrinsic_is_ray_query(intrinsic->intrinsic))
                continue;
 
-            nir_deref_instr *ray_query_deref = nir_instr_as_deref(intrinsic->src[0].ssa->parent_instr);
+            nir_deref_instr *ray_query_deref = nir_def_as_deref(intrinsic->src[0].ssa);
 
             struct ray_query_vars *vars =
                (struct ray_query_vars *)_mesa_hash_table_search(query_ht, nir_deref_instr_get_variable(ray_query_deref))
@@ -628,7 +679,7 @@ radv_nir_lower_ray_queries(struct nir_shader *shader, struct radv_device *device
                lower_rq_terminate(&builder, intrinsic, rq);
                break;
             default:
-               unreachable("Unsupported ray query intrinsic!");
+               UNREACHABLE("Unsupported ray query intrinsic!");
             }
 
             if (new_dest)

@@ -31,9 +31,7 @@ cmpsel_for_break_if(agx_builder *b, agx_instr *I)
    agx_index f = r0l;
 
    if (I->invert_cond) {
-      agx_index temp = t;
-      t = f;
-      f = temp;
+      SWAP(t, f);
    }
 
    if (I->op == AGX_OPCODE_BREAK_IF_FCMP)
@@ -124,12 +122,6 @@ lower(agx_builder *b, agx_instr *I)
 
    case AGX_OPCODE_SWAP:
       swap(b, I->src[0], I->src[1]);
-      return (void *)true;
-
-   case AGX_OPCODE_EXPORT:
-      /* We already lowered exports during RA, we just need to remove them late
-       * after inserting waits.
-       */
       return (void *)true;
 
    default:

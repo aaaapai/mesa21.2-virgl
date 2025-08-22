@@ -170,7 +170,7 @@ anv_blorp_batch_init(struct anv_cmd_buffer *cmd_buffer,
    } else if (queue_flags & VK_QUEUE_TRANSFER_BIT) {
       flags |= BLORP_BATCH_USE_BLITTER;
    } else {
-      unreachable("unknown queue family");
+      UNREACHABLE("unknown queue family");
    }
 
    /* Can't have both flags at the same time. */
@@ -223,7 +223,7 @@ get_usage_flag_for_cmd_buffer(const struct anv_cmd_buffer *cmd_buffer,
                         ISL_SURF_USAGE_BLITTER_SRC_BIT;
       break;
    default:
-      unreachable("Unhandled engine class");
+      UNREACHABLE("Unhandled engine class");
    }
 
    if (protected)
@@ -1003,7 +1003,7 @@ blit_image(struct anv_cmd_buffer *cmd_buffer,
       blorp_filter = BLORP_FILTER_BILINEAR;
       break;
    default:
-      unreachable("Invalid filter");
+      UNREACHABLE("Invalid filter");
    }
 
    assert(anv_image_aspects_compatible(src_res->aspectMask,
@@ -1451,7 +1451,7 @@ exec_ccs_op(struct anv_cmd_buffer *cmd_buffer,
       }
       break;
    default:
-      unreachable("Unsupported CCS operation");
+      UNREACHABLE("Unsupported CCS operation");
    }
 }
 
@@ -1500,7 +1500,7 @@ exec_mcs_op(struct anv_cmd_buffer *cmd_buffer,
       break;
    case ISL_AUX_OP_FULL_RESOLVE:
    default:
-      unreachable("Unsupported MCS operation");
+      UNREACHABLE("Unsupported MCS operation");
    }
 }
 
@@ -2213,7 +2213,9 @@ anv_image_msaa_resolve(struct anv_cmd_buffer *cmd_buffer,
 
    assert(src_image->vk.image_type == VK_IMAGE_TYPE_2D);
    assert(src_image->vk.samples > 1);
-   assert(dst_image->vk.image_type == VK_IMAGE_TYPE_2D);
+   assert((dst_image->vk.image_type == VK_IMAGE_TYPE_2D) ||
+          (dst_image->vk.image_type == VK_IMAGE_TYPE_3D &&
+           dst_base_layer == 0 && layer_count == 1));
    assert(dst_image->vk.samples == 1);
 
    struct blorp_surf src_surf, dst_surf;
