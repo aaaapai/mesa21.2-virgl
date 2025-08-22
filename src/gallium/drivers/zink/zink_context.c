@@ -5259,8 +5259,10 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
    bool is_copy_only = (flags & ZINK_CONTEXT_COPY_ONLY) > 0;
    bool is_compute_only = (flags & PIPE_CONTEXT_COMPUTE_ONLY) > 0;
    bool is_robust = (flags & PIPE_CONTEXT_ROBUST_BUFFER_ACCESS) > 0;
-   if (!ctx)
-      goto fail;
+   if (!ctx) {
+      printf("goto fail, but does not goto, fail 0 - zink_context_create\n");
+      //goto fail;
+   }
 
    ctx->flags = flags;
    ctx->pipeline_changed[0] = ctx->pipeline_changed[1] = true;
@@ -5382,8 +5384,10 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 
    if (!is_copy_only) {
       ctx->blitter = util_blitter_create(&ctx->base);
-      if (!ctx->blitter)
-         goto fail;
+      if (!ctx->blitter) {
+         printf("fail 1 - zink_context_create\n");
+         // goto fail;
+      }
       if (screen->driver_workarounds.inconsistent_interpolation)
          ctx->blitter->draw_rectangle = zink_draw_rectangle;
    }
@@ -5436,12 +5440,16 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
    if (!is_copy_only) {
       ctx->dummy_xfb_buffer = pipe_buffer_create(&screen->base,
          PIPE_BIND_STREAM_OUTPUT, PIPE_USAGE_IMMUTABLE, sizeof(data));
-      if (!ctx->dummy_xfb_buffer)
-         goto fail;
+      if (!ctx->dummy_xfb_buffer) {
+         printf("fail 2 - zink_context_create\n");
+         // goto fail;
+      }
    }
    if (!is_copy_only) {
-      if (!zink_descriptors_init(ctx))
-         goto fail;
+      if (!zink_descriptors_init(ctx)) {
+         printf("fail 3 - zink_context_create\n");
+         // goto fail;
+      }
    }
 
    if (!is_copy_only && !is_compute_only) {
@@ -5464,7 +5472,8 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
             ctx->di.bindless[i].db.buffer_infos = malloc(sizeof(VkDescriptorAddressInfoEXT) * ZINK_MAX_BINDLESS_HANDLES);
             if (!ctx->di.bindless[i].db.buffer_infos) {
                mesa_loge("ZINK: failed to allocate ctx->di.bindless[%d].db.buffer_infos!",i);
-               goto fail;
+               printf("fail 3.25 - zink_context_create\n");
+               // goto fail;
             }
             for (unsigned j = 0; j < ZINK_MAX_BINDLESS_HANDLES; j++) {
                ctx->di.bindless[i].db.buffer_infos[j].sType = VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT;
@@ -5474,13 +5483,15 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
             ctx->di.bindless[i].t.buffer_infos = malloc(sizeof(VkBufferView) * ZINK_MAX_BINDLESS_HANDLES);
             if (!ctx->di.bindless[i].t.buffer_infos) {
                mesa_loge("ZINK: failed to allocate ctx->di.bindless[%d].t.buffer_infos!",i);
-               goto fail;
+               printf("fail 3.5 - zink_context_create\n");
+               // goto fail;
             }
          }
          ctx->di.bindless[i].img_infos = malloc(sizeof(VkDescriptorImageInfo) * ZINK_MAX_BINDLESS_HANDLES);
          if (!ctx->di.bindless[i].img_infos) {
             mesa_loge("ZINK: failed to allocate ctx->di.bindless[%d].img_infos!",i);
-            goto fail;
+            printf("fail 3.99 - zink_context_create\n");   
+            // goto fail;
          }
          util_dynarray_init(&ctx->di.bindless[i].updates, NULL);
          util_dynarray_init(&ctx->di.bindless[i].resident, NULL);
@@ -5488,8 +5499,10 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
    }
 
    zink_start_batch(ctx);
-   if (!ctx->bs)
-      goto fail;
+   if (!ctx->bs) {
+      printf("fail 4 - zink_context_create\n");
+      // goto fail;
+   }
 
    if (screen->compact_descriptors)
       ctx->invalidate_descriptor_state = zink_context_invalidate_descriptor_state_compact;
