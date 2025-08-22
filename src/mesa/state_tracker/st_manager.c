@@ -978,6 +978,9 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
    printf("53\n");
    unsigned lod_bias_flag = is_gles ? PIPE_CONTEXT_NO_LOD_BIAS : 0;
 
+   if (!fscreen || !fscreen->screen || !fscreen->screen->context_create) {
+      printf("不应该以这样的方式而炸掉\n");
+   }
    printf("54\n");
    pipe = fscreen->screen->context_create(fscreen->screen, NULL,
                                           PIPE_CONTEXT_PREFER_THREADED |
