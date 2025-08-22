@@ -968,18 +968,18 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
    }
 
    if (attribs->flags & ST_CONTEXT_FLAG_ROBUST_ACCESS)
-      ctx_flags |= PIPE_CONTEXT_ROBUST_BUFFER_ACCESS;
+      attribs->context_flags |= PIPE_CONTEXT_ROBUST_BUFFER_ACCESS;
 
    if (attribs->flags & ST_CONTEXT_FLAG_NO_ERROR)
       no_error = true;
 
    if (attribs->flags & ST_CONTEXT_FLAG_LOW_PRIORITY)
-      ctx_flags |= PIPE_CONTEXT_LOW_PRIORITY;
+      attribs->context_flags |= PIPE_CONTEXT_LOW_PRIORITY;
    else if (attribs->flags & ST_CONTEXT_FLAG_HIGH_PRIORITY)
-      ctx_flags |= PIPE_CONTEXT_HIGH_PRIORITY;
+      attribs->context_flags |= PIPE_CONTEXT_HIGH_PRIORITY;
 
    if (attribs->flags & ST_CONTEXT_FLAG_RESET_NOTIFICATION_ENABLED)
-      ctx_flags |= PIPE_CONTEXT_LOSE_CONTEXT_ON_RESET;
+      attribs->context_flags |= PIPE_CONTEXT_LOSE_CONTEXT_ON_RESET;
 
    /*if (attribs->flags & ST_CONTEXT_FLAG_NO_ERROR)
       no_error = true;*/
@@ -992,14 +992,8 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
    printf("53\n");
    unsigned lod_bias_flag = is_gles ? PIPE_CONTEXT_NO_LOD_BIAS : 0;
 
-   if (!fscreen || !fscreen->screen || !fscreen->screen->context_create) {
-      printf("不应该以这样的方式而炸掉\n");
-   }
    printf("54\n");
-   pipe = fscreen->screen->context_create(fscreen->screen, NULL,
-                                          PIPE_CONTEXT_PREFER_THREADED |
-                                          lod_bias_flag |
-                                          ctx_flags);
+   pipe = fscreen->screen->context_create(fscreen->screen, NULL, attribs->context_flags);
    if (!pipe) {
       printf("55\n");
       *error = ST_CONTEXT_ERROR_NO_MEMORY;
