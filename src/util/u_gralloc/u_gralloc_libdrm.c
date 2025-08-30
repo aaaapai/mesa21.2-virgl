@@ -94,7 +94,7 @@ u_gralloc_libdrm_create()
    printf("6");
    if (strcmp(gr->gralloc_module->common.name, gbm_gralloc_module_name) != 0)
       printf("7");
-      goto fail;
+      // goto fail;
 
    printf("8");
    gr->base.ops.get_buffer_basic_info = get_buffer_info;
