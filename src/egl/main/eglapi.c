@@ -890,26 +890,26 @@ eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext share_list,
 
    _EGL_FUNC_START(disp, EGL_OBJECT_DISPLAY_KHR, NULL);
 
-   _EGL_CHECK_DISPLAY(disp, EGL_NO_CONTEXT);
+   //_EGL_CHECK_DISPLAY(disp, EGL_NO_CONTEXT);
 
-   if (config != EGL_NO_CONFIG_KHR)
+   /*if (config != EGL_NO_CONFIG_KHR)
       _EGL_CHECK_CONFIG(disp, conf, EGL_NO_CONTEXT);
    else if (!disp->Extensions.KHR_no_config_context)
       RETURN_EGL_ERROR(disp, EGL_BAD_CONFIG, EGL_NO_CONTEXT);
 
    if (!share && share_list != EGL_NO_CONTEXT)
       RETURN_EGL_ERROR(disp, EGL_BAD_CONTEXT, EGL_NO_CONTEXT);
-   else if (share && share->Resource.Display != disp) {
-      /* From the spec.
+   else if (share && share->Resource.Display != disp) {*/
+   /* From the spec.
        *
        * "An EGL_BAD_MATCH error is generated if an OpenGL or OpenGL ES
        *  context is requested and any of: [...]
        *
        * * share context was created on a different display
        * than the one reference by config."
-       */
-      RETURN_EGL_ERROR(disp, EGL_BAD_MATCH, EGL_NO_CONTEXT);
-   }
+   */
+      //RETURN_EGL_ERROR(disp, EGL_BAD_MATCH, EGL_NO_CONTEXT);
+   //}
 
    context = disp->Driver->CreateContext(disp, conf, share, attrib_list);
    ret = (context) ? _eglLinkContext(context) : EGL_NO_CONTEXT;
@@ -944,51 +944,51 @@ eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx)
 
    _EGL_FUNC_START(disp, EGL_OBJECT_CONTEXT_KHR, context);
 
-   if (!disp)
-      RETURN_EGL_ERROR(disp, EGL_BAD_DISPLAY, EGL_FALSE);
+   /*if (!disp)
+      RETURN_EGL_ERROR(disp, EGL_BAD_DISPLAY, EGL_FALSE);*/
 
    /* display is allowed to be uninitialized under certain condition */
-   if (!disp->Initialized) {
+   /*if (!disp->Initialized) {
       if (draw != EGL_NO_SURFACE || read != EGL_NO_SURFACE ||
           ctx != EGL_NO_CONTEXT)
          RETURN_EGL_ERROR(disp, EGL_BAD_DISPLAY, EGL_FALSE);
-   }
+   }*/
    if (!disp->Driver)
       RETURN_EGL_SUCCESS(disp, EGL_TRUE);
 
-   if (!context && ctx != EGL_NO_CONTEXT)
-      RETURN_EGL_ERROR(disp, EGL_BAD_CONTEXT, EGL_FALSE);
-   if (!draw_surf || !read_surf) {
+   /*if (!context && ctx != EGL_NO_CONTEXT)
+      RETURN_EGL_ERROR(disp, EGL_BAD_CONTEXT, EGL_FALSE);*/
+   //if (!draw_surf || !read_surf) {
       /* From the EGL 1.4 (20130211) spec:
        *
        *    To release the current context without assigning a new one, set ctx
        *    to EGL_NO_CONTEXT and set draw and read to EGL_NO_SURFACE.
        */
-      if (!disp->Extensions.KHR_surfaceless_context && ctx != EGL_NO_CONTEXT)
+      /*if (!disp->Extensions.KHR_surfaceless_context && ctx != EGL_NO_CONTEXT)
          RETURN_EGL_ERROR(disp, EGL_BAD_SURFACE, EGL_FALSE);
 
       if ((!draw_surf && draw != EGL_NO_SURFACE) ||
           (!read_surf && read != EGL_NO_SURFACE))
          RETURN_EGL_ERROR(disp, EGL_BAD_SURFACE, EGL_FALSE);
       if (draw_surf || read_surf)
-         RETURN_EGL_ERROR(disp, EGL_BAD_MATCH, EGL_FALSE);
-   }
+         RETURN_EGL_ERROR(disp, EGL_BAD_MATCH, EGL_FALSE);*/
+   //}
 
    /*    If a native window underlying either draw or read is no longer valid,
     *    an EGL_BAD_NATIVE_WINDOW error is generated.
     */
-   if (draw_surf && draw_surf->Lost)
+   /*if (draw_surf && draw_surf->Lost)
       RETURN_EGL_ERROR(disp, EGL_BAD_NATIVE_WINDOW, EGL_FALSE);
    if (read_surf && read_surf->Lost)
-      RETURN_EGL_ERROR(disp, EGL_BAD_NATIVE_WINDOW, EGL_FALSE);
+      RETURN_EGL_ERROR(disp, EGL_BAD_NATIVE_WINDOW, EGL_FALSE);*/
    /* EGL_EXT_protected_surface spec says:
     *     If EGL_PROTECTED_CONTENT_EXT attributes of read is EGL_TRUE and
     *     EGL_PROTECTED_CONTENT_EXT attributes of draw is EGL_FALSE, an
     *     EGL_BAD_ACCESS error is generated.
     */
-   if (read_surf && read_surf->ProtectedContent && draw_surf &&
+   /*if (read_surf && read_surf->ProtectedContent && draw_surf &&
        !draw_surf->ProtectedContent)
-      RETURN_EGL_ERROR(disp, EGL_BAD_ACCESS, EGL_FALSE);
+      RETURN_EGL_ERROR(disp, EGL_BAD_ACCESS, EGL_FALSE);*/
 
    egl_relax (disp,
               draw_surf ? &draw_surf->Resource : NULL,
@@ -1009,7 +1009,7 @@ eglQueryContext(EGLDisplay dpy, EGLContext ctx, EGLint attribute, EGLint *value)
 
    _EGL_FUNC_START(disp, EGL_OBJECT_CONTEXT_KHR, context);
 
-   _EGL_CHECK_CONTEXT(disp, context, EGL_FALSE);
+   //_EGL_CHECK_CONTEXT(disp, context, EGL_FALSE);
 
    ret = _eglQueryContext(context, attribute, value);
 
