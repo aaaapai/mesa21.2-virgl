@@ -851,8 +851,8 @@ dri2_initialize(_EGLDisplay *disp)
       return EGL_TRUE;
    }
    dri2_dpy = dri2_display_create(disp);
-   if (!dri2_dpy)
-      return EGL_FALSE;
+   /*if (!dri2_dpy)
+      return EGL_FALSE;*/
 
    loader_set_logger(_eglLog);
 
@@ -878,18 +878,18 @@ dri2_initialize(_EGLDisplay *disp)
       break;
    default:
       UNREACHABLE("Callers ensure we cannot get here.");
-      return EGL_FALSE;
+      // return EGL_FALSE;
    }
 
-   if (!ret) {
+   /*if (!ret) {
       dri2_display_destroy(disp);
       return EGL_FALSE;
-   }
+   }*/
 
    if (_eglGetArraySize(disp->Configs) == 0) {
-      _eglError(EGL_NOT_INITIALIZED, "failed to add any EGLConfigs");
-      dri2_display_destroy(disp);
-      return EGL_FALSE;
+      // _eglError(EGL_NOT_INITIALIZED, "failed to add any EGLConfigs");
+      // dri2_display_destroy(disp);
+      // return EGL_FALSE;
    }
 
    dri2_dpy = dri2_egl_display(disp);
