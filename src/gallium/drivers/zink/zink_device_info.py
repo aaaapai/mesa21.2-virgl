@@ -84,7 +84,7 @@ EXTENSIONS = [
     Extension("VK_KHR_unified_image_layouts", alias="unified_layouts", features=True),
     Extension("VK_KHR_external_memory"),
     Extension("VK_KHR_external_memory_fd"),
-    Extension("VK_KHR_vulkan_memory_model"),
+    Extension("VK_KHR_vulkan_memory_model", alias="vukan_memory_model",features=True),
     Extension("VK_KHR_workgroup_memory_explicit_layout", alias="explicit_layout", features=True),
     Extension("VK_KHR_pipeline_executable_properties",
               alias="pipestats",
