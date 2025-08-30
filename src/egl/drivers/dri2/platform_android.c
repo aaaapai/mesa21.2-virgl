@@ -359,6 +359,13 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       goto cleanup_surface;
    }
 
+   /* `dri2_surf->window` will be required in dri2_create_drawable for Kopper,
+    * (in kopperSetSurfaceCreateInfo), so set it in advance here.
+    */
+   if (dri2_dpy->kopper) {
+        dri2_surf->window = window;
+   }
+
    if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
       goto cleanup_surface;
 
