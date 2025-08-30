@@ -249,11 +249,11 @@ dri2_match_config(const _EGLConfig *conf, const _EGLConfig *criteria)
       return EGL_FALSE;
 #endif
 
-   if (_eglCompareConfigs(conf, criteria, NULL, EGL_FALSE) != 0)
+   /*if (_eglCompareConfigs(conf, criteria, NULL, EGL_FALSE) != 0)
       return EGL_FALSE;
 
    if (!_eglMatchConfig(conf, criteria))
-      return EGL_FALSE;
+      return EGL_FALSE;*/
 
    return EGL_TRUE;
 }
@@ -317,7 +317,8 @@ dri2_add_config(_EGLDisplay *disp, const struct dri_config *dri_config,
          else if (value & __DRI_ATTRIB_LUMINANCE_BIT)
             value = EGL_LUMINANCE_BUFFER;
          else
-            return NULL;
+            printf("dri2_add_config: return NULL");
+            //return NULL;
          base.ColorBufferType = value;
          break;
 
@@ -364,8 +365,8 @@ dri2_add_config(_EGLDisplay *disp, const struct dri_config *dri_config,
       case __DRI_ATTRIB_ACCUM_BLUE_SIZE:
       case __DRI_ATTRIB_ACCUM_ALPHA_SIZE:
          /* Don't expose visuals with the accumulation buffer. */
-         if (value > 0)
-            return NULL;
+         /*if (value > 0)
+            return NULL;*/
          break;
 
       case __DRI_ATTRIB_FRAMEBUFFER_SRGB_CAPABLE:
@@ -424,7 +425,7 @@ dri2_add_config(_EGLDisplay *disp, const struct dri_config *dri_config,
 
    if (!_eglValidateConfig(&base, EGL_FALSE)) {
       _eglLog(_EGL_DEBUG, "DRI2: failed to validate config %d", base.ConfigID);
-      return NULL;
+      // return NULL;
    }
 
    config_id = base.ConfigID;
@@ -455,7 +456,7 @@ dri2_add_config(_EGLDisplay *disp, const struct dri_config *dri_config,
       _eglLinkConfig(&conf->base);
    } else {
       UNREACHABLE("duplicates should not be possible");
-      return NULL;
+      // return NULL;
    }
 
    conf->base.SurfaceType |= surface_type;
@@ -510,10 +511,10 @@ dri2_validate_egl_image(void *image, void *data)
    _EGLImage *img = _eglLookupImage(image, disp);
    _eglUnlockDisplay(disp);
 
-   if (img == NULL) {
+   /*if (img == NULL) {
       _eglError(EGL_BAD_PARAMETER, "dri2_validate_egl_image");
       return false;
-   }
+   }*/
 
    return true;
 }
@@ -854,8 +855,8 @@ dri2_initialize(_EGLDisplay *disp)
    }
    printf("dri2_initialize-3");
    dri2_dpy = dri2_display_create(disp);
-   if (!dri2_dpy)
-      return EGL_FALSE;
+   /*if (!dri2_dpy)
+      return EGL_FALSE;*/
 
    printf("dri2_initialize-4");
    loader_set_logger(_eglLog);
@@ -894,16 +895,16 @@ dri2_initialize(_EGLDisplay *disp)
       return EGL_FALSE;
    }
 
-   if (!ret) {
+   /*if (!ret) {
       dri2_display_destroy(disp);
       return EGL_FALSE;
-   }
+   }*/
 
    if (_eglGetArraySize(disp->Configs) == 0) {
       printf("dri2_initialize-6");
-      _eglError(EGL_NOT_INITIALIZED, "failed to add any EGLConfigs");
+      /*_eglError(EGL_NOT_INITIALIZED, "failed to add any EGLConfigs");
       dri2_display_destroy(disp);
-      return EGL_FALSE;
+      return EGL_FALSE;*/
    }
 
    printf("dri2_initialize-7");
@@ -1098,7 +1099,7 @@ dri2_create_context_attribs_error(int dri_error)
       break;
    }
 
-   _eglError(egl_error, "dri2_create_context");
+   // _eglError(egl_error, "dri2_create_context");
 }
 
 static bool
@@ -1252,7 +1253,8 @@ dri2_create_context(_EGLDisplay *disp, _EGLConfig *conf,
 
    if (!dri2_fill_context_attribs(dri2_ctx, dri2_dpy, ctx_attribs,
                                   &num_attribs))
-      goto cleanup;
+      printf("!dri2_fill_context_attribs\n");
+      //goto cleanup;
 
    bool thread_safe = true;
 
@@ -1274,9 +1276,10 @@ dri2_create_context(_EGLDisplay *disp, _EGLConfig *conf,
    return &dri2_ctx->base;
 
 cleanup:
-   mtx_unlock(&dri2_dpy->lock);
+   printf("dri2_create_context: cleanup\n");
+   /*mtx_unlock(&dri2_dpy->lock);
    free(dri2_ctx);
-   return NULL;
+   return NULL;*/
 }
 
 /**
@@ -1373,7 +1376,8 @@ dri2_create_drawable(struct dri2_egl_display *dri2_dpy,
                     dri2_surf->base.Type == EGL_PIXMAP_BIT;
    dri2_surf->dri_drawable = dri_create_drawable(dri2_dpy->dri_screen_render_gpu, config, is_pixmap, loaderPrivate);
    if (dri2_surf->dri_drawable == NULL)
-      return _eglError(EGL_BAD_ALLOC, "createNewDrawable");
+      printf("dri2_surf->dri_drawable == NULL\n");
+      //return _eglError(EGL_BAD_ALLOC, "createNewDrawable");
 
    return EGL_TRUE;
 }
@@ -1401,7 +1405,8 @@ dri2_make_current(_EGLDisplay *disp, _EGLSurface *dsurf, _EGLSurface *rsurf,
 
    /* make new bindings, set the EGL error otherwise */
    if (!_eglBindContext(ctx, dsurf, rsurf, &old_ctx, &old_dsurf, &old_rsurf))
-      return EGL_FALSE;
+      printf("dri2_make_current: !_eglBindContext\n");
+      //return EGL_FALSE;
 
    if (old_ctx == ctx && old_dsurf == dsurf && old_rsurf == rsurf) {
       _eglPutSurface(old_dsurf);
@@ -1439,7 +1444,8 @@ dri2_make_current(_EGLDisplay *disp, _EGLSurface *dsurf, _EGLSurface *rsurf,
           * setting the error to EGL_BAD_MATCH is surely better than leaving it
           * as EGL_SUCCESS.
           */
-         egl_error = EGL_BAD_MATCH;
+         egl_error = EGL_SUCCESS
+         //egl_error = EGL_BAD_MATCH;
 
          /* undo the previous _eglBindContext */
          _eglBindContext(old_ctx, old_dsurf, old_rsurf, &ctx, &tmp_dsurf,
@@ -1503,8 +1509,8 @@ dri2_make_current(_EGLDisplay *disp, _EGLSurface *dsurf, _EGLSurface *rsurf,
       dri2_display_release(old_disp);
    }
 
-   if (egl_error != EGL_SUCCESS)
-      return _eglError(egl_error, "eglMakeCurrent");
+   /*if (egl_error != EGL_SUCCESS)
+      return _eglError(egl_error, "eglMakeCurrent");*/
 
    if (dsurf && _eglSurfaceHasMutableRenderBuffer(dsurf) &&
        dri2_dpy->vtbl->set_shared_buffer_mode) {
@@ -1682,7 +1688,7 @@ dri2_set_damage_region(_EGLDisplay *disp, _EGLSurface *surf, EGLint *rects,
 
    if (!disp->Extensions.KHR_partial_update) {
       mtx_unlock(&dri2_dpy->lock);
-      return EGL_FALSE;
+      //return EGL_FALSE;
    }
 
    dri_set_damage_region(drawable, n_rects, rects);
