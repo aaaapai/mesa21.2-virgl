@@ -2,12 +2,27 @@
 #ifndef INLINE_SW_HELPER_H
 #define INLINE_SW_HELPER_H
 
+#include <stdio.h>
+#include <fcntl.h>
+#include <errno.h>
+
 #include "util/compiler.h"
 #include "pipe/p_screen.h"
 #include "util/u_debug.h"
 #include "frontend/sw_winsys.h"
 #include "target-helpers/inline_debug_helper.h"
+
+#ifdef GALLIUM_ZINK
 #include "../../drivers/zink/zink_public.h"
+#endif
+
+#ifdef GALLIUM_FREEDRENO
+#include "freedreno/freedreno_public.h"
+#endif
+
+#ifdef GALLIUM_PANFROST
+#include "panfrost/pan_public.h"
+#endif
 
 /* Helper function to choose and instantiate one of the software rasterizers:
  * llvmpipe, softpipe.
@@ -63,6 +78,33 @@ sw_screen_create_named(struct sw_winsys *winsys, const char *driver)
       screen = d3d12_create_dxcore_screen(winsys, NULL);
 #endif
 
+#if defined(GALLIUM_FREEDRENO)
+   if (screen == NULL && strcmp(driver, "freedreno") == 0) {
+      int kbase_device_fd = open("/dev/kgsl-3d0", O_RDWR | O_CLOEXEC | O_NONBLOCK);
+      if (kbase_device_fd == -1) { 
+         printf("FD_OSMESA: Failed to open kbase device: %s", strerror(errno));
+         struct pipe_screen_config dummy_cfg = { NULL, NULL };
+         screen = fd_screen_create(3, &dummy_cfg, NULL);
+      } else {
+         struct pipe_screen_config dummy_cfg = { NULL, NULL };
+         screen = fd_screen_create(kbase_device_fd, &dummy_cfg, NULL);
+      }
+   }
+#endif
+
+
+#if defined(GALLIUM_PANFROST)
+   if (screen == NULL && strcmp(driver, "panfrost") == 0) {
+      int kbase_device_fd = open("/dev/mali0", O_RDWR | O_CLOEXEC | O_NONBLOCK);
+      if (kbase_device_fd == -1) { 
+         printf("PAN_OSMESA: Failed to open kbase device: %s", strerror(errno));
+      } else {
+        struct pipe_screen_config dummy_cfg = { NULL, NULL };
+      	screen = panfrost_create_screen(kbase_device_fd, &dummy_cfg, NULL);
+      }
+   }
+#endif
+
    return screen ? debug_screen_wrap(screen) : NULL;
 }
 
@@ -81,6 +123,9 @@ sw_screen_create_vk(struct sw_winsys *winsys, bool sw_vk)
 #endif
 #if defined(GALLIUM_SOFTPIPE)
       (sw_vk ? "" : "softpipe"),
+#endif
+#if defined(GALLIUM_ZINK)
+      (sw_vk || only_sw ? "" : "zink"),
 #endif
    };
 
