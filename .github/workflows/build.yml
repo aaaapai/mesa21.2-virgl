@@ -62,7 +62,7 @@ jobs:
             --buildtype release \
             -Dplatforms=android \
             -Dplatform-sdk-version=29 \
-            -Dandroid-stub=false \
+            -Dandroid-stub=true \
             -Dllvm=disabled \
             -Dshared-llvm=disabled \
             -Dxlib-lease=disabled \
