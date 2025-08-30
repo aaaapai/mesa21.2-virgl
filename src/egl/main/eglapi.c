@@ -851,10 +851,10 @@ eglChooseConfig(EGLDisplay dpy, const EGLint *attrib_list, EGLConfig *configs,
 
    _EGL_FUNC_START(disp, EGL_OBJECT_DISPLAY_KHR, NULL);
 
-   _EGL_CHECK_DISPLAY(disp, EGL_FALSE);
+   // _EGL_CHECK_DISPLAY(disp, EGL_FALSE);
 
-   if (!num_config)
-      RETURN_EGL_ERROR(disp, EGL_BAD_PARAMETER, EGL_FALSE);
+   /*if (!num_config)
+      RETURN_EGL_ERROR(disp, EGL_BAD_PARAMETER, EGL_FALSE);*/
 
    ret = _eglChooseConfig(disp, attrib_list, configs, config_size, num_config);
 
