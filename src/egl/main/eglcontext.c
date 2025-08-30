@@ -136,7 +136,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           */
          if (!disp->Extensions.KHR_create_context ||
              (api != EGL_OPENGL_ES_API && api != EGL_OPENGL_API)) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -145,7 +145,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
 
       case EGL_CONTEXT_FLAGS_KHR:
          if (!disp->Extensions.KHR_create_context) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -160,7 +160,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           */
          if ((val & EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR) &&
              (api != EGL_OPENGL_API && api != EGL_OPENGL_ES_API)) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -182,7 +182,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           */
          if ((val & EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR) &&
              api != EGL_OPENGL_API) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -213,7 +213,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
              * EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT must be used, not the
              * *flag* EGL_CONTEXT_OPENGL_ROBUST_ACCESS_BIT_KHR.
              */
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -226,7 +226,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           */
          if ((val & EGL_CONTEXT_OPENGL_ROBUST_ACCESS_BIT_KHR) &&
              !disp->RobustBufferAccess) {
-            err = EGL_BAD_MATCH;
+            //err = EGL_BAD_MATCH;
             break;
          }
 
@@ -235,7 +235,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
 
       case EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR:
          if (!disp->Extensions.KHR_create_context) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -247,7 +247,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           *     error."
           */
          if (api != EGL_OPENGL_API) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -271,7 +271,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           */
          if (!(disp->Extensions.KHR_create_context && api == EGL_OPENGL_API) &&
              disp->Version < 15) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -290,7 +290,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           */
          if (val != EGL_NO_RESET_NOTIFICATION_KHR &&
              !disp->Extensions.EXT_create_context_robustness) {
-            err = EGL_BAD_MATCH;
+            //err = EGL_BAD_MATCH;
             break;
          }
 
@@ -306,7 +306,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           */
          if (!disp->Extensions.EXT_create_context_robustness ||
              api != EGL_OPENGL_ES_API) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -315,7 +315,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
 
       case EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT:
          if (!disp->Extensions.EXT_create_context_robustness) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -327,7 +327,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           *     robust access as described therein can be created."
           */
          if (val == EGL_TRUE && !disp->RobustBufferAccess) {
-            err = EGL_BAD_CONFIG;
+            //err = EGL_BAD_CONFIG;
             break;
          }
 
@@ -337,7 +337,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
 
       case EGL_CONTEXT_OPENGL_ROBUST_ACCESS:
          if (disp->Version < 15) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -348,7 +348,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           *     OpenGL ES extension".
           */
          if (val == EGL_TRUE && !disp->RobustBufferAccess) {
-            err = EGL_BAD_MATCH;
+            //err = EGL_BAD_MATCH;
             break;
          }
 
@@ -358,7 +358,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
 
       case EGL_CONTEXT_OPENGL_DEBUG:
          if (disp->Version < 15) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -368,7 +368,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
 
       case EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE:
          if (disp->Version < 15) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -379,7 +379,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
       case EGL_CONTEXT_OPENGL_NO_ERROR_KHR:
          if (disp->Version < 14 ||
              !disp->Extensions.KHR_create_context_no_error) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -389,7 +389,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
          if (((api != EGL_OPENGL_API && api != EGL_OPENGL_ES_API) ||
               ctx->ClientMajorVersion < 2) &&
              val == EGL_TRUE) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
 
@@ -433,7 +433,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
             }
 
             if (bit < 0) {
-               err = EGL_BAD_ATTRIBUTE;
+               //err = EGL_BAD_ATTRIBUTE;
                break;
             }
 
@@ -462,20 +462,20 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
              val == EGL_CONTEXT_RELEASE_BEHAVIOR_FLUSH_KHR) {
             ctx->ReleaseBehavior = val;
          } else {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
          }
          break;
 
       case EGL_PROTECTED_CONTENT_EXT:
          if (!disp->Extensions.EXT_protected_content) {
-            err = EGL_BAD_ATTRIBUTE;
+            //err = EGL_BAD_ATTRIBUTE;
             break;
          }
          ctx->Protected = val == EGL_TRUE;
          break;
 
       default:
-         err = EGL_BAD_ATTRIBUTE;
+         //err = EGL_BAD_ATTRIBUTE;
          break;
       }
 
@@ -515,7 +515,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
              * one of these bits set; or if the implementation does not support
              * the requested profile, then an EGL_BAD_MATCH error is generated."
              */
-            err = EGL_BAD_MATCH;
+            //err = EGL_BAD_MATCH;
             break;
          }
       }
@@ -541,26 +541,26 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
        *          - Forward-compatible flag set and major version < 3"
        */
       if (ctx->ClientMajorVersion < 1 || ctx->ClientMinorVersion < 0)
-         err = EGL_BAD_MATCH;
+         //err = EGL_BAD_MATCH;
 
       switch (ctx->ClientMajorVersion) {
       case 1:
          if (ctx->ClientMinorVersion > 5 ||
              (ctx->Flags & EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR) != 0)
-            err = EGL_BAD_MATCH;
+            //err = EGL_BAD_MATCH;
          break;
 
       case 2:
          if (ctx->ClientMinorVersion > 1 ||
              (ctx->Flags & EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR) != 0)
-            err = EGL_BAD_MATCH;
+            //err = EGL_BAD_MATCH;
          break;
 
       case 3:
          /* Note: The text above is incorrect.  There *is* an OpenGL 3.3!
           */
          if (ctx->ClientMinorVersion > 3)
-            err = EGL_BAD_MATCH;
+            //err = EGL_BAD_MATCH;
          break;
 
       case 4:
@@ -616,7 +616,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
       break;
 
    default:
-      err = EGL_BAD_ATTRIBUTE;
+      //err = EGL_BAD_ATTRIBUTE;
       break;
    }
 
@@ -628,13 +628,13 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
    if (ctx->NoError &&
        (ctx->Flags & EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR ||
         ctx->Flags & EGL_CONTEXT_OPENGL_ROBUST_ACCESS_BIT_KHR)) {
-      err = EGL_BAD_MATCH;
+      //err = EGL_BAD_MATCH;
    }
 
    if ((ctx->Flags & ~(EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR |
                        EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR |
                        EGL_CONTEXT_OPENGL_ROBUST_ACCESS_BIT_KHR)) != 0) {
-      err = EGL_BAD_ATTRIBUTE;
+      //err = EGL_BAD_ATTRIBUTE;
    }
 
    return err;
