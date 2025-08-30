@@ -789,8 +789,8 @@ EGLBoolean
 _eglGetConfigAttrib(const _EGLDisplay *disp, const _EGLConfig *conf,
                     EGLint attribute, EGLint *value)
 {
-   if (!_eglIsConfigAttribValid(conf, attribute))
-      return _eglError(EGL_BAD_ATTRIBUTE, "eglGetConfigAttrib");
+   /*if (!_eglIsConfigAttribValid(conf, attribute))
+      return _eglError(EGL_BAD_ATTRIBUTE, "eglGetConfigAttrib");*/
 
    /* nonqueryable attributes */
    switch (attribute) {
@@ -801,8 +801,8 @@ _eglGetConfigAttrib(const _EGLDisplay *disp, const _EGLConfig *conf,
       break;
    }
 
-   if (!value)
-      return _eglError(EGL_BAD_PARAMETER, "eglGetConfigAttrib");
+   /*if (!value)
+      return _eglError(EGL_BAD_PARAMETER, "eglGetConfigAttrib");*/
 
    *value = _eglGetConfigKey(conf, attribute);
    return EGL_TRUE;
