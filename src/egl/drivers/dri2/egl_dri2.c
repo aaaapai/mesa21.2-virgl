@@ -832,6 +832,7 @@ static EGLBoolean
 dri2_initialize(_EGLDisplay *disp)
 {
    EGLBoolean ret = EGL_FALSE;
+   printf("dri2_initialize-1");
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
 
    /* In the case where the application calls eglMakeCurrent(context1),
@@ -847,35 +848,47 @@ dri2_initialize(_EGLDisplay *disp)
     * to free it up correctly.
     */
    if (dri2_dpy) {
+      printf("dri2_initialize-2");
       p_atomic_inc(&dri2_dpy->ref_count);
       return EGL_TRUE;
    }
+   printf("dri2_initialize-3");
    dri2_dpy = dri2_display_create(disp);
    /*if (!dri2_dpy)
       return EGL_FALSE;*/
 
+   printf("dri2_initialize-4");
    loader_set_logger(_eglLog);
 
+   printf("dri2_initialize-5");
    switch (disp->Platform) {
-   case _EGL_PLATFORM_SURFACELESS:
+   case _EGL_PLATFORM_SURFACELESS: {
+      printf("dri2_initialize-surfaceless");
       ret = dri2_initialize_surfaceless(disp);
       break;
-   case _EGL_PLATFORM_DEVICE:
+   }
+   case _EGL_PLATFORM_DEVICE: {
+      printf("dri2_initialize-device");
       ret = dri2_initialize_device(disp);
       break;
+   }
    case _EGL_PLATFORM_X11:
    case _EGL_PLATFORM_XCB:
       ret = dri2_initialize_x11(disp);
       break;
-   case _EGL_PLATFORM_DRM:
+   case _EGL_PLATFORM_DRM: {
+      printf("dri2_initialize-drm");
       ret = dri2_initialize_drm(disp);
       break;
+   }
    case _EGL_PLATFORM_WAYLAND:
       ret = dri2_initialize_wayland(disp);
       break;
-   case _EGL_PLATFORM_ANDROID:
+   case _EGL_PLATFORM_ANDROID: {
+      printf("dri2_initialize-adnroid");
       ret = dri2_initialize_android(disp);
       break;
+   }
    default:
       UNREACHABLE("Callers ensure we cannot get here.");
       // return EGL_FALSE;
@@ -887,14 +900,17 @@ dri2_initialize(_EGLDisplay *disp)
    }*/
 
    if (_eglGetArraySize(disp->Configs) == 0) {
+      printf("dri2_initialize-6");
       // _eglError(EGL_NOT_INITIALIZED, "failed to add any EGLConfigs");
       // dri2_display_destroy(disp);
       // return EGL_FALSE;
    }
 
+   printf("dri2_initialize-7");
    dri2_dpy = dri2_egl_display(disp);
    p_atomic_inc(&dri2_dpy->ref_count);
 
+   printf("dri2_initialize-8");
    mtx_init(&dri2_dpy->lock, mtx_plain);
 
    return EGL_TRUE;
@@ -992,8 +1008,8 @@ dri2_display_create(_EGLDisplay *disp)
 {
    struct dri2_egl_display *dri2_dpy = calloc(1, sizeof *dri2_dpy);
    if (!dri2_dpy) {
-      _eglError(EGL_BAD_ALLOC, "eglInitialize");
-      return NULL;
+      /*_eglError(EGL_BAD_ALLOC, "eglInitialize");
+      return NULL;*/
    }
 
    dri2_dpy->fd_render_gpu = -1;
