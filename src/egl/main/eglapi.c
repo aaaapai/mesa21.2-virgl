@@ -655,27 +655,35 @@ _eglComputeVersion(_EGLDisplay *disp)
 PUBLIC EGLBoolean EGLAPIENTRY
 eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
 {
+   printf("eglInitialize-1");
    _EGLDisplay *disp = _eglLockDisplay(dpy);
 
+   printf("eglInitialize-2");
    _EGL_FUNC_START(disp, EGL_OBJECT_DISPLAY_KHR, NULL);
 
+   printf("eglInitialize-3");
    _eglDeviceRefreshList();
 
    /*if (!disp)
       RETURN_EGL_ERROR(NULL, EGL_BAD_DISPLAY, EGL_FALSE);*/
 
+   printf("eglInitialize-4");
    if (!disp->Initialized) {
       /* set options */
+      printf("eglInitialize-5");
       disp->Options.ForceSoftware =
          debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false);
+      printf("eglInitialize-6");
       if (disp->Options.ForceSoftware)
          _eglLog(_EGL_DEBUG,
                  "Found 'LIBGL_ALWAYS_SOFTWARE' set, will use a CPU renderer");
 
       const char *env = os_get_option("MESA_LOADER_DRIVER_OVERRIDE");
+      printf("eglInitialize-7");
       disp->Options.Zink = env && !strcmp(env, "zink");
 
       const char *gallium_hud_env = os_get_option("GALLIUM_HUD");
+      printf("eglInitialize-8");
       disp->Options.GalliumHudWarn =
          gallium_hud_env && gallium_hud_env[0] != '\0';
 
@@ -683,24 +691,33 @@ eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
        * Initialize the display using the driver's function.
        * If the initialisation fails, try again using only software rendering.
        */
+      printf("eglInitialize-9");
       if (!_eglDriver.Initialize(disp)) {
-         if (disp->Options.ForceSoftware)
+         if (disp->Options.ForceSoftware) {
+            printf("eglInitialize-10");
             // RETURN_EGL_ERROR(disp, EGL_NOT_INITIALIZED, EGL_FALSE);
+         }
          else {
             bool success = false;
             if (!disp->Options.Zink && !getenv("GALLIUM_DRIVER")) {
+               printf("eglInitialize-11");
                disp->Options.Zink = EGL_TRUE;
+               printf("eglInitialize-12");
                success = _eglDriver.Initialize(disp);
             }
             if (!success) {
+               printf("eglInitialize-13");
                disp->Options.Zink = EGL_FALSE;
                disp->Options.ForceSoftware = EGL_TRUE;
-               if (!_eglDriver.Initialize(disp))
+               if (!_eglDriver.Initialize(disp)) {
+                  printf("eglInitialize-14");
                   // RETURN_EGL_ERROR(disp, EGL_NOT_INITIALIZED, EGL_FALSE);
+               }
             }
          }
       }
 
+      printf("eglInitialize-15");
       disp->Initialized = EGL_TRUE;
       disp->Driver = &_eglDriver;
 
@@ -722,13 +739,16 @@ eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
        * so the spec requires that each EGLDisplay unconditionally expose
        * EGL_KHR_get_all_proc_addresses also.
        */
+      printf("eglInitialize-16");
       disp->Extensions.KHR_get_all_proc_addresses = EGL_TRUE;
 
       /* Extensions is used to provide EGL 1.3 functionality for 1.2 aware
        * programs. It is driver agnostic and handled in the main EGL code.
        */
+      printf("eglInitialize-17");
       disp->Extensions.KHR_config_attribs = EGL_TRUE;
 
+      printf("eglInitialize-18");
       _eglComputeVersion(disp);
       _eglCreateExtensionsString(disp);
       _eglCreateAPIsString(disp);
@@ -736,12 +756,14 @@ eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
                disp->Version / 10, disp->Version % 10);
    }
 
+   printf("eglInitialize-19");
    /* Update applications version of major and minor if not NULL */
    if ((major != NULL) && (minor != NULL)) {
       *major = disp->Version / 10;
       *minor = disp->Version % 10;
    }
 
+   printf("eglInitialize-20");
    RETURN_EGL_SUCCESS(disp, EGL_TRUE);
 }
 
