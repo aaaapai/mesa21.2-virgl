@@ -661,8 +661,8 @@ _eglInitContext(_EGLContext *ctx, _EGLDisplay *disp, _EGLConfig *conf,
    const EGLenum api = eglQueryAPI();
    EGLint err;
 
-   /*if (api == EGL_NONE)
-      return _eglError(EGL_BAD_MATCH, "eglCreateContext(no client API)");*/
+   if (api == EGL_NONE)
+      return _eglError(EGL_BAD_MATCH, "eglCreateContext(no client API)");
 
    _eglInitResource(&ctx->Resource, sizeof(*ctx), disp);
    ctx->ClientAPI = api;
@@ -684,11 +684,11 @@ _eglInitContext(_EGLContext *ctx, _EGLDisplay *disp, _EGLConfig *conf,
       if (!(ctx->Config->RenderableType & api_bit)) {
          _eglLog(_EGL_DEBUG, "context api is 0x%x while config supports 0x%x",
                  api_bit, ctx->Config->RenderableType);
-         //err = EGL_BAD_CONFIG;
+         err = EGL_BAD_CONFIG;
       }
    }
-   /*if (err != EGL_SUCCESS)
-      return _eglError(err, "eglCreateContext");*/
+   if (err != EGL_SUCCESS)
+      return _eglError(err, "eglCreateContext");
 
    /* The EGL_EXT_create_context_robustness spec says:
     *
@@ -701,9 +701,9 @@ _eglInitContext(_EGLContext *ctx, _EGLDisplay *disp, _EGLConfig *conf,
    if (share_list && share_list->ResetNotificationStrategy !=
                         ctx->ResetNotificationStrategy) {
       printf("EGL_BAD_MATCH\n");
-      /*return _eglError(
+      return _eglError(
          EGL_BAD_MATCH,
-         "eglCreateContext() share list notification strategy mismatch");*/
+         "eglCreateContext() share list notification strategy mismatch");
    }
 
    /* The EGL_KHR_create_context_no_error spec says:
@@ -714,8 +714,8 @@ _eglInitContext(_EGLContext *ctx, _EGLDisplay *disp, _EGLConfig *conf,
     */
    if (share_list && share_list->NoError != ctx->NoError) {
       printf("return _eglError(EGL_BAD_MATCH,eglCreateContext() share list no-error mismatch\n");
-      /*return _eglError(EGL_BAD_MATCH,
-                       "eglCreateContext() share list no-error mismatch");*/
+      return _eglError(EGL_BAD_MATCH,
+                       "eglCreateContext() share list no-error mismatch");
    }
 
    return EGL_TRUE;
