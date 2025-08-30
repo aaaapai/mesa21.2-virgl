@@ -448,12 +448,19 @@ droid_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
 }
 
 static void
-	
+droid_get_window_size(struct dri2_egl_surface *dri2_surf, int *w, int *h) {
+   struct ANativeWindow* window = dri2_surf->window;
+   *w = ANativeWindow_getWidth(window);
+   *h = ANativeWindow_getHeight(window);
+}
+
+static void
 update_buffer_size(struct dri2_egl_surface *dri2_surf)
 {
    _eglLog(_EGL_WARNING, "update_buffer_size: dri2_surf->buffer %p", dri2_surf->buffer);
-   dri2_surf->base.Width = dri2_surf->buffer->width;
-   dri2_surf->base.Height = dri2_surf->buffer->height;	
+   droid_get_window_size(dri2_surf, &dri2_surf->base.Width, &dri2_surf->base.Height);
+   /*dri2_surf->base.Width = dri2_surf->buffer->width;
+   dri2_surf->base.Height = dri2_surf->buffer->height;*/
 }
 
 static int
@@ -585,7 +592,7 @@ droid_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
    }
 
    if (_eglSurfaceInSharedBufferMode(&dri2_surf->base)) {
-      if (get_back_bo(dri2_surf) < 0)
+      if (!dri2_dpy->kopper && get_back_bo(dri2_surf) < 0)
          return 0;
 
       /* We have dri_image_back because this is a window surface and
@@ -600,7 +607,7 @@ droid_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
    }
 
    if (buffer_mask & __DRI_IMAGE_BUFFER_FRONT) {
-      if (get_front_bo(dri2_surf, format) < 0)
+      if (!dri2_dpy->kopper && get_front_bo(dri2_surf, format) < 0)
          return 0;
 
       if (dri2_surf->dri_image_front) {
@@ -610,7 +617,7 @@ droid_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
    }
 
    if (buffer_mask & __DRI_IMAGE_BUFFER_BACK) {
-      if (get_back_bo(dri2_surf) < 0)
+      if (!dri2_dpy->kopper && get_back_bo(dri2_surf) < 0)
          return 0;
 
       if (dri2_surf->dri_image_back) {
@@ -1121,9 +1128,18 @@ kopperSetSurfaceCreateInfo(void *_draw, struct kopper_loader_info *out)
    out->present_opaque = true;
 }
 
+static void
+kopperGetDrawableInfo(struct dri_drawable *draw, int *w, int *h, void *loaderPrivate)
+	
+{
+   struct dri2_egl_surface *dri2_surf = loaderPrivate;
+   droid_get_window_size(dri2_surf, w, h);
+}
+
 static const __DRIkopperLoaderExtension kopper_loader_extension = {
    .base = {__DRI_KOPPER_LOADER, 1},
    .SetSurfaceCreateInfo = kopperSetSurfaceCreateInfo,
+   .GetDrawableInfo = kopperGetDrawableInfo,
 };
 
 static const __DRIextension *droid_kopper_image_loader_extensions[] = {
@@ -1305,11 +1321,11 @@ dri2_initialize_android(_EGLDisplay *disp)
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    const char *err;
 
-   dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_LIBDRM);
+   /*dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_LIBDRM);
    if (dri2_dpy->gralloc == NULL) {
       err = "DRI2: failed to get gralloc";
       goto cleanup;
-   }
+   }*/
 
    bool force_pure_swrast = debug_get_bool_option("MESA_ANDROID_NO_KMS_SWRAST", false);
 
