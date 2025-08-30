@@ -728,8 +728,8 @@ _eglFilterConfigArray(_EGLArray *array, EGLConfig *configs, EGLint config_size,
    }
 
    configList = malloc(sizeof(*configList) * count);
-   if (!configList)
-      return _eglError(EGL_BAD_ALLOC, "eglChooseConfig(out of memory)");
+   /*if (!configList)
+      return _eglError(EGL_BAD_ALLOC, "eglChooseConfig(out of memory)");*/
 
    /* get the matched configs */
    _eglFilterArray(array, (void **)configList, count, (_EGLArrayForEach)match,
@@ -769,8 +769,8 @@ _eglChooseConfig(_EGLDisplay *disp, const EGLint *attrib_list,
    _EGLConfig criteria;
    EGLBoolean result;
 
-   if (!_eglParseConfigAttribList(&criteria, disp, attrib_list))
-      return _eglError(EGL_BAD_ATTRIBUTE, "eglChooseConfig");
+   /*if (!_eglParseConfigAttribList(&criteria, disp, attrib_list))
+      return _eglError(EGL_BAD_ATTRIBUTE, "eglChooseConfig");*/
 
    result = _eglFilterConfigArray(disp->Configs, configs, config_size,
                                   num_configs, _eglMatchConfig,
