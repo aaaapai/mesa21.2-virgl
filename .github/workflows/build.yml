@@ -70,7 +70,7 @@ jobs:
             -Degl-native-platform=android \
             -Dgbm=disabled \
             -Dopengl=true \
-            -Dgles2=disabled \
+            -Dgles2=enabled \
             -Dvulkan-drivers= \
             -Dtools= \
             -Dgallium-drivers=zink
