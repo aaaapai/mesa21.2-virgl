@@ -661,8 +661,8 @@ eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
 
    _eglDeviceRefreshList();
 
-   if (!disp)
-      RETURN_EGL_ERROR(NULL, EGL_BAD_DISPLAY, EGL_FALSE);
+   /*if (!disp)
+      RETURN_EGL_ERROR(NULL, EGL_BAD_DISPLAY, EGL_FALSE);*/
 
    if (!disp->Initialized) {
       /* set options */
@@ -685,7 +685,7 @@ eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
        */
       if (!_eglDriver.Initialize(disp)) {
          if (disp->Options.ForceSoftware)
-            RETURN_EGL_ERROR(disp, EGL_NOT_INITIALIZED, EGL_FALSE);
+            // RETURN_EGL_ERROR(disp, EGL_NOT_INITIALIZED, EGL_FALSE);
          else {
             bool success = false;
             if (!disp->Options.Zink && !getenv("GALLIUM_DRIVER")) {
@@ -696,7 +696,7 @@ eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
                disp->Options.Zink = EGL_FALSE;
                disp->Options.ForceSoftware = EGL_TRUE;
                if (!_eglDriver.Initialize(disp))
-                  RETURN_EGL_ERROR(disp, EGL_NOT_INITIALIZED, EGL_FALSE);
+                  // RETURN_EGL_ERROR(disp, EGL_NOT_INITIALIZED, EGL_FALSE);
             }
          }
       }
