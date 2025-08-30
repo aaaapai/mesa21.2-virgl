@@ -67,7 +67,10 @@ static inline EGLBoolean
 _eglIsApiValid(EGLenum api)
 {
 #if HAVE_OPENGL
-   /* OpenGL is not a valid/supported API on Android */
+   /* Do not guard against Android from
+    * OpenGL, since Zink could provide
+    * support for full desktop GL.
+   */
    if (api == EGL_OPENGL_API)
       return true;
 #endif
