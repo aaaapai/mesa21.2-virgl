@@ -63,6 +63,8 @@ jobs:
             -Dplatforms=android \
             -Dplatform-sdk-version=29 \
             -Dandroid-stub=true \
+            -Dandroid-libbacktrace=disabled \
+            -Dandroid-strict=false \
             -Dllvm=disabled \
             -Dshared-llvm=disabled \
             -Dxlib-lease=disabled \
