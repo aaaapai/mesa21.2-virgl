@@ -1143,8 +1143,9 @@ dri2_fill_context_attribs(struct dri2_egl_context *dri2_ctx,
          val = __DRI_CTX_PRIORITY_LOW;
          break;
       default:
-         _eglError(EGL_BAD_CONFIG, "eglCreateContext");
-         return false;
+         //_eglError(EGL_BAD_CONFIG, "eglCreateContext");
+         //return false;
+         printf("喵");
       }
 
       ctx_attribs[pos++] = __DRI_CTX_ATTRIB_PRIORITY;
@@ -1191,13 +1192,13 @@ dri2_create_context(_EGLDisplay *disp, _EGLConfig *conf,
    uint32_t ctx_attribs[NUM_ATTRIBS];
 
    dri2_ctx = malloc(sizeof *dri2_ctx);
-   if (!dri2_ctx) {
+   /*if (!dri2_ctx) {
       dri2_egl_error_unlock(dri2_dpy, EGL_BAD_ALLOC, "eglCreateContext");
       return NULL;
-   }
+   }*/
 
-   if (!_eglInitContext(&dri2_ctx->base, disp, conf, share_list, attrib_list))
-      goto cleanup;
+   /*if (!_eglInitContext(&dri2_ctx->base, disp, conf, share_list, attrib_list))
+      goto cleanup;*/
 
    switch (dri2_ctx->base.ClientAPI) {
    case EGL_OPENGL_ES_API:
@@ -1229,8 +1230,9 @@ dri2_create_context(_EGLDisplay *disp, _EGLConfig *conf,
          api = __DRI_API_OPENGL;
       break;
    default:
-      _eglError(EGL_BAD_PARAMETER, "eglCreateContext");
-      goto cleanup;
+      /*_eglError(EGL_BAD_PARAMETER, "eglCreateContext");
+      goto cleanup;*/
+      printf("喵");
    }
 
    if (conf != NULL) {
@@ -1248,9 +1250,9 @@ dri2_create_context(_EGLDisplay *disp, _EGLConfig *conf,
    } else
       dri_config = NULL;
 
-   if (!dri2_fill_context_attribs(dri2_ctx, dri2_dpy, ctx_attribs,
+   /*if (!dri2_fill_context_attribs(dri2_ctx, dri2_dpy, ctx_attribs,
                                   &num_attribs))
-      goto cleanup;
+      goto cleanup;*/
 
    bool thread_safe = true;
 
@@ -1264,8 +1266,8 @@ dri2_create_context(_EGLDisplay *disp, _EGLConfig *conf,
       ctx_attribs, &error, dri2_ctx, thread_safe);
    dri2_create_context_attribs_error(error);
 
-   if (!dri2_ctx->dri_context)
-      goto cleanup;
+   /*if (!dri2_ctx->dri_context)
+      goto cleanup;*/
 
    mtx_unlock(&dri2_dpy->lock);
 
