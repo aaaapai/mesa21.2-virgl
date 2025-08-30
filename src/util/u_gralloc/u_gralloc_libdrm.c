@@ -83,13 +83,13 @@ u_gralloc_libdrm_create()
    int err = 0;
 
    printf("3");
-   err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
+   // err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
                        (const hw_module_t **)&gr->gralloc_module);
 
    printf("4");
-   if (err)
+   /*if (err)
       printf("5");
-      goto fail;
+      goto fail;*/
    
    printf("6");
    if (strcmp(gr->gralloc_module->common.name, gbm_gralloc_module_name) != 0)
