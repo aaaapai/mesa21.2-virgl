@@ -84,6 +84,38 @@ static void brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
 static void brw_combine_with_vec(const brw_builder &bld, const brw_reg &dst,
                                  const brw_reg &src, unsigned n);
 
+static bool
+brw_texture_offset(const nir_tex_instr *tex, unsigned src,
+                   uint32_t *offset_bits_out)
+{
+   if (!nir_src_is_const(tex->src[src].src))
+      return false;
+
+   const unsigned num_components = nir_tex_instr_src_size(tex, src);
+
+   /* Combine all three offsets into a single unsigned dword:
+    *
+    *    bits 11:8 - U Offset (X component)
+    *    bits  7:4 - V Offset (Y component)
+    *    bits  3:0 - R Offset (Z component)
+    */
+   uint32_t offset_bits = 0;
+   for (unsigned i = 0; i < num_components; i++) {
+      int offset = nir_src_comp_as_int(tex->src[src].src, i);
+
+      /* offset out of bounds; caller will handle it. */
+      if (offset > 7 || offset < -8)
+         return false;
+
+      const unsigned shift = 4 * (2 - i);
+      offset_bits |= (offset & 0xF) << shift;
+   }
+
+   *offset_bits_out = offset_bits;
+
+   return true;
+}
+
 static brw_reg
 setup_imm_b(const brw_builder &bld, int8_t v)
 {
@@ -139,31 +171,6 @@ brw_from_nir_setup_outputs(nir_to_brw_state &ntb)
       }
 
       loc += reg_size;
-   }
-}
-
-static void
-brw_from_nir_setup_uniforms(brw_shader &s)
-{
-   const intel_device_info *devinfo = s.devinfo;
-
-   /* Only the first compile gets to set up uniforms. */
-   if (s.uniforms)
-      return;
-
-   s.uniforms = s.nir->num_uniforms / 4;
-
-   if (mesa_shader_stage_is_compute(s.stage) && devinfo->verx10 < 125) {
-      /* Add uniforms for builtins after regular NIR uniforms. */
-      assert(s.uniforms == s.prog_data->nr_params);
-
-      /* Subgroup ID must be the last uniform on the list.  This will make
-       * easier later to split between cross thread and per thread
-       * uniforms.
-       */
-      uint32_t *param = brw_stage_prog_data_add_params(s.prog_data, 1);
-      *param = BRW_PARAM_BUILTIN_SUBGROUP_ID;
-      s.uniforms++;
    }
 }
 
@@ -4559,8 +4566,7 @@ brw_from_nir_emit_fs_intrinsic(nir_to_brw_state &ntb,
    case nir_intrinsic_load_interpolated_input: {
       assert(instr->src[0].ssa &&
              instr->src[0].ssa->parent_instr->type == nir_instr_type_intrinsic);
-      nir_intrinsic_instr *bary_intrinsic =
-         nir_instr_as_intrinsic(instr->src[0].ssa->parent_instr);
+      nir_intrinsic_instr *bary_intrinsic = nir_def_as_intrinsic(instr->src[0].ssa);
       nir_intrinsic_op bary_intrin = bary_intrinsic->intrinsic;
       brw_reg dst_xy;
 
@@ -7519,15 +7525,21 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
          srcs[TEX_LOGICAL_SRC_SAMPLE_INDEX] = retype(src, BRW_TYPE_UD);
          break;
 
-      case nir_tex_src_offset:
-         /* On gfx12.5+, if the offsets are not both constant and in the
-          * {-8,7} range, nir_lower_tex() will have already lowered the
-          * source offset. So we should never reach this point.
-          */
-         assert(devinfo->verx10 < 125);
-         srcs[TEX_LOGICAL_SRC_TG4_OFFSET] =
-            retype(src, BRW_TYPE_D);
+      case nir_tex_src_offset: {
+         uint32_t offset_bits = 0;
+         if (brw_texture_offset(instr, i, &offset_bits)) {
+            header_bits |= offset_bits;
+         } else {
+            /* On gfx12.5+, if the offsets are not both constant and in the
+             * {-8,7} range, nir_lower_tex() will have already lowered the
+             * source offset. So we should never reach this point.
+             */
+            assert(devinfo->verx10 < 125);
+            srcs[TEX_LOGICAL_SRC_TG4_OFFSET] =
+               retype(src, BRW_TYPE_D);
+         }
          break;
+      }
 
       case nir_tex_src_projector:
          UNREACHABLE("should be lowered");
@@ -7571,20 +7583,10 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
        * into a single (32-bit) value.
        */
       case nir_tex_src_backend2:
-         /* For TG4, if there is a LOD, it would have been packed together
-          * with offsets, just put everything into SRC_LOD.
-          *
-          * Otherwise this is a packed offset.
-          */
-         if (instr->op == nir_texop_tg4 &&
-             (nir_tex_instr_src_index(instr, nir_tex_src_lod) != -1 ||
-              nir_tex_instr_src_index(instr, nir_tex_src_bias) != -1)) {
-            pack_lod_bias_and_offset = true;
-            srcs[TEX_LOGICAL_SRC_LOD] =
-               retype(get_nir_src_imm(ntb, instr->src[i].src), BRW_TYPE_F);
-         } else {
-            srcs[TEX_LOGICAL_SRC_PACKED_OFFSET] = bld.emit_uniformize(src);
-         }
+         assert(instr->op == nir_texop_tg4);
+         pack_lod_bias_and_offset = true;
+         srcs[TEX_LOGICAL_SRC_LOD] =
+            retype(get_nir_src_imm(ntb, instr->src[i].src), BRW_TYPE_F);
          break;
 
       /* If this parameter is present, we are packing either the explicit LOD
@@ -8067,7 +8069,6 @@ brw_from_nir(brw_shader *s)
     * be converted to reads/writes of these arrays
     */
    brw_from_nir_setup_outputs(ntb);
-   brw_from_nir_setup_uniforms(ntb.s);
    brw_from_nir_emit_system_values(ntb);
    ntb.s.last_scratch = ALIGN(ntb.nir->scratch_size, 4) * ntb.s.dispatch_width;
 

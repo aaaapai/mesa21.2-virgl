@@ -39,7 +39,7 @@ __fd6_setup_rasterizer_stateobj(struct fd_context *ctx,
    unsigned nreg = (CHIP >= A7XX) ? 46 : 15;
    fd_crb crb(ctx->pipe, nreg);
 
-   crb.add(A6XX_GRAS_CL_CNTL(
+   crb.add(GRAS_CL_CNTL(CHIP,
                  .znear_clip_disable = !cso->depth_clip_near,
                  .zfar_clip_disable = !cso->depth_clip_far,
                  .z_clamp_enable = cso->depth_clamp || CHIP >= A7XX,
@@ -48,7 +48,7 @@ __fd6_setup_rasterizer_stateobj(struct fd_context *ctx,
            )
    );
 
-   crb.add(A6XX_GRAS_SU_CNTL(
+   crb.add(GRAS_SU_CNTL(CHIP,
                  .cull_front = cso->cull_face & PIPE_FACE_FRONT,
                  .cull_back = cso->cull_face & PIPE_FACE_BACK,
                  .front_cw = !cso->front_ccw,
@@ -58,20 +58,20 @@ __fd6_setup_rasterizer_stateobj(struct fd_context *ctx,
            )
    );
 
-   crb.add(A6XX_GRAS_SU_POINT_MINMAX(.min = psize_min, .max = psize_max, ));
-   crb.add(A6XX_GRAS_SU_POINT_SIZE(cso->point_size));
-   crb.add(A6XX_GRAS_SU_POLY_OFFSET_SCALE(cso->offset_scale));
-   crb.add(A6XX_GRAS_SU_POLY_OFFSET_OFFSET(cso->offset_units));
-   crb.add(A6XX_GRAS_SU_POLY_OFFSET_OFFSET_CLAMP(cso->offset_clamp));
+   crb.add(GRAS_SU_POINT_MINMAX(CHIP, .min = psize_min, .max = psize_max, ));
+   crb.add(GRAS_SU_POINT_SIZE(CHIP, cso->point_size));
+   crb.add(GRAS_SU_POLY_OFFSET_SCALE(CHIP, cso->offset_scale));
+   crb.add(GRAS_SU_POLY_OFFSET_OFFSET(CHIP, cso->offset_units));
+   crb.add(GRAS_SU_POLY_OFFSET_OFFSET_CLAMP(CHIP, cso->offset_clamp));
 
-   crb.add(A6XX_PC_CNTL(
+   crb.add(PC_CNTL(CHIP,
                  .primitive_restart = primitive_restart,
                  .provoking_vtx_last = !cso->flatshade_first,
            )
    );
 
    if (CHIP >= A7XX) {
-      crb.add(A7XX_VPC_PC_CNTL(
+      crb.add(VPC_PC_CNTL(CHIP,
                     .primitive_restart = primitive_restart,
                     .provoking_vtx_last = !cso->flatshade_first,
               )
@@ -91,12 +91,12 @@ __fd6_setup_rasterizer_stateobj(struct fd_context *ctx,
       break;
    }
 
-   crb.add(A6XX_VPC_RAST_CNTL(mode));
+   crb.add(VPC_RAST_CNTL(CHIP, mode));
    crb.add(PC_DGEN_RAST_CNTL(CHIP, mode));
 
    if (CHIP == A7XX ||
        (CHIP == A6XX && ctx->screen->info->a6xx.is_a702)) {
-      crb.add(A6XX_VPC_PS_RAST_CNTL(mode));
+      crb.add(VPC_PS_RAST_CNTL(CHIP, mode));
    }
 
    /* With a7xx the hw doesn't do the clamping for us.  When depth clamp
@@ -111,19 +111,19 @@ __fd6_setup_rasterizer_stateobj(struct fd_context *ctx,
       const unsigned num_viewports = 16;
 
       for (unsigned i = 0; i < num_viewports; i++) {
-         crb.add(A6XX_GRAS_CL_VIEWPORT_ZCLAMP_MIN(i, 0.0f));
-         crb.add(A6XX_GRAS_CL_VIEWPORT_ZCLAMP_MAX(i, 1.0f));
+         crb.add(GRAS_CL_VIEWPORT_ZCLAMP_MIN(CHIP, i, 0.0f));
+         crb.add(GRAS_CL_VIEWPORT_ZCLAMP_MAX(CHIP, i, 1.0f));
       }
 
-      crb.add(A6XX_RB_VIEWPORT_ZCLAMP_MIN(0.0f));
-      crb.add(A6XX_RB_VIEWPORT_ZCLAMP_MAX(1.0f));
+      crb.add(RB_VIEWPORT_ZCLAMP_MIN(CHIP, 0.0f));
+      crb.add(RB_VIEWPORT_ZCLAMP_MAX(CHIP, 1.0f));
    }
 
    if (CHIP == A6XX && ctx->screen->info->a6xx.has_legacy_pipeline_shading_rate) {
-      crb.add(A6XX_RB_UNKNOWN_8A00());
-      crb.add(A6XX_RB_UNKNOWN_8A10());
-      crb.add(A6XX_RB_UNKNOWN_8A20());
-      crb.add(A6XX_RB_UNKNOWN_8A30());
+      crb.add(RB_UNKNOWN_8A00(CHIP));
+      crb.add(RB_UNKNOWN_8A10(CHIP));
+      crb.add(RB_UNKNOWN_8A20(CHIP));
+      crb.add(RB_UNKNOWN_8A30(CHIP));
    }
 
    return crb.ring();

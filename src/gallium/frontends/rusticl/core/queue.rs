@@ -1,3 +1,6 @@
+// Copyright 2020 Red Hat.
+// SPDX-License-Identifier: MIT
+
 use crate::api::icd::*;
 use crate::core::context::*;
 use crate::core::device::*;
@@ -231,7 +234,7 @@ impl SendableQueueContext {
     }
 
     /// The returned value can be used to execute operation on the wrapped context in a safe manner.
-    fn ctx(&self) -> QueueContext {
+    fn ctx(&self) -> QueueContext<'_> {
         QueueContext {
             ctx: &self.ctx,
             dev: self.dev,

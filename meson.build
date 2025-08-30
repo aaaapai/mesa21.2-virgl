@@ -113,6 +113,7 @@ if with_tools.contains('all')
     'nir',
     'nouveau',
     'panfrost',
+    'zink',
   ]
 endif
 
@@ -911,10 +912,6 @@ with_libbacktrace = get_option('android-libbacktrace') \
   .disable_auto_if(not with_platform_android) \
   .allowed()
 
-if with_libbacktrace
-  cpp_args += '-DWITH_LIBBACKTRACE'
-endif
-
 if with_platform_android
   dep_android_ui = null_dep
   dep_android_mapper4 = null_dep
@@ -925,7 +922,8 @@ if with_platform_android
       dependency('log'),
       dependency('sync'),
     ]
-    if with_libbacktrace
+    if with_libbacktrace and get_option('platform-sdk-version') < 34
+      cpp_args += '-DWITH_LIBBACKTRACE'
       dep_android += dependency('backtrace')
     endif
     if get_option('platform-sdk-version') >= 26
@@ -1700,20 +1698,6 @@ endif
 
 allow_fallback_for_libdrm = get_option('allow-fallback-for').contains('libdrm')
 
-# Then get each libdrm module
-foreach d : _libdrm_checks
-  if d[1]
-    set_variable(
-      'dep_libdrm_' + d[0],
-      dependency(
-        'libdrm_' + d[0],
-        version : '>=' + _drm_ver,
-        allow_fallback: allow_fallback_for_libdrm,
-      )
-    )
-  endif
-endforeach
-
 with_gallium_drisw_kms = false
 if system_has_kms_drm
   dep_libdrm = dependency(
@@ -1732,6 +1716,20 @@ if dep_libdrm.found()
     with_gallium_drisw_kms = true
   endif
 endif
+
+# Then get each libdrm module
+foreach d : _libdrm_checks
+  if d[1]
+    set_variable(
+      'dep_libdrm_' + d[0],
+      dependency(
+        'libdrm_' + d[0],
+        version : '>=' + _drm_ver,
+        allow_fallback: allow_fallback_for_libdrm,
+      )
+    )
+  endif
+endforeach
 
 dep_libudev = dependency('libudev', required : false)
 if dep_libudev.found()

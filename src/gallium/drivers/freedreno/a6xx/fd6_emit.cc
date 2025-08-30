@@ -228,19 +228,19 @@ build_lrz(struct fd6_emit *emit) assert_dt
    fd_crb crb(ctx->batch->submit, nregs);
 
    if (CHIP >= A7XX) {
-      crb.add(A6XX_GRAS_LRZ_CNTL(
+      crb.add(GRAS_LRZ_CNTL(CHIP,
                   .enable = lrz.enable,
                   .lrz_write = lrz.write,
                   .greater = lrz.direction == FD_LRZ_GREATER,
                   .z_write_enable = lrz.test,
                   .z_bounds_enable = lrz.z_bounds_enable,
          ))
-         .add(A7XX_GRAS_LRZ_CNTL2(
+         .add(GRAS_LRZ_CNTL2(CHIP,
                   .disable_on_wrong_dir = false,
                   .fc_enable = false,
          ));
    } else {
-      crb.add(A6XX_GRAS_LRZ_CNTL(
+      crb.add(GRAS_LRZ_CNTL(CHIP,
                   .enable = lrz.enable,
                   .lrz_write = lrz.write,
                   .greater = lrz.direction == FD_LRZ_GREATER,
@@ -254,11 +254,12 @@ build_lrz(struct fd6_emit *emit) assert_dt
 
    crb.add(A6XX_RB_LRZ_CNTL(.enable = lrz.enable, ))
       .add(A6XX_RB_DEPTH_PLANE_CNTL(.z_mode = lrz.z_mode, ))
-      .add(A6XX_GRAS_SU_DEPTH_PLANE_CNTL(.z_mode = lrz.z_mode, ));
+      .add(GRAS_SU_DEPTH_PLANE_CNTL(CHIP, .z_mode = lrz.z_mode, ));
 
    return crb.ring();
 }
 
+template <chip CHIP>
 static struct fd_ringbuffer *
 build_scissor(struct fd6_emit *emit) assert_dt
 {
@@ -269,8 +270,8 @@ build_scissor(struct fd6_emit *emit) assert_dt
    fd_crb crb(emit->ctx->batch->submit, 2 * num_viewports);
 
    for (unsigned i = 0; i < num_viewports; i++) {
-      crb.add(A6XX_GRAS_SC_SCREEN_SCISSOR_TL(i, .x = scissors[i].minx, .y = scissors[i].miny))
-         .add(A6XX_GRAS_SC_SCREEN_SCISSOR_BR(i, .x = scissors[i].maxx, .y = scissors[i].maxy));
+      crb.add(GRAS_SC_SCREEN_SCISSOR_TL(CHIP, i, .x = scissors[i].minx, .y = scissors[i].miny))
+         .add(GRAS_SC_SCREEN_SCISSOR_BR(CHIP, i, .x = scissors[i].maxx, .y = scissors[i].maxy));
    }
 
    return crb.ring();
@@ -341,6 +342,7 @@ build_blend_color(struct fd6_emit *emit) assert_dt
       .ring();
 }
 
+template <chip CHIP>
 static struct fd_ringbuffer *
 build_sample_locations(struct fd6_emit *emit)
    assert_dt
@@ -366,11 +368,11 @@ build_sample_locations(struct fd6_emit *emit)
    }
 
    return fd_crb(ctx->batch->submit, 6)
-      .add(A6XX_GRAS_SC_MSAA_SAMPLE_POS_CNTL(.location_enable = true))
-      .add(A6XX_GRAS_SC_PROGRAMMABLE_MSAA_POS_0(.dword = sample_locations))
+      .add(GRAS_SC_MSAA_SAMPLE_POS_CNTL(CHIP, .location_enable = true))
+      .add(GRAS_SC_PROGRAMMABLE_MSAA_POS_0(CHIP, .dword = sample_locations))
       .add(A6XX_RB_MSAA_SAMPLE_POS_CNTL(.location_enable = true))
       .add(A6XX_RB_PROGRAMMABLE_MSAA_POS_0(.dword = sample_locations))
-      .add(A6XX_TPL1_MSAA_SAMPLE_POS_CNTL(.location_enable = true))
+      .add(TPL1_MSAA_SAMPLE_POS_CNTL(CHIP, .location_enable = true))
       .add(A6XX_TPL1_PROGRAMMABLE_MSAA_POS_0(.dword = sample_locations))
       .ring();
 }
@@ -398,8 +400,8 @@ fd6_emit_streamout(fd_cs &cs, struct fd6_emit *emit) assert_dt
       target->stride = info->stride[i];
 
       fd_pkt4(cs, 3)
-         .add(A6XX_VPC_SO_BUFFER_BASE(i, fd_resource(target->base.buffer)->bo))
-         .add(A6XX_VPC_SO_BUFFER_SIZE(i, target->base.buffer_size + target->base.buffer_offset));
+         .add(VPC_SO_BUFFER_BASE(CHIP, i, fd_resource(target->base.buffer)->bo))
+         .add(VPC_SO_BUFFER_SIZE(CHIP, i, target->base.buffer_size + target->base.buffer_offset));
 
       struct fd_bo *offset_bo = fd_resource(target->offset_buf)->bo;
 
@@ -407,24 +409,24 @@ fd6_emit_streamout(fd_cs &cs, struct fd6_emit *emit) assert_dt
          assert(so->offsets[i] == 0);
 
          fd_pkt7(cs, CP_MEM_WRITE, 3)
-            .add(CP_MEM_WRITE_ADDR(offset_bo))
+            .add(A5XX_CP_MEM_WRITE_ADDR(offset_bo))
             .add(target->base.buffer_offset);
 
          fd_pkt4(cs, 1)
-            .add(A6XX_VPC_SO_BUFFER_OFFSET(i,target->base.buffer_offset));
+            .add(VPC_SO_BUFFER_OFFSET(CHIP, i,target->base.buffer_offset));
       } else {
          fd_pkt7(cs, CP_MEM_TO_REG, 3)
             .add(CP_MEM_TO_REG_0(
-               .reg = REG_A6XX_VPC_SO_BUFFER_OFFSET(i),
+               .reg = VPC_SO_BUFFER_OFFSET(CHIP, i).reg,
                .shift_by_2 = CHIP == A6XX,
                .unk31 = true,
             ))
-            .add(CP_MEM_TO_REG_SRC(offset_bo));
+            .add(A5XX_CP_MEM_TO_REG_SRC(offset_bo));
       }
 
       // After a draw HW would write the new offset to offset_bo
       fd_pkt4(cs, 2)
-         .add(A6XX_VPC_SO_FLUSH_BASE(i, offset_bo));
+         .add(VPC_SO_FLUSH_BASE(CHIP, i, offset_bo));
 
       so->reset &= ~(1 << i);
 
@@ -465,6 +467,7 @@ fd6_emit_streamout(fd_cs &cs, struct fd6_emit *emit) assert_dt
 /**
  * Stuff that less frequently changes and isn't (yet) moved into stategroups
  */
+template <chip CHIP>
 static void
 fd6_emit_non_group(fd_cs &cs, struct fd6_emit *emit) assert_dt
 {
@@ -485,18 +488,18 @@ fd6_emit_non_group(fd_cs &cs, struct fd6_emit *emit) assert_dt
          struct pipe_scissor_state *scissor = &ctx->viewport_scissor[i];
          struct pipe_viewport_state *vp = & ctx->viewport[i];
 
-         crb.add(A6XX_GRAS_CL_VIEWPORT_XOFFSET(i, vp->translate[0]));
-         crb.add(A6XX_GRAS_CL_VIEWPORT_XSCALE(i, vp->scale[0]));
-         crb.add(A6XX_GRAS_CL_VIEWPORT_YOFFSET(i, vp->translate[1]));
-         crb.add(A6XX_GRAS_CL_VIEWPORT_YSCALE(i, vp->scale[1]));
-         crb.add(A6XX_GRAS_CL_VIEWPORT_ZOFFSET(i, vp->translate[2]));
-         crb.add(A6XX_GRAS_CL_VIEWPORT_ZSCALE(i, vp->scale[2]));
-         crb.add(A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL(i, .x = scissor->minx, .y = scissor->miny));
-         crb.add(A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR(i, .x = scissor->maxx, .y = scissor->maxy));
+         crb.add(GRAS_CL_VIEWPORT_XOFFSET(CHIP, i, vp->translate[0]));
+         crb.add(GRAS_CL_VIEWPORT_XSCALE(CHIP, i, vp->scale[0]));
+         crb.add(GRAS_CL_VIEWPORT_YOFFSET(CHIP, i, vp->translate[1]));
+         crb.add(GRAS_CL_VIEWPORT_YSCALE(CHIP, i, vp->scale[1]));
+         crb.add(GRAS_CL_VIEWPORT_ZOFFSET(CHIP, i, vp->translate[2]));
+         crb.add(GRAS_CL_VIEWPORT_ZSCALE(CHIP, i, vp->scale[2]));
+         crb.add(GRAS_SC_VIEWPORT_SCISSOR_TL(CHIP, i, .x = scissor->minx, .y = scissor->miny));
+         crb.add(GRAS_SC_VIEWPORT_SCISSOR_BR(CHIP, i, .x = scissor->maxx, .y = scissor->maxy));
       }
 
-      crb.add(A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ(.horz = ctx->guardband.x,
-                                              .vert = ctx->guardband.y));
+      crb.add(GRAS_CL_GUARDBAND_CLIP_ADJ(CHIP, .horz = ctx->guardband.x,
+                                               .vert = ctx->guardband.y));
    }
 
    /* The clamp ranges are only used when the rasterizer wants depth
@@ -511,18 +514,19 @@ fd6_emit_non_group(fd_cs &cs, struct fd6_emit *emit) assert_dt
          util_viewport_zmin_zmax(vp, ctx->rasterizer->clip_halfz,
                                  &zmin, &zmax);
 
-         crb.add(A6XX_GRAS_CL_VIEWPORT_ZCLAMP_MIN(i, zmin));
-         crb.add(A6XX_GRAS_CL_VIEWPORT_ZCLAMP_MAX(i, zmax));
+         crb.add(GRAS_CL_VIEWPORT_ZCLAMP_MIN(CHIP, i, zmin));
+         crb.add(GRAS_CL_VIEWPORT_ZCLAMP_MAX(CHIP, i, zmax));
 
          /* TODO: what to do about this and multi viewport ? */
          if (i == 0) {
-            crb.add(A6XX_RB_VIEWPORT_ZCLAMP_MIN(zmin));
-            crb.add(A6XX_RB_VIEWPORT_ZCLAMP_MAX(zmax));
+            crb.add(RB_VIEWPORT_ZCLAMP_MIN(CHIP, zmin));
+            crb.add(RB_VIEWPORT_ZCLAMP_MAX(CHIP, zmax));
          }
       }
    }
 }
 
+template <chip CHIP>
 static struct fd_ringbuffer*
 build_prim_mode(struct fd6_emit *emit, struct fd_context *ctx, bool gmem)
    assert_dt
@@ -540,7 +544,7 @@ build_prim_mode(struct fd6_emit *emit, struct fd_context *ctx, bool gmem)
    }
 
    return fd_crb(ctx->batch->submit, 1)
-      .add(A6XX_GRAS_SC_CNTL(
+      .add(GRAS_SC_CNTL(CHIP,
          .ccusinglecachelinesize = 2,
          .single_prim_mode = (enum a6xx_single_prim_mode)prim_mode)
       )
@@ -592,7 +596,7 @@ fd6_emit_3d_state(fd_cs &cs, struct fd6_emit *emit)
             fd6_state_take_group(&emit->state, state, FD6_GROUP_LRZ);
          break;
       case FD6_GROUP_SCISSOR:
-         state = build_scissor(emit);
+         state = build_scissor<CHIP>(emit);
          fd6_state_take_group(&emit->state, state, FD6_GROUP_SCISSOR);
          break;
       case FD6_GROUP_PROG:
@@ -605,7 +609,7 @@ fd6_emit_3d_state(fd_cs &cs, struct fd6_emit *emit)
          /* emit remaining streaming program state, ie. what depends on
           * other emit state, so cannot be pre-baked.
           */
-         fd6_state_take_group(&emit->state, fd6_program_interp_state(emit),
+         fd6_state_take_group(&emit->state, fd6_program_interp_state<CHIP>(emit),
                               FD6_GROUP_PROG_INTERP);
          break;
       case FD6_GROUP_RASTERIZER:
@@ -626,7 +630,7 @@ fd6_emit_3d_state(fd_cs &cs, struct fd6_emit *emit)
          fd6_state_take_group(&emit->state, state, FD6_GROUP_BLEND_COLOR);
          break;
       case FD6_GROUP_SAMPLE_LOCATIONS:
-         state = build_sample_locations(emit);
+         state = build_sample_locations<CHIP>(emit);
          fd6_state_take_group(&emit->state, state, FD6_GROUP_SAMPLE_LOCATIONS);
          break;
       case FD6_GROUP_VS_BINDLESS:
@@ -687,15 +691,15 @@ fd6_emit_3d_state(fd_cs &cs, struct fd6_emit *emit)
          fd6_emit_streamout<CHIP>(cs, emit);
          break;
       case FD6_GROUP_PRIM_MODE_SYSMEM:
-         state = build_prim_mode(emit, ctx, false);
+         state = build_prim_mode<CHIP>(emit, ctx, false);
          fd6_state_take_group(&emit->state, state, FD6_GROUP_PRIM_MODE_SYSMEM);
          break;
       case FD6_GROUP_PRIM_MODE_GMEM:
-         state = build_prim_mode(emit, ctx, true);
+         state = build_prim_mode<CHIP>(emit, ctx, true);
          fd6_state_take_group(&emit->state, state, FD6_GROUP_PRIM_MODE_GMEM);
          break;
       case FD6_GROUP_NON_GROUP:
-         fd6_emit_non_group(cs, emit);
+         fd6_emit_non_group<CHIP>(cs, emit);
          break;
       default:
          break;
@@ -774,7 +778,7 @@ fd6_emit_ccu_cntl(fd_cs &cs, struct fd_screen *screen, bool gmem)
 
    if (CHIP == A7XX) {
       fd_pkt4(cs, 1)
-         .add(A7XX_RB_CCU_CACHE_CNTL(
+         .add(RB_CCU_CACHE_CNTL(CHIP,
             .depth_offset_hi = depth_offset_hi,
             .color_offset_hi = color_offset_hi,
             .depth_cache_size = CCU_CACHE_SIZE_FULL,
@@ -786,9 +790,9 @@ fd6_emit_ccu_cntl(fd_cs &cs, struct fd_screen *screen, bool gmem)
 
       if (screen->info->a7xx.has_gmem_vpc_attr_buf) {
          fd_crb(cs, 3)
-            .add(A7XX_VPC_ATTR_BUF_GMEM_SIZE(.size_gmem = cfg->vpc_attr_buf_size))
-            .add(A7XX_VPC_ATTR_BUF_GMEM_BASE(.base_gmem = cfg->vpc_attr_buf_offset))
-            .add(A7XX_PC_ATTR_BUF_GMEM_SIZE(.size_gmem = cfg->vpc_attr_buf_size));
+            .add(VPC_ATTR_BUF_GMEM_SIZE(CHIP, cfg->vpc_attr_buf_size))
+            .add(VPC_ATTR_BUF_GMEM_BASE(CHIP, cfg->vpc_attr_buf_offset))
+            .add(PC_ATTR_BUF_GMEM_SIZE(CHIP, cfg->vpc_attr_buf_size));
       }
    } else {
       fd_pkt7(cs, CP_WAIT_FOR_IDLE, 0);
@@ -866,42 +870,42 @@ fd6_emit_static_non_context_regs(struct fd_context *ctx, fd_cs &cs)
    ncrb.add(A6XX_SP_DBG_ECO_CNTL(.dword = screen->info->a6xx.magic.SP_DBG_ECO_CNTL));
    ncrb.add(A6XX_SP_PERFCTR_SHADER_MASK(.dword = 0x3f));
    if (CHIP == A6XX && !screen->info->a6xx.is_a702)
-      ncrb.add(A6XX_TPL1_UNKNOWN_B605(.dword = 0x44));
+      ncrb.add(TPL1_UNKNOWN_B605(CHIP, .dword = 0x44));
    ncrb.add(A6XX_TPL1_DBG_ECO_CNTL(.dword = screen->info->a6xx.magic.TPL1_DBG_ECO_CNTL));
    if (CHIP == A6XX) {
-      ncrb.add(A6XX_HLSQ_UNKNOWN_BE00(.dword = 0x80));
-      ncrb.add(A6XX_HLSQ_UNKNOWN_BE01());
+      ncrb.add(HLSQ_UNKNOWN_BE00(CHIP, .dword = 0x80));
+      ncrb.add(HLSQ_UNKNOWN_BE01(CHIP));
    }
 
    ncrb.add(A6XX_VPC_DBG_ECO_CNTL(.dword = screen->info->a6xx.magic.VPC_DBG_ECO_CNTL));
    ncrb.add(A6XX_GRAS_DBG_ECO_CNTL(.dword = screen->info->a6xx.magic.GRAS_DBG_ECO_CNTL));
    if (CHIP == A6XX)
-      ncrb.add(A6XX_HLSQ_DBG_ECO_CNTL(.dword = screen->info->a6xx.magic.HLSQ_DBG_ECO_CNTL));
+      ncrb.add(HLSQ_DBG_ECO_CNTL(CHIP, .dword = screen->info->a6xx.magic.HLSQ_DBG_ECO_CNTL));
    ncrb.add(A6XX_SP_CHICKEN_BITS(.dword = screen->info->a6xx.magic.SP_CHICKEN_BITS));
 
    ncrb.add(A6XX_UCHE_UNKNOWN_0E12(.dword = screen->info->a6xx.magic.UCHE_UNKNOWN_0E12));
    ncrb.add(A6XX_UCHE_CLIENT_PF(.dword = screen->info->a6xx.magic.UCHE_CLIENT_PF));
 
    if (CHIP == A6XX) {
-      ncrb.add(A6XX_HLSQ_SHARED_CONSTS());
-      ncrb.add(A6XX_VPC_UNKNOWN_9211());
+      ncrb.add(HLSQ_SHARED_CONSTS(CHIP));
+      ncrb.add(VPC_UNKNOWN_9211(CHIP));
    }
 
-   ncrb.add(A6XX_GRAS_UNKNOWN_80AF());
+   ncrb.add(GRAS_SC_SCREEN_SCISSOR_CNTL(CHIP));
    ncrb.add(A6XX_VPC_UNKNOWN_9602());
 
    /* These regs are blocked (CP_PROTECT) on a6xx: */
    if (CHIP >= A7XX) {
-      ncrb.add(TPL1_BICUBIC_WEIGHTS_TABLE_0(CHIP, 0));
-      ncrb.add(TPL1_BICUBIC_WEIGHTS_TABLE_1(CHIP, 0x3fe05ff4));
-      ncrb.add(TPL1_BICUBIC_WEIGHTS_TABLE_2(CHIP, 0x3fa0ebee));
-      ncrb.add(TPL1_BICUBIC_WEIGHTS_TABLE_3(CHIP, 0x3f5193ed));
-      ncrb.add(TPL1_BICUBIC_WEIGHTS_TABLE_4(CHIP, 0x3f0243f0));
+      ncrb.add(TPL1_BICUBIC_WEIGHTS_TABLE_REG(CHIP, 0, 0));
+      ncrb.add(TPL1_BICUBIC_WEIGHTS_TABLE_REG(CHIP, 1, 0x3fe05ff4));
+      ncrb.add(TPL1_BICUBIC_WEIGHTS_TABLE_REG(CHIP, 2, 0x3fa0ebee));
+      ncrb.add(TPL1_BICUBIC_WEIGHTS_TABLE_REG(CHIP, 3, 0x3f5193ed));
+      ncrb.add(TPL1_BICUBIC_WEIGHTS_TABLE_REG(CHIP, 4, 0x3f0243f0));
    }
 
    if (screen->info->a7xx.has_hw_bin_scaling) {
-      ncrb.add(A7XX_GRAS_BIN_FOVEAT());
-      ncrb.add(A7XX_RB_BIN_FOVEAT());
+      ncrb.add(GRAS_BIN_FOVEAT(CHIP));
+      ncrb.add(RB_BIN_FOVEAT(CHIP));
    }
 }
 
@@ -918,7 +922,7 @@ fd6_emit_static_context_regs(struct fd_context *ctx, fd_cs &cs)
 
    fd_crb crb(cs, 80);
 
-   crb.add(A6XX_SP_GFX_USIZE());
+   crb.add(SP_GFX_USIZE(CHIP));
    crb.add(A6XX_SP_UNKNOWN_B182());
 
    crb.add(A6XX_RB_UNKNOWN_8E01(.dword = screen->info->a6xx.magic.RB_UNKNOWN_8E01));
@@ -932,12 +936,20 @@ fd6_emit_static_context_regs(struct fd_context *ctx, fd_cs &cs)
    );
 
    crb.add(A6XX_VFD_MODE_CNTL(.vertex = true, .instance = true));
-   crb.add(A6XX_VPC_UNKNOWN_9107());
+   if (CHIP == A6XX) {
+      crb.add(VPC_UNKNOWN_9107(CHIP));
+   } else {
+      /* This seems to be load-bearing, we need to set it both here
+       * and below.  Previously we were unconditionally zero'ing
+       * VPC_UNKNOWN_9107 which happens to be the same offset.
+       */
+      crb.add(VPC_RAST_STREAM_CNTL(CHIP));
+   }
    crb.add(A6XX_RB_UNKNOWN_8811(.dword = 0x00000010));
-   crb.add(A6XX_PC_MODE_CNTL(.dword=screen->info->a6xx.magic.PC_MODE_CNTL));
-   crb.add(A6XX_GRAS_LRZ_PS_INPUT_CNTL());
+   crb.add(PC_MODE_CNTL(CHIP, .dword=screen->info->a6xx.magic.PC_MODE_CNTL));
+   crb.add(GRAS_LRZ_PS_INPUT_CNTL(CHIP));
    crb.add(A6XX_GRAS_LRZ_PS_SAMPLEFREQ_CNTL());
-   crb.add(A6XX_GRAS_UNKNOWN_8110(.dword = 0x2));
+   crb.add(GRAS_MODE_CNTL(CHIP, .dword = 0x2));
 
    crb.add(A6XX_RB_UNKNOWN_8818());
 
@@ -951,23 +963,23 @@ fd6_emit_static_context_regs(struct fd_context *ctx, fd_cs &cs)
    }
 
    crb.add(A6XX_RB_UNKNOWN_88F0());
-   crb.add(A6XX_VPC_REPLACE_MODE_CNTL());
-   crb.add(A6XX_VPC_UNKNOWN_9300());
-   crb.add(A6XX_VPC_SO_OVERRIDE(true));
+   crb.add(VPC_REPLACE_MODE_CNTL(CHIP));
+   crb.add(VPC_ROTATION_CNTL(CHIP));
+   crb.add(VPC_SO_OVERRIDE(CHIP, true));
 
    crb.add(VPC_RAST_STREAM_CNTL(CHIP));
 
    if (CHIP == A7XX)
-      crb.add(A7XX_VPC_RAST_STREAM_CNTL_V2());
+      crb.add(VPC_RAST_STREAM_CNTL_V2(CHIP));
 
-   crb.add(A6XX_PC_STEREO_RENDERING_CNTL());
+   crb.add(PC_STEREO_RENDERING_CNTL(CHIP));
    crb.add(A6XX_SP_UNKNOWN_B183());
-   crb.add(A6XX_GRAS_SU_CONSERVATIVE_RAS_CNTL());
-   crb.add(A6XX_GRAS_SU_VS_SIV_CNTL());
-   crb.add(A6XX_GRAS_SC_CNTL(.ccusinglecachelinesize = 2));
+   crb.add(GRAS_SU_CONSERVATIVE_RAS_CNTL(CHIP));
+   crb.add(GRAS_SU_VS_SIV_CNTL(CHIP));
+   crb.add(GRAS_SC_CNTL(CHIP, .ccusinglecachelinesize = 2));
 
    if (CHIP == A6XX) {
-      crb.add(A6XX_VPC_UNKNOWN_9210());
+      crb.add(VPC_UNKNOWN_9210(CHIP));
    }
 
    crb.add(A6XX_PC_UNKNOWN_9E72());
@@ -987,15 +999,15 @@ fd6_emit_static_context_regs(struct fd_context *ctx, fd_cs &cs)
 
    crb.add(A6XX_VFD_RENDER_MODE(RENDERING_PASS));
    crb.add(A6XX_VFD_STEREO_RENDERING_CNTL());
-   crb.add(A6XX_VPC_SO_CNTL());
+   crb.add(VPC_SO_CNTL(CHIP));
 
-   crb.add(A6XX_GRAS_LRZ_CNTL());
+   crb.add(GRAS_LRZ_CNTL(CHIP));
    if (CHIP >= A7XX)
-      crb.add(A7XX_GRAS_LRZ_CNTL2());
+      crb.add(GRAS_LRZ_CNTL2(CHIP));
 
    crb.add(A6XX_RB_LRZ_CNTL());
    crb.add(A6XX_RB_DEPTH_PLANE_CNTL());
-   crb.add(A6XX_GRAS_SU_DEPTH_PLANE_CNTL());
+   crb.add(GRAS_SU_DEPTH_PLANE_CNTL(CHIP));
 
    /* Initialize VFD_VERTEX_BUFFER[n].SIZE to zero to avoid iova faults trying
     * to fetch from a VFD_VERTEX_BUFFER[n].BASE which we've potentially inherited
@@ -1009,16 +1021,16 @@ fd6_emit_static_context_regs(struct fd_context *ctx, fd_cs &cs)
 
    crb.add(A6XX_TPL1_GFX_BORDER_COLOR_BASE(.bo = bcolor_mem));
    crb.add(A6XX_TPL1_CS_BORDER_COLOR_BASE(.bo = bcolor_mem));
-   crb.add(A6XX_PC_DGEN_SU_CONSERVATIVE_RAS_CNTL());
+   crb.add(PC_DGEN_SU_CONSERVATIVE_RAS_CNTL(CHIP));
 
    if (CHIP >= A7XX) {
       /* Blob sets these two per draw. */
-      crb.add(A7XX_PC_HS_BUFFER_SIZE(FD6_TESS_PARAM_SIZE));
+      crb.add(PC_HS_BUFFER_SIZE(CHIP, FD6_TESS_PARAM_SIZE));
       /* Blob adds a bit more space ({0x10, 0x20, 0x30, 0x40} bytes)
        * but the meaning of this additional space is not known,
        * so we play safe and don't add it.
        */
-      crb.add(A7XX_PC_TF_BUFFER_SIZE(FD6_TESS_FACTOR_SIZE));
+      crb.add(PC_TF_BUFFER_SIZE(CHIP, FD6_TESS_FACTOR_SIZE));
    }
 
    /* There is an optimization to skip executing draw states for draws with no
@@ -1087,11 +1099,9 @@ fd6_emit_restore(fd_cs &cs, struct fd_batch *batch)
 
       fd6_event_write<CHIP>(ctx, cs, FD_CCU_INVALIDATE_COLOR);
       fd6_event_write<CHIP>(ctx, cs, FD_CCU_INVALIDATE_DEPTH);
-
-      fd_pkt7(cs, CP_EVENT_WRITE, 1)
-         .add(UNK_40);
-
+      fd6_event_write<CHIP>(ctx, cs, FD_LRZ_INVALIDATE);
       fd6_event_write<CHIP>(ctx, cs, FD_CACHE_INVALIDATE);
+
       fd_pkt7(cs, CP_WAIT_FOR_IDLE, 0);
    }
 

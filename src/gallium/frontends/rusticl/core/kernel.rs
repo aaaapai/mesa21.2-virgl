@@ -1,3 +1,6 @@
+// Copyright 2020 Red Hat.
+// SPDX-License-Identifier: MIT
+
 use crate::api::icd::*;
 use crate::core::device::*;
 use crate::core::event::*;
@@ -1718,7 +1721,7 @@ impl Kernel {
         }))
     }
 
-    pub fn arg_values(&self) -> MutexGuard<Vec<Option<KernelArgValue>>> {
+    pub fn arg_values(&self) -> MutexGuard<'_, Vec<Option<KernelArgValue>>> {
         self.values.lock().unwrap()
     }
 

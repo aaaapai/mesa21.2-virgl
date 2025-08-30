@@ -91,6 +91,7 @@ struct wsi_surface_supported_counters {
 
 struct wsi_interface;
 struct vk_instance;
+struct vk_queue;
 
 struct driOptionCache;
 
@@ -222,7 +223,7 @@ struct wsi_device {
     * A driver can implement this callback to return a special queue to execute
     * buffer blits.
     */
-   VkQueue (*get_blit_queue)(VkDevice device);
+   struct vk_queue *(*get_blit_queue)(VkDevice device);
 
 #define WSI_CB(cb) PFN_vk##cb cb
    WSI_CB(AllocateMemory);
@@ -257,7 +258,7 @@ struct wsi_device {
    WSI_CB(GetPhysicalDeviceImageFormatProperties2);
    WSI_CB(GetSemaphoreFdKHR);
    WSI_CB(ResetFences);
-   WSI_CB(QueueSubmit);
+   WSI_CB(QueueSubmit2);
    WSI_CB(SetDebugUtilsObjectNameEXT);
    WSI_CB(WaitForFences);
    WSI_CB(MapMemory);
@@ -323,9 +324,7 @@ wsi_common_acquire_next_image2(const struct wsi_device *wsi,
 
 VkResult
 wsi_common_queue_present(const struct wsi_device *wsi,
-                         VkDevice device_h,
-                         VkQueue queue_h,
-                         int queue_family_index,
+                         struct vk_queue *queue,
                          const VkPresentInfoKHR *pPresentInfo);
 
 VkResult

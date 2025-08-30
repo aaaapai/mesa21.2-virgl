@@ -190,13 +190,20 @@ ci-tron-v3d-rpi4-rusticl:arm64:
 v3d-rpi4-traces:arm64:
   extends:
     - .igalia-bcm2711-rpi-4
-    - .piglit-traces-test
     - .broadcom-test:arm64-gl
+    - .piglit-traces-test
     - .v3d-rules
   timeout: 25m
   variables:
-    HWCI_TEST_SCRIPT: "/install/piglit/piglit-traces.sh"
     PIGLIT_TRACES_FILE: traces-broadcom.yml
+
+.ci-tron-v3d-rpi4-traces:arm64:
+  extends:
+    - .ci-tron-v3d-traces:arm64
+    - .ci-tron-broadcom-rpi4:arm64
+  timeout: 10m
+  variables:
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 5
 
 v3d-rpi4-gl:arm32:
   extends:
@@ -446,13 +453,20 @@ ci-tron-v3d-rpi5-rusticl:arm64:
 v3d-rpi5-traces:arm64:
   extends:
     - .igalia-bcm2712-rpi-5
-    - .piglit-traces-test
     - .broadcom-test:arm64-gl
+    - .piglit-traces-test
     - .v3d-rules
   timeout: 25m
   variables:
-    HWCI_TEST_SCRIPT: "/install/piglit/piglit-traces.sh"
     PIGLIT_TRACES_FILE: traces-broadcom.yml
+
+.ci-tron-v3d-rpi5-traces:arm64:
+  extends:
+    - .ci-tron-v3d-traces:arm64
+    - .ci-tron-broadcom-rpi5:arm64
+  timeout: 10m
+  variables:
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 5
 
 v3dv-rpi5-vk:arm64:
   extends:

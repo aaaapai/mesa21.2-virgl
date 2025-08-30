@@ -745,7 +745,7 @@ zink_init_screen_caps(struct zink_screen *screen)
    caps->compressed_surface_reinterpret_blocks_layered = caps->surface_reinterpret_blocks &&
                                                          screen->info.maint6_props.blockTexelViewCompatibleMultipleLayers;
 
-   caps->validate_all_dirty_states = true;
+   caps->can_bind_const_buffer_as_vertex = true;
    caps->allow_mapped_buffers_during_execution = true;
    caps->map_unsynchronized_thread_safe = true;
    caps->shareable_shaders = true;
@@ -2419,6 +2419,7 @@ zink_screen_import_dmabuf_semaphore(struct zink_screen *screen, struct zink_reso
 bool
 zink_screen_timeline_wait(struct zink_screen *screen, uint64_t batch_id, uint64_t timeout)
 {
+   MESA_TRACE_FUNC();
    VkSemaphoreWaitInfo wi = {0};
 
    if (zink_screen_check_last_finished(screen, batch_id))

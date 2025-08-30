@@ -13,6 +13,7 @@
 
 #include "git_sha1.h"
 
+#include "vk_android.h"
 #include "vk_device.h"
 #include "vk_limits.h"
 #include "vk_shader_module.h"
@@ -40,6 +41,7 @@ panvk_per_arch(get_physical_device_extensions)(
 {
    bool has_vk1_1 = PAN_ARCH >= 10;
    bool has_vk1_2 = PAN_ARCH >= 10;
+   bool has_gralloc = vk_android_get_ugralloc() != NULL;
 
    *ext = (struct vk_device_extension_table){
       .KHR_8bit_storage = true,
@@ -175,6 +177,8 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_ycbcr_2plane_444_formats = PAN_ARCH >= 10,
       .EXT_ycbcr_image_arrays = PAN_ARCH >= 10,
       .EXT_inline_uniform_block = true,
+      .ANDROID_external_memory_android_hardware_buffer = has_gralloc,
+      .ANDROID_native_buffer = has_gralloc,
       .GOOGLE_decorate_string = true,
       .GOOGLE_hlsl_functionality1 = true,
       .GOOGLE_user_type = true,
@@ -537,7 +541,7 @@ panvk_per_arch(get_physical_device_properties)(
    const struct panvk_instance *instance,
    const struct panvk_physical_device *device, struct vk_properties *properties)
 {
-   unsigned max_tib_size = pan_get_max_tib_size(PAN_ARCH, device->model);
+   unsigned max_tib_size = pan_query_tib_size(device->model);
    const unsigned max_cbuf_format = 16; /* R32G32B32A32 */
 
    unsigned max_cbuf_atts = pan_get_max_cbufs(PAN_ARCH, max_tib_size);
@@ -958,6 +962,9 @@ panvk_per_arch(get_physical_device_properties)(
 
       /* VK_KHR_push_descriptor */
       .maxPushDescriptors = MAX_PUSH_DESCS,
+
+      /* VK_ANDROID_native_buffer */
+      .sharedImage = vk_android_get_front_buffer_usage() != 0,
 
       /* VK_ARM_shader_core_properties */
       .pixelRate = device->model->rates.pixel,

@@ -42,6 +42,51 @@ struct radv_sample_locations_state {
    VkSampleLocationEXT locations[MAX_SAMPLE_LOCATIONS];
 };
 
+struct radv_viewport_xform_state {
+   float scale[3];
+   float translate[3];
+};
+
+struct radv_blend_equation_state {
+   struct {
+      uint32_t cb_blend_control;
+      uint32_t sx_mrt_blend_opt;
+   } att[MAX_RTS];
+
+   bool mrt0_is_dual_src;
+};
+
+struct radv_vertex_input_state {
+   uint32_t attribute_mask;
+
+   uint32_t instance_rate_inputs;
+   uint32_t nontrivial_divisors;
+   uint32_t zero_divisors;
+   uint32_t post_shuffle;
+   /* Having two separate fields instead of a single uint64_t makes it easier to remove attributes
+    * using bitwise arithmetic.
+    */
+   uint32_t alpha_adjust_lo;
+   uint32_t alpha_adjust_hi;
+   uint32_t nontrivial_formats;
+
+   uint8_t bindings[MAX_VERTEX_ATTRIBS];
+   uint32_t divisors[MAX_VERTEX_ATTRIBS];
+   uint32_t offsets[MAX_VERTEX_ATTRIBS];
+   uint8_t formats[MAX_VERTEX_ATTRIBS];
+   uint8_t format_align_req_minus_1[MAX_VERTEX_ATTRIBS];
+   uint8_t component_align_req_minus_1[MAX_VERTEX_ATTRIBS];
+   uint8_t format_sizes[MAX_VERTEX_ATTRIBS];
+   uint32_t attrib_index_offset[MAX_VERTEX_ATTRIBS]; /* Only used with static strides. */
+   uint32_t non_trivial_format[MAX_VERTEX_ATTRIBS];
+
+   uint32_t vbo_misaligned_mask;
+   uint32_t vbo_unaligned_mask;
+   uint32_t vbo_misaligned_mask_invalid;
+
+   bool bindings_match_attrib;
+};
+
 struct radv_dynamic_state {
    struct vk_dynamic_graphics_state vk;
 
@@ -51,12 +96,9 @@ struct radv_dynamic_state {
     */
    uint64_t mask;
 
-   struct {
-      struct {
-         float scale[3];
-         float translate[3];
-      } xform[MAX_VIEWPORTS];
-   } hw_vp;
+   struct radv_viewport_xform_state vp_xform[MAX_VIEWPORTS];
+
+   struct radv_vertex_input_state vertex_input;
 
    struct radv_sample_locations_state sample_location;
 
@@ -64,14 +106,9 @@ struct radv_dynamic_state {
 
    uint32_t color_write_enable;
    uint32_t color_write_mask;
+   uint8_t color_blend_enable;
 
-   bool mrt0_is_dual_src;
-
-   struct {
-      /* For color blend equations. */
-      uint32_t cb_blend_control;
-      uint32_t sx_mrt_blend_opt;
-   } cb_att[MAX_RTS];
+   struct radv_blend_equation_state blend_eq;
 };
 
 struct radv_multisample_state {
@@ -115,17 +152,14 @@ struct radv_graphics_pipeline {
 
    struct radv_dynamic_state dynamic_state;
 
-   struct radv_vertex_input_state vertex_input;
-
    struct radv_multisample_state ms;
    struct radv_ia_multi_vgt_param_helpers ia_multi_vgt_param;
-   uint32_t binding_stride[MAX_VBS];
    uint32_t db_render_control;
 
    /* Last pre-PS API stage */
    mesa_shader_stage last_vgt_api_stage;
 
-   unsigned rast_prim;
+   unsigned vgt_outprim_type;
 
    /* Custom blend mode for internal operations. */
    unsigned custom_blend_mode;
@@ -291,21 +325,21 @@ radv_prim_is_points_or_lines(unsigned topology)
 }
 
 static inline bool
-radv_rast_prim_is_point(unsigned rast_prim)
+radv_vgt_outprim_is_point(unsigned vgt_outprim_type)
 {
-   return rast_prim == V_028A6C_POINTLIST;
+   return vgt_outprim_type == V_028A6C_POINTLIST;
 }
 
 static inline bool
-radv_rast_prim_is_line(unsigned rast_prim)
+radv_vgt_outprim_is_line(unsigned vgt_outprim_type)
 {
-   return rast_prim == V_028A6C_LINESTRIP;
+   return vgt_outprim_type == V_028A6C_LINESTRIP;
 }
 
 static inline bool
-radv_rast_prim_is_points_or_lines(unsigned rast_prim)
+radv_vgt_outprim_is_point_or_line(unsigned vgt_outprim_type)
 {
-   return radv_rast_prim_is_point(rast_prim) || radv_rast_prim_is_line(rast_prim);
+   return radv_vgt_outprim_is_point(vgt_outprim_type) || radv_vgt_outprim_is_line(vgt_outprim_type);
 }
 
 static inline bool
@@ -612,7 +646,7 @@ struct radv_ps_epilog_state {
    uint8_t color_attachment_mappings[MAX_RTS];
 
    uint32_t color_write_mask;
-   uint32_t color_blend_enable;
+   uint8_t color_blend_enable;
 
    uint32_t colors_written;
    bool mrt0_is_dual_src;

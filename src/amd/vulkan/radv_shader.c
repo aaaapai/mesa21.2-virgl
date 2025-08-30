@@ -168,7 +168,7 @@ radv_optimize_nir(struct nir_shader *shader, bool optimize_conservatively)
       progress = false;
 
       NIR_LOOP_PASS(progress, skip, shader, nir_split_array_vars, nir_var_function_temp);
-      NIR_LOOP_PASS(progress, skip, shader, nir_shrink_vec_array_vars, nir_var_function_temp);
+      NIR_LOOP_PASS(progress, skip, shader, nir_shrink_vec_array_vars, nir_var_function_temp | nir_var_mem_shared);
 
       if (!shader->info.var_copies_lowered) {
          /* Only run this pass if nir_lower_var_copies was not called
@@ -178,6 +178,7 @@ radv_optimize_nir(struct nir_shader *shader, bool optimize_conservatively)
          NIR_LOOP_PASS(progress, skip, shader, nir_opt_find_array_copies);
       }
 
+      NIR_LOOP_PASS(progress, skip, shader, nir_opt_memcpy);
       NIR_LOOP_PASS(progress, skip, shader, nir_opt_copy_prop_vars);
       NIR_LOOP_PASS(progress, skip, shader, nir_opt_dead_write_vars);
       NIR_LOOP_PASS(_, skip, shader, nir_lower_vars_to_ssa);
@@ -457,6 +458,13 @@ radv_shader_spirv_to_nir(struct radv_device *device, const struct radv_shader_st
        */
       NIR_PASS(_, nir, nir_lower_variable_initializers, ~0);
 
+      progress = false;
+      NIR_PASS(progress, nir, nir_lower_cooperative_matrix_flexible_dimensions, 16, 16, 16);
+      if (progress) {
+         NIR_PASS(_, nir, nir_opt_deref);
+         NIR_PASS(_, nir, nir_opt_dce);
+         NIR_PASS(_, nir, nir_remove_dead_variables, nir_var_function_temp | nir_var_shader_temp, NULL);
+      }
       NIR_PASS(_, nir, radv_nir_lower_cooperative_matrix, pdev->info.gfx_level, subgroup_size);
 
       /* Split member structs.  We do this before lower_io_to_temporaries so that
@@ -617,6 +625,8 @@ radv_shader_spirv_to_nir(struct radv_device *device, const struct radv_shader_st
     * to remove any copies introduced by nir_opt_find_array_copies().
     */
    NIR_PASS(_, nir, nir_lower_var_copies);
+
+   NIR_PASS(_, nir, nir_lower_memcpy);
 
    unsigned lower_flrp = (nir->options->lower_flrp16 ? 16 : 0) | (nir->options->lower_flrp32 ? 32 : 0) |
                          (nir->options->lower_flrp64 ? 64 : 0);

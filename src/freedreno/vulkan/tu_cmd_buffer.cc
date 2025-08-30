@@ -400,17 +400,14 @@ emit_rb_ccu_cntl(struct tu_cs *cs, struct tu_device *dev, bool gmem)
 
       if (dev->physical_device->info->a7xx.has_gmem_vpc_attr_buf) {
          tu_cs_emit_regs(cs,
-            A7XX_VPC_ATTR_BUF_GMEM_SIZE(
-                  .size_gmem =
+            VPC_ATTR_BUF_GMEM_SIZE(CHIP,
                      gmem ? dev->physical_device->vpc_attr_buf_size_gmem
                           : dev->physical_device->vpc_attr_buf_size_bypass),
-            A7XX_VPC_ATTR_BUF_GMEM_BASE(
-                  .base_gmem =
+            VPC_ATTR_BUF_GMEM_BASE(CHIP,
                      gmem ? dev->physical_device->vpc_attr_buf_offset_gmem
                           : dev->physical_device->vpc_attr_buf_offset_bypass), );
          tu_cs_emit_regs(cs,
             A7XX_PC_ATTR_BUF_GMEM_SIZE(
-                  .size_gmem =
                      gmem ? dev->physical_device->vpc_attr_buf_size_gmem
                           : dev->physical_device->vpc_attr_buf_size_bypass), );
       }
@@ -1765,7 +1762,7 @@ tu6_init_static_regs(struct tu_device *dev, struct tu_cs *cs)
    tu_cs_emit_write_reg(cs, REG_A6XX_PC_MODE_CNTL,
                         phys_dev->info->a6xx.magic.PC_MODE_CNTL);
 
-   tu_cs_emit_write_reg(cs, REG_A6XX_GRAS_UNKNOWN_8110, 0);
+   tu_cs_emit_write_reg(cs, REG_A6XX_GRAS_MODE_CNTL, 0);
 
    tu_cs_emit_write_reg(cs, REG_A6XX_RB_UNKNOWN_8818, 0);
 
@@ -1781,13 +1778,13 @@ tu6_init_static_regs(struct tu_device *dev, struct tu_cs *cs)
    tu_cs_emit_write_reg(cs, REG_A6XX_RB_UNKNOWN_88F0, 0);
 
    tu_cs_emit_regs(cs, A6XX_VPC_REPLACE_MODE_CNTL(false));
-   tu_cs_emit_write_reg(cs, REG_A6XX_VPC_UNKNOWN_9300, 0);
+   tu_cs_emit_write_reg(cs, REG_A6XX_VPC_ROTATION_CNTL, 0);
 
    tu_cs_emit_regs(cs, A6XX_VPC_SO_OVERRIDE(true));
 
    tu_cs_emit_write_reg(cs, REG_A6XX_SP_UNKNOWN_B183, 0);
 
-   tu_cs_emit_write_reg(cs, REG_A6XX_GRAS_UNKNOWN_80AF, 0);
+   tu_cs_emit_regs(cs, GRAS_SC_SCREEN_SCISSOR_CNTL(CHIP));
    if (CHIP == A6XX) {
       tu_cs_emit_write_reg(cs, REG_A6XX_GRAS_SU_CONSERVATIVE_RAS_CNTL, 0);
       tu_cs_emit_regs(cs, A6XX_PC_DGEN_SU_CONSERVATIVE_RAS_CNTL());
@@ -1819,11 +1816,11 @@ tu6_init_static_regs(struct tu_device *dev, struct tu_cs *cs)
                                                         .bo_offset = gb_offset(bcolor)));
 
    if (CHIP == A7XX) {
-      tu_cs_emit_regs(cs, TPL1_BICUBIC_WEIGHTS_TABLE_0(CHIP, 0),
-                      TPL1_BICUBIC_WEIGHTS_TABLE_1(CHIP, 0x3fe05ff4),
-                      TPL1_BICUBIC_WEIGHTS_TABLE_2(CHIP, 0x3fa0ebee),
-                      TPL1_BICUBIC_WEIGHTS_TABLE_3(CHIP, 0x3f5193ed),
-                      TPL1_BICUBIC_WEIGHTS_TABLE_4(CHIP, 0x3f0243f0), );
+      tu_cs_emit_regs(cs, TPL1_BICUBIC_WEIGHTS_TABLE_REG(CHIP, 0, 0),
+                      TPL1_BICUBIC_WEIGHTS_TABLE_REG(CHIP, 1, 0x3fe05ff4),
+                      TPL1_BICUBIC_WEIGHTS_TABLE_REG(CHIP, 2, 0x3fa0ebee),
+                      TPL1_BICUBIC_WEIGHTS_TABLE_REG(CHIP, 3, 0x3f5193ed),
+                      TPL1_BICUBIC_WEIGHTS_TABLE_REG(CHIP, 4, 0x3f0243f0), );
    }
 
    if (CHIP >= A7XX) {
@@ -1875,7 +1872,7 @@ tu7_emit_tile_render_begin_regs(struct tu_cs *cs)
 
    tu_cs_emit_regs(cs, A7XX_GRAS_UNKNOWN_8007(0x0));
 
-   tu_cs_emit_regs(cs, A6XX_GRAS_UNKNOWN_8110(0x2));
+   tu_cs_emit_regs(cs, A6XX_GRAS_MODE_CNTL(0x2));
    tu_cs_emit_regs(cs, A7XX_RB_UNKNOWN_8E09(0x4));
 
    tu_cs_emit_regs(cs, A7XX_RB_CLEAR_TARGET(.clear_mode = CLEAR_MODE_GMEM));
@@ -1950,7 +1947,7 @@ tu6_init_hw(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
 
       tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_INVALIDATE_COLOR);
       tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_INVALIDATE_DEPTH);
-      tu_emit_raw_event_write<CHIP>(cmd, cs, UNK_40, false);
+      tu_emit_event_write<CHIP>(cmd, cs, FD_LRZ_INVALIDATE);
       tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_INVALIDATE);
       tu_cs_emit_wfi(cs);
    }
@@ -2192,8 +2189,7 @@ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
                      A6XX_VFD_POWER_CNTL(phys_dev->info->a6xx.magic.PC_POWER_CNTL));
    }
 
-   tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 1);
-   tu_cs_emit(cs, UNK_2C);
+   tu_emit_event_write<CHIP>(cmd, cs, FD_VSC_BINNING_START);
 
    tu_cs_emit_regs(cs,
                    A6XX_RB_WINDOW_OFFSET(.x = 0, .y = 0));
@@ -2222,8 +2218,7 @@ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
    tu_cs_emit(cs, CP_SET_DRAW_STATE__1_ADDR_LO(0));
    tu_cs_emit(cs, CP_SET_DRAW_STATE__2_ADDR_HI(0));
 
-   tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 1);
-   tu_cs_emit(cs, UNK_2D);
+   tu_emit_event_write<CHIP>(cmd, cs, FD_VSC_BINNING_END);
 
    /* This flush is probably required because the VSC, which produces the
     * visibility stream, is a client of UCHE, whereas the CP needs to read the
@@ -2565,7 +2560,7 @@ tu6_sysmem_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
 
       tu_cs_emit_regs(cs, A7XX_GRAS_UNKNOWN_8007(0x0));
 
-      tu_cs_emit_regs(cs, A6XX_GRAS_UNKNOWN_8110(0x2));
+      tu_cs_emit_regs(cs, A6XX_GRAS_MODE_CNTL(0x2));
       tu_cs_emit_regs(cs, A7XX_RB_UNKNOWN_8E09(0x4));
 
       tu_cs_emit_regs(cs, A7XX_RB_CLEAR_TARGET(.clear_mode = CLEAR_MODE_SYSMEM));
@@ -4228,11 +4223,9 @@ tu_CmdBindTransformFeedbackBuffersEXT(VkCommandBuffer commandBuffer,
    for (uint32_t i = 0; i < bindingCount; i++) {
       VK_FROM_HANDLE(tu_buffer, buf, pBuffers[i]);
       uint64_t iova = vk_buffer_address(&buf->vk, pOffsets[i]);
-      uint32_t size = buf->bo->size - (iova - buf->bo->iova);
+      uint32_t size = vk_buffer_range(&buf->vk, pOffsets[i],
+                                      pSizes ? pSizes[i] : VK_WHOLE_SIZE);
       uint32_t idx = i + firstBinding;
-
-      if (pSizes && pSizes[i] != VK_WHOLE_SIZE)
-         size = pSizes[i];
 
       /* BUFFER_BASE is 32-byte aligned, add remaining offset to BUFFER_OFFSET */
       uint32_t offset = iova & 0x1f;
@@ -4715,6 +4708,7 @@ tu_flush_for_access(struct tu_cache_state *cache,
 
    SRC_INCOHERENT_FLUSH(CCU_COLOR, CCU_CLEAN_COLOR, CCU_INVALIDATE_COLOR)
    SRC_INCOHERENT_FLUSH(CCU_DEPTH, CCU_CLEAN_DEPTH, CCU_INVALIDATE_DEPTH)
+   SRC_INCOHERENT_FLUSH(UCHE, CACHE_CLEAN, CACHE_INVALIDATE)
 
 #undef SRC_INCOHERENT_FLUSH
 
@@ -4749,6 +4743,7 @@ tu_flush_for_access(struct tu_cache_state *cache,
 
    DST_INCOHERENT_FLUSH(CCU_COLOR, CCU_CLEAN_COLOR, CCU_INVALIDATE_COLOR)
    DST_INCOHERENT_FLUSH(CCU_DEPTH, CCU_CLEAN_DEPTH, CCU_INVALIDATE_DEPTH)
+   DST_INCOHERENT_FLUSH(UCHE, CACHE_CLEAN, CACHE_INVALIDATE)
 
    if (dst_mask & TU_ACCESS_BINDLESS_DESCRIPTOR_READ) {
       flush_bits |= TU_CMD_FLAG_BINDLESS_DESCRIPTOR_INVALIDATE;
@@ -4843,7 +4838,8 @@ gfx_write_access(VkAccessFlags2 flags, VkPipelineStageFlags2 stages,
 
 static enum tu_cmd_access_mask
 vk2tu_access(VkAccessFlags2 flags, VkAccessFlags3KHR flags2,
-             VkPipelineStageFlags2 stages, bool image_only, bool gmem)
+             VkPipelineStageFlags2 stages, bool image_only, bool gmem,
+             bool sparse_aliasing)
 {
    BITMASK_ENUM(tu_cmd_access_mask) mask = 0;
 
@@ -4893,8 +4889,13 @@ vk2tu_access(VkAccessFlags2 flags, VkAccessFlags3KHR flags2,
                        VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT |
                        VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
                        VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR |
-                       SHADER_STAGES))
-       mask |= TU_ACCESS_UCHE_READ | TU_ACCESS_CCHE_READ;
+                       SHADER_STAGES)) {
+      if (sparse_aliasing)
+         mask |= TU_ACCESS_UCHE_INCOHERENT_READ;
+      else
+         mask |= TU_ACCESS_UCHE_READ;
+      mask |= TU_ACCESS_CCHE_READ;
+   }
 
    if (gfx_read_access(flags, stages,
                        VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR,
@@ -4914,13 +4915,20 @@ vk2tu_access(VkAccessFlags2 flags, VkAccessFlags3KHR flags2,
 
    if (gfx_read_access(flags, stages,
                        VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT,
-                       SHADER_STAGES))
+                       SHADER_STAGES)) {
        mask |= TU_ACCESS_UCHE_READ_GMEM;
+       if (sparse_aliasing)
+          mask |= TU_ACCESS_UCHE_INCOHERENT_READ;
+   }
 
    if (gfx_read_access(flags, stages,
                        VK_ACCESS_2_DESCRIPTOR_BUFFER_READ_BIT_EXT,
                        SHADER_STAGES)) {
-      mask |= TU_ACCESS_UCHE_READ | TU_ACCESS_BINDLESS_DESCRIPTOR_READ |
+      if (sparse_aliasing)
+         mask |= TU_ACCESS_UCHE_INCOHERENT_READ;
+      else
+         mask |= TU_ACCESS_UCHE_READ;
+      mask |= TU_ACCESS_BINDLESS_DESCRIPTOR_READ |
               TU_ACCESS_CCHE_READ;
    }
 
@@ -4929,8 +4937,12 @@ vk2tu_access(VkAccessFlags2 flags, VkAccessFlags3KHR flags2,
                         VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT |
                         VK_ACCESS_2_TRANSFORM_FEEDBACK_WRITE_BIT_EXT,
                         VK_PIPELINE_STAGE_2_TRANSFORM_FEEDBACK_BIT_EXT |
-                        SHADER_STAGES))
-       mask |= TU_ACCESS_UCHE_WRITE;
+                        SHADER_STAGES)) {
+      if (sparse_aliasing)
+         mask |= TU_ACCESS_UCHE_INCOHERENT_WRITE;
+      else
+         mask |= TU_ACCESS_UCHE_WRITE;
+   }
 
    if (gfx_write_access(flags, stages,
                         VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
@@ -4994,7 +5006,7 @@ vk2tu_access(VkAccessFlags2 flags, VkAccessFlags3KHR flags2,
                            VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT)) {
       if (gmem) {
          mask |= TU_ACCESS_SYSMEM_WRITE;
-      } else if (image_only) {
+      } else if (image_only && !sparse_aliasing) {
          /* Because we always split up blits/copies of images involving
           * multiple layers, we always access each layer in the same way, with
           * the same base address, same format, etc. This means we can avoid
@@ -5013,7 +5025,11 @@ vk2tu_access(VkAccessFlags2 flags, VkAccessFlags3KHR flags2,
                           VK_PIPELINE_STAGE_2_BLIT_BIT |
                           VK_PIPELINE_STAGE_2_RESOLVE_BIT |
                           VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT)) {
-      mask |= TU_ACCESS_UCHE_READ | TU_ACCESS_CCHE_READ;
+      if (sparse_aliasing)
+         mask |= TU_ACCESS_UCHE_INCOHERENT_READ;
+      else
+         mask |= TU_ACCESS_UCHE_READ;
+      mask |= TU_ACCESS_CCHE_READ;
    }
 
    return mask;
@@ -5468,10 +5484,12 @@ tu_subpass_barrier(struct tu_cmd_buffer *cmd_buffer,
       sanitize_dst_stage(barrier->dst_stage_mask);
    BITMASK_ENUM(tu_cmd_access_mask) src_flags =
       vk2tu_access(barrier->src_access_mask, barrier->src_access_mask2,
-                   src_stage_vk, false, false);
+                   src_stage_vk, false, false,
+                   cmd_buffer->device->vk.enabled_features.sparseResidencyAliased);
    BITMASK_ENUM(tu_cmd_access_mask) dst_flags =
       vk2tu_access(barrier->dst_access_mask, barrier->dst_access_mask2,
-                   dst_stage_vk, false, false);
+                   dst_stage_vk, false, false,
+                   cmd_buffer->device->vk.enabled_features.sparseResidencyAliased);
 
    if (barrier->incoherent_ccu_color)
       src_flags |= TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE;
@@ -8298,9 +8316,11 @@ tu_barrier(struct tu_cmd_buffer *cmd,
          }
 
          src_flags |= vk2tu_access(barrier->srcAccessMask, src_access_mask2,
-                                   sanitized_src_stage, false, gmem);
+                                   sanitized_src_stage, false, gmem,
+                                   cmd->device->vk.enabled_features.sparseResidencyAliased);
          dst_flags |= vk2tu_access(barrier->dstAccessMask, dst_access_mask2,
-                                   sanitized_dst_stage, false, gmem);
+                                   sanitized_dst_stage, false, gmem,
+                                   cmd->device->vk.enabled_features.sparseResidencyAliased);
          srcStage |= sanitized_src_stage;
          dstStage |= sanitized_dst_stage;
       }
@@ -8308,6 +8328,9 @@ tu_barrier(struct tu_cmd_buffer *cmd,
       for (uint32_t i = 0; i < dep_info->bufferMemoryBarrierCount; i++) {
          const VkBufferMemoryBarrier2 *barrier =
             &dep_info->pBufferMemoryBarriers[i];
+         VK_FROM_HANDLE(tu_buffer, buffer, barrier->buffer);
+         bool sparse_aliasing =
+            buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_ALIASED_BIT;
          VkPipelineStageFlags2 sanitized_src_stage =
             sanitize_src_stage(barrier->srcStageMask);
          VkPipelineStageFlags2 sanitized_dst_stage =
@@ -8322,9 +8345,11 @@ tu_barrier(struct tu_cmd_buffer *cmd,
          }
 
          src_flags |= vk2tu_access(barrier->srcAccessMask, src_access_mask2,
-                                   sanitized_src_stage, false, gmem);
+                                   sanitized_src_stage, false, gmem,
+                                   sparse_aliasing);
          dst_flags |= vk2tu_access(barrier->dstAccessMask, dst_access_mask2,
-                                   sanitized_dst_stage, false, gmem);
+                                   sanitized_dst_stage, false, gmem,
+                                   sparse_aliasing);
          srcStage |= sanitized_src_stage;
          dstStage |= sanitized_dst_stage;
       }
@@ -8332,8 +8357,12 @@ tu_barrier(struct tu_cmd_buffer *cmd,
       for (uint32_t i = 0; i < dep_info->imageMemoryBarrierCount; i++) {
          const VkImageMemoryBarrier2 *barrier =
             &dep_info->pImageMemoryBarriers[i];
+         VK_FROM_HANDLE(tu_image, image, barrier->image);
 
          VkImageLayout old_layout = barrier->oldLayout;
+
+         bool sparse_aliasing =
+            image->vk.create_flags & VK_BUFFER_CREATE_SPARSE_ALIASED_BIT;
          if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED) {
             /* The underlying memory for this image may have been used earlier
              * within the same queue submission for a different image, which
@@ -8342,8 +8371,6 @@ tu_barrier(struct tu_cmd_buffer *cmd,
              * to the image. We don't want these entries being flushed later and
              * overwriting the actual image, so we need to flush the CCU.
              */
-            VK_FROM_HANDLE(tu_image, image, barrier->image);
-
             if (vk_format_is_depth_or_stencil(image->vk.format)) {
                src_flags |= TU_ACCESS_CCU_DEPTH_INCOHERENT_WRITE;
             } else {
@@ -8364,9 +8391,11 @@ tu_barrier(struct tu_cmd_buffer *cmd,
          }
 
          src_flags |= vk2tu_access(barrier->srcAccessMask, src_access_mask2,
-                                   sanitized_src_stage, true, gmem);
+                                   sanitized_src_stage, true, gmem,
+                                   sparse_aliasing);
          dst_flags |= vk2tu_access(barrier->dstAccessMask, dst_access_mask2,
-                                   sanitized_dst_stage, true, gmem);
+                                   sanitized_dst_stage, true, gmem,
+                                   sparse_aliasing);
          srcStage |= sanitized_src_stage;
          dstStage |= sanitized_dst_stage;
       }

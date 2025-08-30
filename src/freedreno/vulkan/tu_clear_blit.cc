@@ -881,7 +881,7 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
    tu6_emit_vpc<CHIP>(cs, vs, NULL, NULL, NULL, fs);
 
    if (CHIP >= A7XX) {
-      tu_cs_emit_regs(cs, A6XX_GRAS_UNKNOWN_8110(0x2));
+      tu_cs_emit_regs(cs, A6XX_GRAS_MODE_CNTL(0x2));
 
       tu_cs_emit_regs(cs, A7XX_SP_RENDER_CNTL(.fs_disable = false));
    }
@@ -902,7 +902,7 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
                       .vp_clip_code_ignore = 1,
                       .vp_xform_disable = 1,
                       .persp_division_disable = 1,));
-   tu_cs_emit_regs(cs, A6XX_GRAS_SU_CNTL()); // XXX msaa enable?
+   tu_cs_emit_regs(cs, GRAS_SU_CNTL(CHIP)); // XXX msaa enable?
 
    tu_cs_emit_regs(cs, VPC_RAST_STREAM_CNTL(CHIP));
    if (CHIP == A6XX) {
@@ -1592,7 +1592,7 @@ r3d_setup(struct tu_cmd_buffer *cmd,
 
       tu_cs_emit_regs(cs, A6XX_RB_VRS_CONFIG());
       tu_cs_emit_regs(cs, A7XX_SP_VRS_CONFIG());
-      tu_cs_emit_regs(cs, A7XX_GRAS_VRS_CONFIG());
+      tu_cs_emit_regs(cs, GRAS_VRS_CONFIG(CHIP));
    }
 
    tu_cs_emit_write_reg(cs, REG_A6XX_GRAS_SC_CNTL,
@@ -2405,7 +2405,8 @@ tu_copy_buffer_to_image(struct tu_cmd_buffer *cmd,
 
    copy_compressed(dst_image->vk.format, &offset, &extent, &src_width, &src_height);
 
-   uint32_t pitch = src_width * util_format_get_blocksize(src_format);
+   uint32_t block_size = util_format_get_blocksize(src_format);
+   uint32_t pitch = src_width * block_size;
    uint32_t layer_size = src_height * pitch;
 
    ops->setup(cmd, cs, src_format, dst_format,
@@ -2423,12 +2424,35 @@ tu_copy_buffer_to_image(struct tu_cmd_buffer *cmd,
       bool unaligned = (src_va & 63) || (pitch & 63);
       if (!has_unaligned && unaligned) {
          for (uint32_t y = 0; y < extent.height; y++) {
-            uint32_t x = (src_va & 63) / util_format_get_blocksize(src_format);
+            uint32_t x = (src_va & 63) / block_size;
+            uint32_t excess_width = 0;
+            /* With VA aligning we can go over the maximum copy size
+             * and will have to do additional copy of the leftover.
+             */
+            if (x + extent.width > MAX_VIEWPORT_SIZE) {
+               excess_width = x + extent.width - MAX_VIEWPORT_SIZE;
+               assert(excess_width < 64 / block_size);
+            }
+            uint32_t clamped_width = extent.width - excess_width;
+
             ops->src_buffer(cmd, cs, src_format, src_va & ~63, pitch,
-                            x + extent.width, 1, dst_format);
+                            x + clamped_width, 1, dst_format);
             ops->coords(cmd, cs, (VkOffset2D) {offset.x, offset.y + y},  (VkOffset2D) {x},
-                        (VkExtent2D) {extent.width, 1});
+                        (VkExtent2D) {clamped_width, 1});
             ops->run(cmd, cs);
+
+            if (excess_width) {
+               uint64_t src_va_overflow =
+                  (src_va + clamped_width * block_size);
+               assert((src_va_overflow & 63) == 0);
+               ops->src_buffer(cmd, cs, src_format, src_va_overflow & ~63,
+                               pitch, excess_width, 1, dst_format);
+               ops->coords(
+                  cmd, cs,
+                  (VkOffset2D) { offset.x + clamped_width, offset.y + y },
+                  (VkOffset2D) { 0 }, (VkExtent2D) { excess_width, 1 });
+               ops->run(cmd, cs);
+            }
             src_va += pitch;
          }
       } else {
@@ -2600,7 +2624,8 @@ tu_copy_image_to_buffer(struct tu_cmd_buffer *cmd,
 
    copy_compressed(src_image->vk.format, &offset, &extent, &dst_width, &dst_height);
 
-   uint32_t pitch = dst_width * util_format_get_blocksize(dst_format);
+   uint32_t block_size = util_format_get_blocksize(dst_format);
+   uint32_t pitch = dst_width * block_size;
    uint32_t layer_size = pitch * dst_height;
 
    handle_buffer_unaligned_store<CHIP>(cmd,
@@ -2620,11 +2645,32 @@ tu_copy_image_to_buffer(struct tu_cmd_buffer *cmd,
       uint64_t dst_va = vk_buffer_address(&dst_buffer->vk, info->bufferOffset) + layer_size * i;
       if ((dst_va & 63) || (pitch & 63)) {
          for (uint32_t y = 0; y < extent.height; y++) {
-            uint32_t x = (dst_va & 63) / util_format_get_blocksize(dst_format);
+            uint32_t x = (dst_va & 63) / block_size;
+            uint32_t excess_width = 0;
+            /* With VA aligning we can go over the maximum copy size
+             * and will have to do additional copy of the leftover.
+             */
+            if (x + extent.width > MAX_VIEWPORT_SIZE) {
+               excess_width = x + extent.width - MAX_VIEWPORT_SIZE;
+               assert(excess_width < 64 / block_size);
+            }
+            uint32_t clamped_width = extent.width - excess_width;
+
             ops->dst_buffer(cs, dst_format, dst_va & ~63, 0, src_format);
             ops->coords(cmd, cs, (VkOffset2D) {x}, (VkOffset2D) {offset.x, offset.y + y},
-                        (VkExtent2D) {extent.width, 1});
+                        (VkExtent2D) {clamped_width, 1});
             ops->run(cmd, cs);
+
+            if (excess_width) {
+               uint64_t dst_va_overflow = (dst_va + clamped_width * block_size);
+               assert((dst_va_overflow & 63) == 0);
+               ops->dst_buffer(cs, dst_format, dst_va_overflow, 0, src_format);
+               ops->coords(cmd, cs, (VkOffset2D) { 0 },
+                           (VkOffset2D) { offset.x + clamped_width, offset.y + y },
+                           (VkExtent2D) { excess_width, 1 });
+               ops->run(cmd, cs);
+            }
+
             dst_va += pitch;
          }
       } else {

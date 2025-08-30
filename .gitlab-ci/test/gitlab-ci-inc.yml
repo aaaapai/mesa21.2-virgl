@@ -137,11 +137,19 @@
   extends:
     - .test-piglit
   variables:
-    PIGLIT_REPLAY_EXTRA_ARGS: --db-path ${CI_PROJECT_DIR}/replayer-db/ --minio_bucket=${S3_TRACIE_PUBLIC_BUCKET} --jwt-file=${S3_JWT_FILE}
+    PIGLIT_CACHE_DIR: $CI_PROJECT_DIR
+    PIGLIT_REPLAY_EXTRA_ARGS: --db-path ${PIGLIT_CACHE_DIR}/replayer-db/ --minio_bucket=${S3_TRACIE_PUBLIC_BUCKET} --jwt-file=${S3_JWT_FILE}
     PIGLIT_REPLAY_DEVICE_NAME: $GPU_VERSION
     PIGLIT_RESULTS: "${GPU_VERSION}-replay"
     PIGLIT_NO_WINDOW: 1
     HWCI_TEST_SCRIPT: "install/piglit/piglit-traces.sh"
+    # For downloading traces:
+    CI_TRON_HTTP_ARTIFACT__TRACIE_PUBLIC__PATH: /caching_proxy/https://s3.freedesktop.org/mesa-tracie-public/(.*)
+    CI_TRON_HTTP_ARTIFACT__TRACIE_PUBLIC__URL: https://s3.freedesktop.org/mesa-tracie-public/\1
+    # For uploading renders:
+    # s3.fd.o redirects to hetzner, so we need that too
+    CI_TRON_PROXY__ALLOWED_ENDPOINTS_CATEGORY__S3__FDO: s3.freedesktop.org:443
+    CI_TRON_PROXY__ALLOWED_ENDPOINTS_CATEGORY__S3__BACKEND: fsn1.your-objectstorage.com:443
 
 .deqp-test:
   script:

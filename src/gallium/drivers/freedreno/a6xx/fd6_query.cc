@@ -111,7 +111,7 @@ occlusion_pause(struct fd_acc_query *aq, struct fd_batch *batch) assert_dt
 
    if (!ctx->screen->info->a7xx.has_event_write_sample_count) {
       fd_pkt7(cs, CP_MEM_WRITE, 4)
-         .add(CP_MEM_WRITE_ADDR(query_sample(aq, stop)))
+         .add(A5XX_CP_MEM_WRITE_ADDR(query_sample(aq, stop)))
          .add(0xffffffff)
          .add(0xffffffff);
 
@@ -505,7 +505,7 @@ pipeline_stats_resume(struct fd_acc_query *aq, struct fd_batch *batch)
    /* snapshot the start value: */
    fd_pkt7(cs, CP_REG_TO_MEM, 3)
       .add(CP_REG_TO_MEM_0(.reg = reg, .cnt = 2, ._64b = true))
-      .add(CP_REG_TO_MEM_DEST(stats_sample(aq, start)));
+      .add(A5XX_CP_REG_TO_MEM_DEST(stats_sample(aq, start)));
 
    assert(type < ARRAY_SIZE(batch->pipeline_stats_queries_active));
 
@@ -529,7 +529,7 @@ pipeline_stats_pause(struct fd_acc_query *aq, struct fd_batch *batch)
    /* snapshot the end values: */
    fd_pkt7(cs, CP_REG_TO_MEM, 3)
       .add(CP_REG_TO_MEM_0(.reg = reg, .cnt = 2, ._64b = true))
-      .add(CP_REG_TO_MEM_DEST(stats_sample(aq, stop)));
+      .add(A5XX_CP_REG_TO_MEM_DEST(stats_sample(aq, stop)));
 
    assert(type < ARRAY_SIZE(batch->pipeline_stats_queries_active));
    assert(batch->pipeline_stats_queries_active[type] > 0);
@@ -642,7 +642,7 @@ primitives_emitted_resume(struct fd_acc_query *aq,
    ASSERT_ALIGNED(struct fd6_primitives_sample, start[0], 32);
 
    fd_pkt4(cs, 2)
-      .add(A6XX_VPC_SO_QUERY_BASE(primitives_sample(aq, start[0])));
+      .add(VPC_SO_QUERY_BASE(CHIP, primitives_sample(aq, start[0])));
 
    fd6_event_write<CHIP>(batch->ctx, cs, FD_WRITE_PRIMITIVE_COUNTS);
 }
@@ -683,7 +683,7 @@ primitives_emitted_pause(struct fd_acc_query *aq,
    ASSERT_ALIGNED(struct fd6_primitives_sample, stop[0], 32);
 
    fd_pkt4(cs, 2)
-      .add(A6XX_VPC_SO_QUERY_BASE(primitives_sample(aq, stop[0])));
+      .add(VPC_SO_QUERY_BASE(CHIP, primitives_sample(aq, stop[0])));
 
    fd6_event_write<CHIP>(batch->ctx, cs, FD_WRITE_PRIMITIVE_COUNTS);
    fd6_event_write<CHIP>(batch->ctx, cs, FD_CACHE_CLEAN);
@@ -863,7 +863,7 @@ perfcntr_resume(struct fd_acc_query *aq, struct fd_batch *batch) assert_dt
 
       fd_pkt7(cs, CP_REG_TO_MEM, 3)
          .add(CP_REG_TO_MEM_0(.reg = counter->counter_reg_lo, ._64b = true))
-         .add(CP_REG_TO_MEM_DEST(query_sample_idx(aq, i, start)));
+         .add(A5XX_CP_REG_TO_MEM_DEST(query_sample_idx(aq, i, start)));
    }
 }
 
@@ -890,7 +890,7 @@ perfcntr_pause(struct fd_acc_query *aq, struct fd_batch *batch) assert_dt
 
       fd_pkt7(cs, CP_REG_TO_MEM, 3)
          .add(CP_REG_TO_MEM_0(.reg = counter->counter_reg_lo, ._64b = true))
-         .add(CP_REG_TO_MEM_DEST(query_sample_idx(aq, i, stop)));
+         .add(A5XX_CP_REG_TO_MEM_DEST(query_sample_idx(aq, i, stop)));
    }
 
    /* and compute the result: */

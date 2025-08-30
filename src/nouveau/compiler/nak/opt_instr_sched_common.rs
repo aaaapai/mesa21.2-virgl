@@ -172,6 +172,7 @@ pub fn side_effect_type(op: &Op) -> SideEffect {
         // Memory ops
         Op::Ipa(_) | Op::Ldc(_) => SideEffect::None,
         Op::Ld(_)
+        | Op::Ldsm(_)
         | Op::LdSharedLock(_)
         | Op::St(_)
         | Op::StSCheckUnlock(_)
@@ -240,8 +241,9 @@ pub fn side_effect_type(op: &Op) -> SideEffect {
     }
 }
 
-pub fn estimate_block_weight(cfg: &CFG<BasicBlock>, block_idx: usize) -> u32 {
-    10_u32.pow(cfg.loop_depth(block_idx).try_into().unwrap())
+pub fn estimate_block_weight(cfg: &CFG<BasicBlock>, block_idx: usize) -> u64 {
+    let loop_depth = cfg.loop_depth(block_idx) as f32;
+    10_f32.powf((loop_depth + 1.0).log2()) as u64
 }
 
 /// Try to guess how many cycles a variable latency instruction will take
@@ -295,6 +297,7 @@ pub fn estimate_variable_latency(sm: u8, op: &Op) -> u32 {
         Op::Ldc(_) => 4,
 
         Op::Ld(_)
+        | Op::Ldsm(_)
         | Op::LdSharedLock(_)
         | Op::St(_)
         | Op::StSCheckUnlock(_)

@@ -67,7 +67,18 @@ render_state_set_color_attachment(struct panvk_cmd_buffer *cmdbuf,
    state->render.color_attachments.samples[index] = img->vk.samples;
 
 #if PAN_ARCH < 9
-   state->render.fb.bos[state->render.fb.bo_count++] = img->mem->bo;
+   for (uint8_t p = 0; p < ARRAY_SIZE(iview->pview.planes); p++) {
+      struct pan_image_plane_ref pref =
+         pan_image_view_get_plane(&iview->pview, p);
+
+      if (!pref.image)
+         continue;
+
+      assert(pref.plane_idx < ARRAY_SIZE(img->planes));
+      assert(img->planes[pref.plane_idx].mem->bo != NULL);
+      state->render.fb.bos[state->render.fb.bo_count++] =
+         img->planes[pref.plane_idx].mem->bo;
+   }
 #endif
 
    fbinfo->rts[index].view = &iview->pview;
@@ -108,7 +119,8 @@ render_state_set_z_attachment(struct panvk_cmd_buffer *cmdbuf,
       container_of(iview->vk.image, struct panvk_image, vk);
 
 #if PAN_ARCH < 9
-   state->render.fb.bos[state->render.fb.bo_count++] = img->mem->bo;
+   /* Depth plane always comes first. */
+   state->render.fb.bos[state->render.fb.bo_count++] = img->planes[0].mem->bo;
 #endif
 
    state->render.z_attachment.fmt = iview->vk.format;
@@ -172,7 +184,9 @@ render_state_set_s_attachment(struct panvk_cmd_buffer *cmdbuf,
       container_of(iview->vk.image, struct panvk_image, vk);
 
 #if PAN_ARCH < 9
-   state->render.fb.bos[state->render.fb.bo_count++] = img->mem->bo;
+   /* The stencil plane is always last. */
+   state->render.fb.bos[state->render.fb.bo_count++] =
+      img->planes[img->plane_count - 1].mem->bo;
 #endif
 
    state->render.s_attachment.fmt = iview->vk.format;
@@ -280,8 +294,8 @@ panvk_per_arch(cmd_init_render_state)(struct panvk_cmd_buffer *cmdbuf,
       pRenderingInfo->layerCount;
    cmdbuf->state.gfx.render.view_mask = pRenderingInfo->viewMask;
    *fbinfo = (struct pan_fb_info){
-      .tile_buf_budget = pan_query_optimal_tib_size(phys_dev->model),
-      .z_tile_buf_budget = pan_query_optimal_z_tib_size(phys_dev->model),
+      .tile_buf_budget = pan_query_optimal_tib_size(PAN_ARCH, phys_dev->model),
+      .z_tile_buf_budget = pan_query_optimal_z_tib_size(PAN_ARCH, phys_dev->model),
       .nr_samples = 0,
       .rt_count = pRenderingInfo->colorAttachmentCount,
    };
@@ -903,10 +917,6 @@ panvk_per_arch(CmdBindIndexBuffer2)(VkCommandBuffer commandBuffer,
       cmdbuf->state.gfx.ib.size = panvk_buffer_range(buf, offset, size);
       assert(cmdbuf->state.gfx.ib.size <= UINT32_MAX);
       cmdbuf->state.gfx.ib.dev_addr = panvk_buffer_gpu_ptr(buf, offset);
-#if PAN_ARCH < 9
-      cmdbuf->state.gfx.ib.host_addr =
-         buf && buf->host_ptr ? buf->host_ptr + offset : NULL;
-#endif
    } else {
       cmdbuf->state.gfx.ib.size = 0;
       /* In case of NullDescriptors, we need to set a non-NULL address and rely
@@ -914,9 +924,6 @@ panvk_per_arch(CmdBindIndexBuffer2)(VkCommandBuffer commandBuffer,
        * that this only works for v10+, as v9 does not have a way to specify the
        * index buffer size. */
       cmdbuf->state.gfx.ib.dev_addr = PAN_ARCH >= 10 ? 0x1000 : 0;
-#if PAN_ARCH < 9
-      cmdbuf->state.gfx.ib.host_addr = 0;
-#endif
    }
    cmdbuf->state.gfx.ib.index_size = vk_index_type_to_bytes(indexType);
 

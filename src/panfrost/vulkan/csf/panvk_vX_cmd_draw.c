@@ -1916,6 +1916,7 @@ static VkResult
 prepare_oq(struct panvk_cmd_buffer *cmdbuf)
 {
    if (!gfx_state_dirty(cmdbuf, OQ) ||
+       cmdbuf->state.gfx.occlusion_query.mode == MALI_OCCLUSION_MODE_DISABLED ||
        cmdbuf->state.gfx.occlusion_query.syncobj ==
           cmdbuf->state.gfx.render.oq.last)
       return VK_SUCCESS;
@@ -2566,8 +2567,7 @@ panvk_cmd_draw_indirect(struct panvk_cmd_buffer *cmdbuf,
    struct cs_index draw_id = cs_scratch_reg32(b, 7);
    struct cs_index vs_fau_addr = cs_scratch_reg64(b, 8);
    struct cs_index tracing_scratch_regs = cs_scratch_reg_tuple(b, 10, 4);
-   uint32_t vs_fau_count = BITSET_COUNT(vs->fau.used_sysvals) +
-                           BITSET_COUNT(vs->fau.used_push_consts);
+   uint32_t vs_fau_count = vs->fau.total_count;
 
    if (draw->indirect.count_buffer_dev_addr) {
       cs_move32_to(b, max_draw_count, draw->indirect.draw_count);
@@ -2855,8 +2855,8 @@ panvk_per_arch(cmd_inherit_render_state)(
    /* If a draw was performed, the inherited sample count should match our current sample count */
    assert(fbinfo->nr_samples == 0 || inheritance_info->rasterizationSamples == fbinfo->nr_samples);
    *fbinfo = (struct pan_fb_info){
-      .tile_buf_budget = pan_query_optimal_tib_size(phys_dev->model),
-      .z_tile_buf_budget = pan_query_optimal_z_tib_size(phys_dev->model),
+      .tile_buf_budget = pan_query_optimal_tib_size(PAN_ARCH, phys_dev->model),
+      .z_tile_buf_budget = pan_query_optimal_z_tib_size(PAN_ARCH, phys_dev->model),
       .tile_size = fbinfo->tile_size,
       .cbuf_allocation = fbinfo->cbuf_allocation,
       .nr_samples = inheritance_info->rasterizationSamples,

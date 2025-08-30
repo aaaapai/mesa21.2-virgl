@@ -210,7 +210,7 @@ struct wsi_swapchain {
    int signal_dma_buf_from_semaphore;
    /**
     * Optional semaphore for implicit-sync swapchains.  It will be signaled by
-    * the pre-present vkQueueSubmit, and its syncobj will get imported into the
+    * the pre-present vkQueueSubmit2, and its syncobj will get imported into the
     * image's dma-buf before being presented.
     *
     * If not set (due to older kernels missing sync-file import/export), for
@@ -233,7 +233,7 @@ struct wsi_swapchain {
        * The created queue will be stored here and will be used to execute the
        * buffer blit instead of using the present queue.
        */
-      VkQueue queue;
+      struct vk_queue *queue;
    } blit;
 
    bool capture_key_pressed;

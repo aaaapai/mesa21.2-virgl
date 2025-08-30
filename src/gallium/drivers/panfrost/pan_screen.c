@@ -143,7 +143,7 @@ pipe_to_pan_bind_flags(uint32_t pipe_bind_flags)
 static unsigned
 get_max_msaa(struct panfrost_device *dev, enum pipe_format format)
 {
-   unsigned max_tib_size = pan_get_max_tib_size(dev->arch, dev->model);
+   unsigned max_tib_size = pan_query_tib_size(dev->model);
    unsigned max_cbuf_atts = pan_get_max_cbufs(dev->arch, max_tib_size);
    unsigned format_size = util_format_get_blocksize(format);
 
@@ -312,6 +312,15 @@ panfrost_lower_yuv_format(struct panfrost_device *dev,
       break;
    case PIPE_FORMAT_NV16:
       TRY_LOWERING(PIPE_FORMAT_R8_G8B8_422_UNORM);
+      TRY_LOWERING(PIPE_FORMAT_R8_UNORM, PIPE_FORMAT_RG88_UNORM);
+      break;
+   case PIPE_FORMAT_NV61:
+      TRY_LOWERING(PIPE_FORMAT_R8_UNORM, PIPE_FORMAT_RG88_UNORM);
+      break;
+   case PIPE_FORMAT_NV24:
+      TRY_LOWERING(PIPE_FORMAT_R8_UNORM, PIPE_FORMAT_RG88_UNORM);
+      break;
+   case PIPE_FORMAT_NV42:
       TRY_LOWERING(PIPE_FORMAT_R8_UNORM, PIPE_FORMAT_RG88_UNORM);
       break;
    case PIPE_FORMAT_NV15:
@@ -661,7 +670,7 @@ panfrost_init_screen_caps(struct panfrost_screen *screen)
    bool is_gl3 = dev->debug & PAN_DBG_GL3;
 
    unsigned max_tib_size =
-      pan_get_max_tib_size(dev->arch, dev->model);
+      pan_query_tib_size(dev->model);
 
    caps->npot_textures = true;
    caps->mixed_color_depth_bits = true;

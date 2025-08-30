@@ -74,6 +74,17 @@ d3d12_wgl_framebuffer(struct stw_winsys_framebuffer *fb)
 }
 
 static void
+d3d12_wgl_framebuffer_drain_queue(struct d3d12_wgl_framebuffer *framebuffer)
+{
+   /* Fully drain */
+   mtx_lock(&framebuffer->screen->submit_mutex);
+   UINT64 value = ++framebuffer->screen->fence_value;
+   framebuffer->screen->cmdqueue->Signal(framebuffer->screen->fence, value);
+   mtx_unlock(&framebuffer->screen->submit_mutex);
+   framebuffer->screen->fence->SetEventOnCompletion(value, nullptr);
+}
+
+static void
 d3d12_wgl_framebuffer_destroy(struct stw_winsys_framebuffer *fb,
                               pipe_context *ctx)
 {
@@ -88,6 +99,8 @@ d3d12_wgl_framebuffer_destroy(struct stw_winsys_framebuffer *fb,
          ctx->screen->fence_reference(ctx->screen, &fence, NULL);
       }
    }
+
+   d3d12_wgl_framebuffer_drain_queue(framebuffer);
 
    for (uint32_t i = 0; i < num_buffers; ++i) {
       if (framebuffer->buffers[i]) {
@@ -166,30 +179,45 @@ d3d12_wgl_framebuffer_resize(stw_winsys_framebuffer *fb,
       break;
    }
 
-   if (!framebuffer->dcomp) {
-      framebuffer->dcomp.Attach(dcomp_get_device());
+   if (desc.AlphaMode != DXGI_ALPHA_MODE_IGNORE) {
       if (!framebuffer->dcomp) {
-         debug_printf("D3D12: failed to create dcomp device\n");
-         return;
+         framebuffer->dcomp.Attach(dcomp_get_device());
+         if (!framebuffer->dcomp) {
+            debug_printf("D3D12: failed to create dcomp device\n");
+            return;
+         }
       }
-   }
 
-   if (!framebuffer->target) {
-      if (FAILED(framebuffer->dcomp->CreateTargetForHwnd(framebuffer->window, TRUE, &framebuffer->target))) {
-         debug_printf("D3D12: failed to create dcomp target\n");
-         return;
+      if (!framebuffer->target) {
+         if (FAILED(framebuffer->dcomp->CreateTargetForHwnd(framebuffer->window, TRUE, &framebuffer->target))) {
+            debug_printf("D3D12: failed to create dcomp target\n");
+            return;
+         }
       }
    }
 
    if (!framebuffer->swapchain) {
       ComPtr<IDXGISwapChain1> swapchain1;
-      if (FAILED(screen->factory->CreateSwapChainForComposition(
-         screen->base.cmdqueue,
-         &desc,
-         nullptr,
-         &swapchain1))) {
-         debug_printf("D3D12: failed to create swapchain\n");
-         return;
+      if (desc.AlphaMode != DXGI_ALPHA_MODE_IGNORE) {
+         if (FAILED(screen->factory->CreateSwapChainForComposition(
+            screen->base.cmdqueue,
+            &desc,
+            nullptr,
+            &swapchain1))) {
+            debug_printf("D3D12: failed to create swapchain\n");
+            return;
+         }
+      } else {
+         if (FAILED(screen->factory->CreateSwapChainForHwnd(
+            screen->base.cmdqueue,
+            framebuffer->window,
+            &desc,
+            nullptr,
+            nullptr,
+            &swapchain1))) {
+            debug_printf("D3D12: failed to create swapchain\n");
+            return;
+         }
       }
 
       swapchain1.As(&framebuffer->swapchain);
@@ -209,6 +237,8 @@ d3d12_wgl_framebuffer_resize(stw_winsys_framebuffer *fb,
          ctx->screen->fence_reference(ctx->screen, &fence, NULL);
       }
 
+      d3d12_wgl_framebuffer_drain_queue(framebuffer);
+
       for (uint32_t i = 0; i < num_buffers; ++i) {
          if (framebuffer->buffers[i]) {
             d3d12_resource_release(d3d12_resource(framebuffer->buffers[i]));
@@ -220,7 +250,7 @@ d3d12_wgl_framebuffer_resize(stw_winsys_framebuffer *fb,
       }
    }
 
-   if (!framebuffer->visual) {
+   if (!framebuffer->visual && desc.AlphaMode != DXGI_ALPHA_MODE_IGNORE) {
       if (FAILED(framebuffer->dcomp->CreateVisual(&framebuffer->visual)) ||
           FAILED(framebuffer->target->SetRoot(framebuffer->visual.Get())) ||
           FAILED(framebuffer->visual->SetContent(framebuffer->swapchain.Get())) ||

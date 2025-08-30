@@ -87,8 +87,18 @@ compile_single_bs(const struct brw_compiler *compiler,
    brw_postprocess_nir(shader, compiler, debug_enabled,
                        key->base.robust_flags);
 
-   brw_shader s(compiler, &params->base, &key->base, &prog_data->base, shader,
-                required_width, stats != NULL, debug_enabled);
+   const brw_shader_params shader_params = {
+      .compiler                = compiler,
+      .mem_ctx                 = params->base.mem_ctx,
+      .nir                     = shader,
+      .key                     = &key->base,
+      .prog_data               = &prog_data->base,
+      .dispatch_width          = required_width,
+      .needs_register_pressure = stats != NULL,
+      .log_data                = params->base.log_data,
+      .debug_enabled           = debug_enabled,
+   };
+   brw_shader s(&shader_params);
 
    const bool allow_spilling = true;
    if (!run_bs(s, allow_spilling)) {
@@ -99,8 +109,7 @@ compile_single_bs(const struct brw_compiler *compiler,
       return 0;
    }
 
-   int offset = g->generate_code(s.cfg, s.dispatch_width, s.shader_stats,
-                                 s.performance_analysis.require(), stats);
+   int offset = g->generate_code(s, stats);
    if (prog_offset)
       *prog_offset = offset;
    else

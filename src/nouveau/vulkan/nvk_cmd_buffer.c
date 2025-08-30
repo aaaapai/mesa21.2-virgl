@@ -28,6 +28,9 @@
 #include "nv_push_clc597.h"
 #include "nv_push_clc86f.h"
 
+static uint8_t
+nvk_cmd_buffer_subchannel_mask(struct nvk_cmd_buffer *cmd);
+
 static void
 nvk_descriptor_state_fini(struct nvk_cmd_buffer *cmd,
                           struct nvk_descriptor_state *desc)
@@ -88,6 +91,8 @@ nvk_create_cmd_buffer(struct vk_command_pool *vk_pool,
    list_inithead(&cmd->owned_gart_mem);
    list_inithead(&cmd->owned_qmd);
    util_dynarray_init(&cmd->pushes, NULL);
+
+   cmd->prev_subc = ffs(nvk_cmd_buffer_subchannel_mask(cmd)) - 1;
 
    *cmd_buffer_out = &cmd->vk;
 
@@ -183,6 +188,8 @@ nvk_cmd_buffer_flush_push(struct nvk_cmd_buffer *cmd, bool incomplete)
          .incomplete = incomplete,
       };
       util_dynarray_append(&cmd->pushes, struct nvk_cmd_push, push);
+
+      cmd->prev_subc = NVC0_FIFO_SUBC_FROM_PKHDR(cmd->push.last_hdr_dw);
    }
 
    cmd->push.start = cmd->push.end;
@@ -195,7 +202,11 @@ nvk_cmd_buffer_new_push(struct nvk_cmd_buffer *cmd)
 
    uint8_t subc_mask = nvk_cmd_buffer_subchannel_mask(cmd);
 
-   VkResult result = nvk_cmd_buffer_alloc_mem(cmd, false, &cmd->push_mem);
+   /* Strictly speaking, pushbufs don't need to live in GART but the command
+    * streamer is pretty efficient at pulling across PCI and command buffers tend
+    * to be read-once so there's not much benefit to putting them in VRAM.
+    */
+   VkResult result = nvk_cmd_buffer_alloc_mem(cmd, true, &cmd->push_mem);
    if (unlikely(result != VK_SUCCESS)) {
       vk_command_buffer_set_error(&cmd->vk, result);
       STATIC_ASSERT(NVK_CMD_BUFFER_MAX_PUSH <= NVK_CMD_MEM_SIZE / 4);
@@ -430,6 +441,8 @@ nvk_CmdExecuteCommands(VkCommandBuffer commandBuffer,
        * do with it is reset it.  vkResetCommandPool() has similar language.
        */
       util_dynarray_append_dynarray(&cmd->pushes, &other->pushes);
+
+      cmd->prev_subc = nvk_cmd_buffer_last_subchannel(other);
    }
 
    /* From the Vulkan 1.3.275 spec:
@@ -635,27 +648,46 @@ nvk_cmd_invalidate_deps(struct nvk_cmd_buffer *cmd,
 
    if (barriers & NVK_BARRIER_INVALIDATE_TEX_DATA) {
       if (pdev->info.cls_eng3d >= MAXWELL_A) {
-         P_IMMD(p, NVA097, INVALIDATE_TEXTURE_DATA_CACHE_NO_WFI, {
-            .lines = LINES_ALL,
-         });
+         if (nvk_cmd_buffer_last_subchannel(cmd) == SUBC_NVA097) {
+            P_IMMD(p, NVA097, INVALIDATE_TEXTURE_DATA_CACHE_NO_WFI, {
+               .lines = LINES_ALL,
+            });
+         } else {
+            P_IMMD(p, NVA0C0, INVALIDATE_TEXTURE_DATA_CACHE_NO_WFI, {
+               .lines = LINES_ALL,
+            });
+         }
       } else {
          /* On Kepler, the _NO_WFI form doesn't appear to actually work
           * properly.  It exists in the headers but it doesn't fully
           * invalidate everything.  Even doing a full WFI before hand isn't
           * sufficient.
           */
-         P_IMMD(p, NVA097, INVALIDATE_TEXTURE_DATA_CACHE, {
-            .lines = LINES_ALL,
-         });
+         if (nvk_cmd_buffer_last_subchannel(cmd) == SUBC_NVA097) {
+            P_IMMD(p, NVA097, INVALIDATE_TEXTURE_DATA_CACHE, {
+               .lines = LINES_ALL,
+            });
+         } else {
+            P_IMMD(p, NVA0C0, INVALIDATE_TEXTURE_DATA_CACHE, {
+               .lines = LINES_ALL,
+            });
+         }
       }
    }
 
    if (barriers & (NVK_BARRIER_INVALIDATE_SHADER_DATA &
                    NVK_BARRIER_INVALIDATE_CONSTANT)) {
-      P_IMMD(p, NVA097, INVALIDATE_SHADER_CACHES_NO_WFI, {
-         .global_data = (barriers & NVK_BARRIER_INVALIDATE_SHADER_DATA) != 0,
-         .constant = (barriers & NVK_BARRIER_INVALIDATE_CONSTANT) != 0,
-      });
+      if (nvk_cmd_buffer_last_subchannel(cmd) == SUBC_NVA097) {
+         P_IMMD(p, NVA097, INVALIDATE_SHADER_CACHES_NO_WFI, {
+            .global_data = (barriers & NVK_BARRIER_INVALIDATE_SHADER_DATA) != 0,
+            .constant = (barriers & NVK_BARRIER_INVALIDATE_CONSTANT) != 0,
+         });
+      } else {
+         P_IMMD(p, NVA0C0, INVALIDATE_SHADER_CACHES_NO_WFI, {
+            .global_data = (barriers & NVK_BARRIER_INVALIDATE_SHADER_DATA) != 0,
+            .constant = (barriers & NVK_BARRIER_INVALIDATE_CONSTANT) != 0,
+         });
+      }
    }
 
    if (barriers & (NVK_BARRIER_INVALIDATE_MME_DATA)) {
@@ -1191,47 +1223,6 @@ nvk_cmd_buffer_get_cbuf_descriptor_addr(struct nvk_cmd_buffer *cmd,
 
    default:
       UNREACHABLE("Unknown descriptor set type");
-   }
-}
-
-void
-nvk_cmd_buffer_dump(struct nvk_cmd_buffer *cmd, FILE *fp)
-{
-   struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
-   const struct nvk_physical_device *pdev = nvk_device_physical(dev);
-
-   util_dynarray_foreach(&cmd->pushes, struct nvk_cmd_push, p) {
-      if (p->map) {
-         struct nv_push push = {
-            .start = (uint32_t *)p->map,
-            .end = (uint32_t *)((char *)p->map + p->range),
-         };
-         vk_push_print(fp, &push, &pdev->info);
-      } else {
-         const uint64_t addr = p->addr;
-         fprintf(fp, "<%u B of INDIRECT DATA at 0x%" PRIx64 ">\n",
-                 p->range, addr);
-
-         uint64_t mem_offset = 0;
-         struct nvkmd_mem *mem =
-            nvkmd_dev_lookup_mem_by_va(dev->nvkmd, addr, &mem_offset);
-         if (mem != NULL) {
-            void *map;
-            VkResult map_result = nvkmd_mem_map(mem, &dev->vk.base,
-                                                NVKMD_MEM_MAP_RD, NULL,
-                                                &map);
-            if (map_result == VK_SUCCESS) {
-               struct nv_push push = {
-                  .start = mem->map + mem_offset,
-                  .end = mem->map + mem_offset + p->range,
-               };
-               vk_push_print(fp, &push, &pdev->info);
-               nvkmd_mem_unmap(mem, 0);
-            }
-
-            nvkmd_mem_unref(mem);
-         }
-      }
    }
 }
 

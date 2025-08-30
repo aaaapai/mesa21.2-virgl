@@ -492,6 +492,10 @@ radv_physical_device_get_format_properties(struct radv_physical_device *pdev, Vk
          tiled |= VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT_EXT;
    }
 
+   if (pdev->video_encode_enabled && format == VK_FORMAT_R32_SINT) {
+      linear |= VK_FORMAT_FEATURE_2_VIDEO_ENCODE_QUANTIZATION_DELTA_MAP_BIT_KHR;
+   }
+
    out_properties->linearTilingFeatures = linear;
    out_properties->optimalTilingFeatures = tiled;
    out_properties->bufferFeatures = buffer;
@@ -821,6 +825,10 @@ radv_check_modifier_support(struct radv_physical_device *pdev, const VkPhysicalD
       if (info->usage & VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR && modifier == DRM_FORMAT_MOD_LINEAR)
          return VK_ERROR_FORMAT_NOT_SUPPORTED;
    }
+
+   /* QP map needs linear. */
+   if (info->usage & VK_IMAGE_USAGE_VIDEO_ENCODE_QUANTIZATION_DELTA_MAP_BIT_KHR && modifier != DRM_FORMAT_MOD_LINEAR)
+      return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
    /* We can expand this as needed and implemented but there is not much demand
     * for more.

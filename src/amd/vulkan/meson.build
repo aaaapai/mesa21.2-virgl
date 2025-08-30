@@ -81,6 +81,7 @@ libradv_files = files(
   'nir/radv_nir_lower_view_index.c',
   'nir/radv_nir_lower_viewport_to_zero.c',
   'nir/radv_nir_lower_vs_inputs.c',
+  'nir/radv_nir_opt_access_speculate.c',
   'nir/radv_nir_opt_fs_builtins.c',
   'nir/radv_nir_opt_tid_function.c',
   'nir/radv_nir_remap_color_attachment.c',
@@ -250,7 +251,7 @@ libvulkan_radeon = shared_library(
     libamd_common, libamd_common_llvm, libamdgpu_addrlib,
   ],
   dependencies : [
-    dep_llvm, dep_thread, dep_elf, dep_dl, dep_m,
+    dep_llvm, dep_libdrm_amdgpu, dep_thread, dep_elf, dep_dl, dep_m,
     dep_valgrind, radv_deps, idep_aco,
     idep_mesautil, idep_nir, idep_vulkan_util, idep_vulkan_wsi,
     idep_vulkan_runtime, idep_amdgfxregs_h, idep_xmlconfig,

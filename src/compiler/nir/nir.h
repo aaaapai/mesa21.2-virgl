@@ -2848,32 +2848,6 @@ NIR_DEFINE_CAST(nir_instr_as_parallel_copy, nir_instr,
                 nir_parallel_copy_instr, instr,
                 type, nir_instr_type_parallel_copy)
 
-#define NIR_DEFINE_SRC_AS_CONST(type, suffix)                 \
-   static inline type                                         \
-      nir_src_comp_as_##suffix(nir_src src, unsigned comp)    \
-   {                                                          \
-      assert(nir_src_is_const(src));                          \
-      nir_load_const_instr *load =                            \
-         nir_instr_as_load_const(src.ssa->parent_instr);      \
-      assert(comp < load->def.num_components);                \
-      return nir_const_value_as_##suffix(load->value[comp],   \
-                                         load->def.bit_size); \
-   }                                                          \
-                                                              \
-   static inline type                                         \
-      nir_src_as_##suffix(nir_src src)                        \
-   {                                                          \
-      assert(nir_src_num_components(src) == 1);               \
-      return nir_src_comp_as_##suffix(src, 0);                \
-   }
-
-NIR_DEFINE_SRC_AS_CONST(int64_t, int)
-NIR_DEFINE_SRC_AS_CONST(uint64_t, uint)
-NIR_DEFINE_SRC_AS_CONST(bool, bool)
-NIR_DEFINE_SRC_AS_CONST(double, float)
-
-#undef NIR_DEFINE_SRC_AS_CONST
-
 #define NIR_DEFINE_DEF_AS_INSTR(type, suffix)                  \
    static inline type *nir_def_as_##suffix(const nir_def *def) \
    {                                                           \
@@ -2888,6 +2862,32 @@ NIR_DEFINE_DEF_AS_INSTR(nir_deref_instr, deref)
 NIR_DEFINE_DEF_AS_INSTR(nir_load_const_instr, load_const)
 
 #undef NIR_DEFINE_DEF_AS_INSTR
+
+#define NIR_DEFINE_SRC_AS_CONST(type, suffix)                 \
+   static inline type                                         \
+   nir_src_comp_as_##suffix(nir_src src, unsigned comp)       \
+   {                                                          \
+      assert(nir_src_is_const(src));                          \
+      nir_load_const_instr *load =                            \
+         nir_def_as_load_const(src.ssa);                      \
+      assert(comp < load->def.num_components);                \
+      return nir_const_value_as_##suffix(load->value[comp],   \
+                                         load->def.bit_size); \
+   }                                                          \
+                                                              \
+   static inline type                                         \
+   nir_src_as_##suffix(nir_src src)                           \
+   {                                                          \
+      assert(nir_src_num_components(src) == 1);               \
+      return nir_src_comp_as_##suffix(src, 0);                \
+   }
+
+NIR_DEFINE_SRC_AS_CONST(int64_t, int)
+NIR_DEFINE_SRC_AS_CONST(uint64_t, uint)
+NIR_DEFINE_SRC_AS_CONST(bool, bool)
+NIR_DEFINE_SRC_AS_CONST(double, float)
+
+#undef NIR_DEFINE_SRC_AS_CONST
 
 typedef struct nir_scalar {
    nir_def *def;
@@ -2938,7 +2938,7 @@ nir_scalar_is_alu(nir_scalar s)
 static inline nir_op
 nir_scalar_alu_op(nir_scalar s)
 {
-   return nir_instr_as_alu(s.def->parent_instr)->op;
+   return nir_def_as_alu(s.def)->op;
 }
 
 static inline bool
@@ -2950,7 +2950,7 @@ nir_scalar_is_intrinsic(nir_scalar s)
 static inline nir_intrinsic_op
 nir_scalar_intrinsic_op(nir_scalar s)
 {
-   return nir_instr_as_intrinsic(s.def->parent_instr)->intrinsic;
+   return nir_def_as_intrinsic(s.def)->intrinsic;
 }
 
 static inline nir_scalar
@@ -6161,7 +6161,8 @@ nir_rewrite_uses_to_load_reg(nir_builder *b, nir_def *old,
 bool nir_convert_from_ssa(nir_shader *shader,
                           bool phi_webs_only, bool consider_divergence);
 
-bool nir_lower_phis_to_regs_block(nir_block *block);
+bool nir_lower_phis_to_regs_block(nir_block *block,
+                                  bool place_writes_in_imm_preds);
 bool nir_lower_ssa_defs_to_regs_block(nir_block *block);
 
 bool nir_rematerialize_deref_in_use_blocks(nir_deref_instr *instr);
@@ -6562,7 +6563,7 @@ static inline nir_intrinsic_instr *
 nir_reg_get_decl(nir_def *reg)
 {
    assert(reg->parent_instr->type == nir_instr_type_intrinsic);
-   nir_intrinsic_instr *decl = nir_instr_as_intrinsic(reg->parent_instr);
+   nir_intrinsic_instr *decl = nir_def_as_intrinsic(reg);
    assert(decl->intrinsic == nir_intrinsic_decl_reg);
 
    return decl;
@@ -6656,7 +6657,7 @@ nir_load_reg_for_def(const nir_def *def)
    if (def->parent_instr->type != nir_instr_type_intrinsic)
       return NULL;
 
-   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(def->parent_instr);
+   nir_intrinsic_instr *intr = nir_def_as_intrinsic(def);
    if (!nir_is_load_reg(intr))
       return NULL;
 
@@ -6751,6 +6752,8 @@ typedef struct {
 
 void nir_gather_output_clipper_var_groups(nir_shader *nir,
                                           nir_output_clipper_var_groups *groups);
+
+bool nir_lower_cooperative_matrix_flexible_dimensions(nir_shader *shader, unsigned m_gran, unsigned n_gran, unsigned k_gran);
 
 #include "nir_inline_helpers.h"
 

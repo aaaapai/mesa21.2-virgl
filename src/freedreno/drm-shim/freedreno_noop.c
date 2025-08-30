@@ -73,6 +73,8 @@ msm_ioctl_gem_info(int fd, unsigned long request, void *arg)
       break;
    case MSM_INFO_SET_IOVA:
    case MSM_INFO_SET_NAME:
+   case MSM_INFO_SET_METADATA:
+   case MSM_INFO_GET_METADATA:
       break;
    default:
       fprintf(stderr, "Unknown DRM_IOCTL_MSM_GEM_INFO %d\n", args->info);
@@ -136,6 +138,19 @@ msm_ioctl_get_param(int fd, unsigned long request, void *arg)
 }
 
 static int
+msm_ioctl_set_param(int fd, unsigned long request, void *arg)
+{
+   struct drm_msm_param *sp = arg;
+
+   switch (sp->param) {
+   case MSM_PARAM_EN_VM_BIND:
+      return -1;
+   default:
+      return 0;
+   }
+}
+
+static int
 msm_ioctl_gem_madvise(int fd, unsigned long request, void *arg)
 {
    struct drm_msm_gem_madvise *args = arg;
@@ -147,7 +162,7 @@ msm_ioctl_gem_madvise(int fd, unsigned long request, void *arg)
 
 static ioctl_fn_t driver_ioctls[] = {
    [DRM_MSM_GET_PARAM] = msm_ioctl_get_param,
-   [DRM_MSM_SET_PARAM] = msm_ioctl_noop,
+   [DRM_MSM_SET_PARAM] = msm_ioctl_set_param,
    [DRM_MSM_GEM_NEW] = msm_ioctl_gem_new,
    [DRM_MSM_GEM_INFO] = msm_ioctl_gem_info,
    [DRM_MSM_GEM_CPU_PREP] = msm_ioctl_noop,

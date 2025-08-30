@@ -720,7 +720,7 @@ spill_ssa_defs_and_lower_shader_calls(nir_shader *shader, uint32_t num_calls,
       nir_def *def = spill_defs[index];
 
       memset(def_blocks, 0, block_words * sizeof(BITSET_WORD));
-      BITSET_SET(def_blocks, def->parent_instr->block->index);
+      BITSET_SET(def_blocks, nir_def_block(def)->index);
       for (unsigned call_idx = 0; call_idx < num_calls; call_idx++) {
          if (fill_defs[index][call_idx] != NULL)
             BITSET_SET(def_blocks, call_block_indices[call_idx]);
@@ -863,9 +863,9 @@ duplicate_loop_bodies(nir_function_impl *impl, nir_instr *resume_instr)
        * serious trouble if we don't do this.
        */
       nir_convert_loop_to_lcssa(loop);
-      nir_lower_phis_to_regs_block(nir_loop_first_block(loop));
+      nir_lower_phis_to_regs_block(nir_loop_first_block(loop), false);
       nir_lower_phis_to_regs_block(
-         nir_cf_node_as_block(nir_cf_node_next(&loop->cf_node)));
+         nir_cf_node_as_block(nir_cf_node_next(&loop->cf_node)), false);
 
       nir_cf_list cf_list;
       nir_cf_list_extract(&cf_list, &loop->body);

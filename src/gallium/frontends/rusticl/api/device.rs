@@ -1,3 +1,6 @@
+// Copyright 2020 Red Hat.
+// SPDX-License-Identifier: MIT
+
 use crate::api::icd::*;
 use crate::api::types::IdpAccelProps;
 use crate::api::util::*;
@@ -390,12 +393,14 @@ fn get_device_ids(
 }
 
 #[cl_entrypoint(clRetainDevice)]
-fn retain_device(_device: cl_device_id) -> CLResult<()> {
+fn retain_device(device: cl_device_id) -> CLResult<()> {
+    let _ = Device::ref_from_raw(device)?;
     Ok(())
 }
 
 #[cl_entrypoint(clReleaseDevice)]
-fn release_device(_device: cl_device_id) -> CLResult<()> {
+fn release_device(device: cl_device_id) -> CLResult<()> {
+    let _ = Device::ref_from_raw(device)?;
     Ok(())
 }
 

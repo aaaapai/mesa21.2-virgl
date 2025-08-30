@@ -15,6 +15,7 @@
 #include "util/disk_cache.h"
 #include "git_sha1.h"
 
+#include "vk_android.h"
 #include "vk_device.h"
 #include "vk_drm_syncobj.h"
 #include "vk_format.h"
@@ -684,7 +685,7 @@ get_image_format_sample_counts(struct panvk_physical_device *physical_device,
                                VkFormat format)
 {
    unsigned arch = pan_arch(physical_device->kmod.props.gpu_id);
-   unsigned max_tib_size = pan_get_max_tib_size(arch, physical_device->model);
+   unsigned max_tib_size = pan_query_tib_size(physical_device->model);
    unsigned max_cbuf_atts = pan_get_max_cbufs(arch, max_tib_size);
 
    assert(!vk_format_is_compressed(format));
@@ -1136,9 +1137,15 @@ panvk_GetPhysicalDeviceImageFormatProperties2(
          external_props = &fallback_external_props;
       }
 
-      result = panvk_get_external_image_format_properties(
-         physical_device, base_info, external_info->handleType,
-         &external_props->externalMemoryProperties);
+      if (external_info->handleType ==
+          VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) {
+         result = vk_android_get_ahb_image_properties(physicalDevice, base_info,
+                                                      base_props);
+      } else {
+         result = panvk_get_external_image_format_properties(
+            physical_device, base_info, external_info->handleType,
+            &external_props->externalMemoryProperties);
+      }
       if (result != VK_SUCCESS)
          goto fail;
 
@@ -1263,6 +1270,13 @@ panvk_GetPhysicalDeviceExternalBufferProperties(
    const VkPhysicalDeviceExternalBufferInfo *pExternalBufferInfo,
    VkExternalBufferProperties *pExternalBufferProperties)
 {
+   if (pExternalBufferInfo->handleType ==
+       VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) {
+      vk_android_get_ahb_buffer_properties(physicalDevice, pExternalBufferInfo,
+                                           pExternalBufferProperties);
+      return;
+   }
+
    const VkExternalMemoryHandleTypeFlags supported_handle_types =
       VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
       VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;

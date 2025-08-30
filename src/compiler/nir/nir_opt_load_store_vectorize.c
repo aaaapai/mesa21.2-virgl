@@ -46,6 +46,7 @@
 #include "nir.h"
 #include "nir_builder.h"
 #include "nir_deref.h"
+#include "nir_range_analysis.h"
 #include "nir_worklist.h"
 
 #include <stdlib.h>
@@ -172,6 +173,7 @@ struct entry {
 struct vectorize_ctx {
    nir_shader *shader;
    const nir_load_store_vectorize_options *options;
+   struct hash_table *numlsb_ht;
    struct list_head entries[nir_num_variable_modes];
    struct hash_table *loads[nir_num_variable_modes];
    struct hash_table *stores[nir_num_variable_modes];
@@ -579,7 +581,7 @@ aliasing_modes(nir_variable_mode modes)
 }
 
 static void
-calc_alignment(struct entry *entry)
+calc_alignment(struct vectorize_ctx *ctx, struct entry *entry)
 {
    if (entry->intrin->intrinsic == nir_intrinsic_load_buffer_amd ||
        entry->intrin->intrinsic == nir_intrinsic_store_buffer_amd) {
@@ -593,8 +595,12 @@ calc_alignment(struct entry *entry)
 
    uint32_t align_mul = 31;
    for (unsigned i = 0; i < entry->key->offset_def_count; i++) {
-      if (entry->key->offset_defs_mul[i])
-         align_mul = MIN2(align_mul, ffsll(entry->key->offset_defs_mul[i]));
+      unsigned lsb_zero = nir_def_num_lsb_zero(ctx->numlsb_ht, entry->key->offset_defs[i]);
+      if (lsb_zero == 64)
+         continue;
+      uint64_t stride = entry->key->offset_defs_mul[i] << lsb_zero;
+      if (stride)
+         align_mul = MIN2(align_mul, ffsll(stride));
    }
 
    entry->align_mul = 1u << (align_mul - 1);
@@ -608,7 +614,7 @@ calc_alignment(struct entry *entry)
 }
 
 static struct entry *
-create_entry(void *mem_ctx,
+create_entry(void *mem_ctx, struct vectorize_ctx *ctx,
              const struct intrinsic_info *info,
              nir_intrinsic_instr *intrin)
 {
@@ -670,7 +676,7 @@ create_entry(void *mem_ctx,
    if (get_variable_mode(entry) & restrict_modes)
       entry->access |= ACCESS_RESTRICT;
 
-   calc_alignment(entry);
+   calc_alignment(ctx, entry);
 
    return entry;
 }
@@ -1250,8 +1256,11 @@ check_for_robustness(struct vectorize_ctx *ctx, struct entry *low, uint64_t high
     * are not guaranteed to be power-of-2.
     */
    uint64_t stride = 0;
-   for (unsigned i = 0; i < low->key->offset_def_count; i++)
-      stride = calc_gcd(low->key->offset_defs_mul[i], stride);
+   for (unsigned i = 0; i < low->key->offset_def_count; i++) {
+      unsigned lsb_zero = nir_def_num_lsb_zero(ctx->numlsb_ht, low->key->offset_defs[i]);
+      if (lsb_zero != 64)
+         stride = calc_gcd(low->key->offset_defs_mul[i] << lsb_zero, stride);
+   }
 
    unsigned addition_bits = low->intrin->src[low->info->base_src].ssa->bit_size;
    /* low's offset must be a multiple of "stride" plus "low->offset". */
@@ -1655,7 +1664,7 @@ process_block(nir_function_impl *impl, struct vectorize_ctx *ctx, nir_block *blo
       unsigned mode_index = mode_to_index(mode);
 
       /* create entry */
-      struct entry *entry = create_entry(ctx, info, intrin);
+      struct entry *entry = create_entry(ctx, ctx, info, intrin);
       entry->index = next_index++;
 
       list_addtail(&entry->head, &ctx->entries[mode_index]);
@@ -1702,6 +1711,7 @@ nir_opt_load_store_vectorize(nir_shader *shader, const nir_load_store_vectorize_
 
    struct vectorize_ctx *ctx = rzalloc(NULL, struct vectorize_ctx);
    ctx->shader = shader;
+   ctx->numlsb_ht = _mesa_pointer_hash_table_create(ctx);
    ctx->options = options;
 
    nir_shader_index_vars(shader, options->modes);
@@ -1724,7 +1734,7 @@ nir_opt_load_store_vectorize(nir_shader *shader, const nir_load_store_vectorize_
 static bool
 opt_load_store_update_alignments_callback(struct nir_builder *b,
                                           nir_intrinsic_instr *intrin,
-                                          UNUSED void *s)
+                                          void *s)
 {
    if (!nir_intrinsic_has_align_mul(intrin))
       return false;
@@ -1733,7 +1743,7 @@ opt_load_store_update_alignments_callback(struct nir_builder *b,
    if (!info)
       return false;
 
-   struct entry *entry = create_entry(NULL, info, intrin);
+   struct entry *entry = create_entry(NULL, s, info, intrin);
    const bool progress = update_align(entry);
    ralloc_free(entry);
 
@@ -1743,10 +1753,14 @@ opt_load_store_update_alignments_callback(struct nir_builder *b,
 bool
 nir_opt_load_store_update_alignments(nir_shader *shader)
 {
-   return nir_shader_intrinsics_pass(shader,
-                                     opt_load_store_update_alignments_callback,
-                                     nir_metadata_control_flow |
-                                        nir_metadata_live_defs |
-                                        nir_metadata_instr_index,
-                                     NULL);
+   struct vectorize_ctx ctx;
+   ctx.numlsb_ht = _mesa_pointer_hash_table_create(NULL);
+   bool progress = nir_shader_intrinsics_pass(shader,
+                                              opt_load_store_update_alignments_callback,
+                                              nir_metadata_control_flow |
+                                                 nir_metadata_live_defs |
+                                                 nir_metadata_instr_index,
+                                              &ctx);
+   ralloc_free(ctx.numlsb_ht);
+   return progress;
 }

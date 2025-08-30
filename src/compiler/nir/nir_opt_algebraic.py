@@ -606,14 +606,13 @@ optimizations.extend([
     (('ushr@32', ('ubfe', a, '#b', '#c'), '#d(is_5lsb_not_zero)'),
      ubfe_ubfe(a, b, c, d, 31)),
 
-    (('iand', ('ishl', 'a@32', '#b(is_first_5_bits_uge_2)'), -4), ('ishl', a, b)),
-    (('iand', ('imul', a, '#b(is_unsigned_multiple_of_4)'), -4), ('imul', a, b)),
+    (('iand', 'a(is_unsigned_multiple_of_4)', -4), a),
 ])
 
 for log2 in range(1, 7): # powers of two from 2 to 64
    v = 1 << log2
    mask = 0xffffffff & ~(v - 1)
-   b_is_multiple = '#b(is_unsigned_multiple_of_{})'.format(v)
+   b_is_multiple = 'b(is_unsigned_multiple_of_{})'.format(v)
 
    optimizations.extend([
        # Reassociate for improved CSE
@@ -731,6 +730,13 @@ optimizations.extend([
 
    # 0 < fsat(NaN) -> 0 < 0 -> false, and 0 < NaN -> false.
    (('flt', 0.0, ('fsat(is_used_once)', a)), ('flt', 0.0, a)),
+
+   (('bcsel(is_only_used_as_float)', ('feq', a, 'b(is_not_zero)'), b, a), a),
+   (('bcsel(is_only_used_as_float)', ('fneu', a, 'b(is_not_zero)'), a, b), a),
+   (('bcsel', ignore_exact('feq', a, 0), 0, ('fsat', ('fmul', a, 'b(is_a_number)'))), ('fsat!', ('fmul', a, b))),
+   (('bcsel', ignore_exact('fneu', a, 0), ('fsat', ('fmul', a, 'b(is_a_number)')), 0), ('fsat!', ('fmul', a, b))),
+   (('bcsel', ignore_exact('feq', a, 0), b, ('fadd', a, 'b(is_not_zero)')), ('fadd', a, b)),
+   (('bcsel', ignore_exact('fneu', a, 0), ('fadd', a, 'b(is_not_zero)'), b), ('fadd', a, b)),
 
    # 0.0 >= b2f(a)
    # b2f(a) <= 0.0

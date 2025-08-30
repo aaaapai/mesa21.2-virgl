@@ -583,6 +583,11 @@ BlockScheduler::schedule_alu(Shader::ShaderBlocks& out_blocks, ValueFactory& vf)
          /* Only start a new CF if we have no pending AR reads */
          if (m_current_block->try_reserve_kcache(*group)) {
             alu_groups_ready.erase(alu_groups_ready.begin());
+
+            for (auto i : *group) {
+               if (i)
+                  i->pin_dest_to_chan();
+            }
             success = true;
          } else {
             if (expected_ar_uses == 0) {
@@ -738,7 +743,7 @@ BlockScheduler::schedule_tex(Shader::ShaderBlocks& out_blocks)
          prep->set_scheduled();
          m_current_block->push_back(prep);
       }
-
+      (*ii)->pin_dest_to_chan();
       (*ii)->set_scheduled();
       m_current_block->push_back(*ii);
       tex_ready.erase(ii);
@@ -891,6 +896,7 @@ BlockScheduler::schedule_alu_to_group_vec(AluGroup *group)
       }
 
       if (group->add_vec_instructions(*i)) {
+         (*i)->pin_dest_to_chan();
          auto old_i = i;
          ++i;
          if ((*old_i)->has_alu_flag(alu_is_lds)) {
@@ -950,8 +956,31 @@ BlockScheduler::schedule_alu_multislot_to_group_vec(AluGroup *group, ValueFactor
    auto e = alu_multi_slot_ready.end();
 
    while (i != e && util_bitcount(group->free_slot_mask()) > 1) {
-      auto required_mask = (*i)->required_channels_mask();
-      if ((group->free_slot_mask() & required_mask) != required_mask) {
+
+      auto dest = (*i)->dest();
+      assert(dest);
+
+      bool can_merge = false;
+      unsigned allowed_dest_chan_mask = (*i)->allowed_dest_chan_mask();
+      while (allowed_dest_chan_mask) {
+
+         auto required_mask = (*i)->required_channels_mask();
+
+         if ((group->free_slot_mask() & required_mask) == required_mask) {
+            can_merge = true;
+            break;
+         }
+
+         allowed_dest_chan_mask &= ~BITFIELD_BIT((*i)->dest_chan());
+         int new_chan = u_bit_scan(&allowed_dest_chan_mask);
+
+         if (!dest->can_switch_to_chan(new_chan))
+            break;
+
+         dest->set_chan(new_chan);
+      }
+
+      if (!can_merge) {
          ++i;
          continue;
       }
@@ -1012,6 +1041,7 @@ BlockScheduler::schedule_alu_to_group_trans(AluGroup *group,
       }
 
       if (group->add_trans_instructions(*i)) {
+         (*i)->pin_dest_to_chan();
          auto old_i = i;
          ++i;
          auto addr = std::get<0>((*old_i)->indirect_addr());
@@ -1054,6 +1084,7 @@ BlockScheduler::schedule_block(std::list<I *>& ready_list)
       auto ii = ready_list.begin();
       sfn_log << SfnLog::schedule << "Schedule: " << **ii << " "
               << m_current_block->remaining_slots() << "\n";
+      (*ii)->pin_dest_to_chan();
       (*ii)->set_scheduled();
       m_current_block->push_back(*ii);
       ready_list.erase(ii);

@@ -1,3 +1,6 @@
+// Copyright 2020 Red Hat.
+// SPDX-License-Identifier: MIT
+
 use crate::api::icd::*;
 use crate::api::types::ProgramCB;
 use crate::core::context::*;
@@ -471,7 +474,7 @@ impl Program {
         })
     }
 
-    pub fn build_info(&self) -> MutexGuard<ProgramBuild> {
+    pub fn build_info(&self) -> MutexGuard<'_, ProgramBuild> {
         self.build.lock().unwrap()
     }
 

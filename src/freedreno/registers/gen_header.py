@@ -145,6 +145,18 @@ def indices_strides(indices):
 					"%s(i%d)" % (offset, idx)
 			for (idx, (ctype, stride, offset)) in  enumerate(indices)])
 
+def is_number(str):
+	try:
+		int(str)
+		return True
+	except ValueError:
+		return False
+
+def sanitize_variant(variant):
+	if variant and "-" in variant:
+		return variant[:variant.index("-")]
+	return variant
+
 class Bitset(object):
 	def __init__(self, name, template):
 		self.name = name
@@ -226,7 +238,7 @@ class Bitset(object):
 
 		depcrstr = ""
 		if is_deprecated:
-			depcrstr = " __attribute__((deprecated))"
+			depcrstr = " FD_DEPRECATED"
 		if reg.array:
 			print("static inline%s struct fd_reg_pair\npack_%s(uint32_t __i, struct %s fields)\n{" %
 				  (depcrstr, prefix, prefix))
@@ -284,6 +296,7 @@ class Array(object):
 		self.domain = domain
 		self.variant = variant
 		self.parent = parent
+		self.children = []
 		if self.parent:
 			self.name = self.parent.name + "_" + self.local_name
 		else:
@@ -338,7 +351,7 @@ class Array(object):
 	def dump(self, is_deprecated):
 		depcrstr = ""
 		if is_deprecated:
-			depcrstr = " __attribute__((deprecated))"
+			depcrstr = " FD_DEPRECATED"
 		proto = indices_varlist(self.indices())
 		strides = indices_strides(self.indices())
 		array_offset = self.total_offset()
@@ -374,6 +387,7 @@ class Reg(object):
 		self.bit_size = bit_size
 		if array:
 			self.name = array.name + "_" + self.name
+			array.children.append(self)
 		self.full_name = self.domain + "_" + self.name
 		if "stride" in attrs:
 			self.stride = int(attrs["stride"], 0)
@@ -407,7 +421,7 @@ class Reg(object):
 	def dump(self, is_deprecated):
 		depcrstr = ""
 		if is_deprecated:
-			depcrstr = " __attribute__((deprecated)) "
+			depcrstr = " FD_DEPRECATED "
 		proto = indices_prototype(self.indices())
 		strides = indices_strides(self.indices())
 		offset = self.total_offset()
@@ -425,8 +439,7 @@ class Reg(object):
 			self.bitset.dump_pack_struct(is_deprecated, self)
 
 	def dump_regpair_builder(self):
-		if self.bitset.inline:
-			self.bitset.dump_regpair_builder(self)
+		self.bitset.dump_regpair_builder(self)
 
 	def dump_py(self):
 		print("\tREG_%s = 0x%08x" % (self.full_name, self.offset))
@@ -465,7 +478,7 @@ class Parser(object):
 
 	def prefix(self, variant=None):
 		if self.current_prefix_type == "variant" and variant:
-			return variant
+			return sanitize_variant(variant)
 		elif self.current_stripe:
 			return self.current_stripe + "_" + self.current_domain
 		elif self.current_prefix:
@@ -513,13 +526,20 @@ class Parser(object):
 	def parse_variants(self, attrs):
 		if "variants" not in attrs:
 				return None
-		variant = attrs["variants"].split(",")[0]
-		if "-" in variant:
-			variant = variant[:variant.index("-")]
 
+		variant = attrs["variants"].split(",")[0]
 		varset = self.parse_varset(attrs)
 
-		assert varset.has_name(variant)
+		if "-" in variant:
+			# if we have a range, validate that both the start and end
+			# of the range are valid enums:
+			start = variant[:variant.index("-")]
+			end = variant[variant.index("-") + 1:]
+			assert varset.has_name(start)
+			if end != "":
+				assert varset.has_name(end)
+		else:
+			assert varset.has_name(variant)
 
 		return variant
 
@@ -651,7 +671,7 @@ class Parser(object):
 		elif name == "domain":
 			self.current_domain = attrs["name"]
 			if "prefix" in attrs:
-				self.current_prefix = self.parse_variants(attrs)
+				self.current_prefix = sanitize_variant(self.parse_variants(attrs))
 				self.current_prefix_type = attrs["prefix"]
 			else:
 				self.current_prefix = None
@@ -659,7 +679,7 @@ class Parser(object):
 			if "varset" in attrs:
 				self.current_varset = self.enums[attrs["varset"]]
 		elif name == "stripe":
-			self.current_stripe = self.parse_variants(attrs)
+			self.current_stripe = sanitize_variant(self.parse_variants(attrs))
 		elif name == "enum":
 			self.current_enum_value = 0
 			self.current_enum = Enum(attrs["name"])
@@ -711,6 +731,13 @@ class Parser(object):
 		elif name == "reg32":
 			self.current_reg = None
 		elif name == "array":
+			# if the array has no Reg children, push an implicit reg32:
+			if len(self.current_array.children) == 0:
+				attrs = {
+					"name": "REG",
+					"offset": "0",
+				}
+				self.parse_reg(attrs, 32)
 			self.current_array = self.current_array.parent
 		elif name == "enum":
 			self.current_enum = None
@@ -728,10 +755,10 @@ class Parser(object):
 				if variants:
 					for variant, vreg in variants.items():
 						if reg == vreg:
-							d[(usage, variant)].append(reg)
+							d[(usage, sanitize_variant(variant))].append(reg)
 				else:
 					for variant in self.variants:
-						d[(usage, variant)].append(reg)
+						d[(usage, sanitize_variant(variant))].append(reg)
 
 		print("#ifdef __cplusplus")
 
@@ -762,7 +789,7 @@ class Parser(object):
 		print("#endif")
 
 	def has_variants(self, reg):
-		return reg.name in self.variant_regs and len(self.variant_regs[reg.name]) > 1
+		return reg.name in self.variant_regs and not is_number(reg.name) and not is_number(reg.name[1:])
 
 	def dump(self):
 		enums = []
@@ -793,8 +820,7 @@ class Parser(object):
 
 
 	def dump_reg_variants(self, regname, variants):
-		# Don't bother for things that only have a single variant:
-		if len(variants) == 1:
+		if is_number(regname) or is_number(regname[1:]):
 			return
 		print("#ifdef __cplusplus")
 		print("struct __%s {" % regname)
@@ -845,11 +871,20 @@ class Parser(object):
 			xtravar = "__i, "
 		print("__%s(%sstruct __%s fields) {" % (regname, xtra, regname))
 		for variant in variants.keys():
-			print("  if (%s == %s) {" % (varenum.upper(), variant))
+			if "-" in variant:
+				start = variant[:variant.index("-")]
+				end = variant[variant.index("-") + 1:]
+				if end != "":
+					print("  if ((%s >= %s) && (%s <= %s)) {" % (varenum.upper(), start, varenum.upper(), end))
+				else:
+					print("  if (%s >= %s) {" % (varenum.upper(), start))
+			else:
+				print("  if (%s == %s) {" % (varenum.upper(), variant))
 			reg = variants[variant]
 			reg.dump_regpair_builder()
 			print("  } else")
 		print("    assert(!\"invalid variant\");")
+		print("  return (struct fd_reg_pair){};")
 		print("}")
 
 		if bit_size == 64:
@@ -922,9 +957,20 @@ The rules-ng-ng source files this header was generated from are:
 	print("#endif")
 	print()
 
+	print("#ifndef FD_NO_DEPRECATED_PACK")
+	print("#define FD_DEPRECATED __attribute__((deprecated))")
+	print("#else")
+	print("#define FD_DEPRECATED")
+	print("#endif")
+	print()
+
 	func(p)
 
-	print("\n#endif /* %s */" % guard)
+	print()
+	print("#undef FD_DEPRECATED")
+	print()
+
+	print("#endif /* %s */" % guard)
 
 
 def dump_c_defines(args):

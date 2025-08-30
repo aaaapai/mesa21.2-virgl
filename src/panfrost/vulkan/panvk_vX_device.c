@@ -14,6 +14,7 @@
 
 #include "vk_cmd_enqueue_entrypoints.h"
 #include "vk_common_entrypoints.h"
+#include "vk_drm_syncobj.h"
 
 #include "panvk_buffer.h"
 #include "panvk_cmd_alloc.h"
@@ -343,6 +344,7 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
    device->vk.command_buffer_ops = &panvk_per_arch(cmd_buffer_ops);
    device->vk.shader_ops = &panvk_per_arch(device_shader_ops);
    device->vk.check_status = panvk_device_check_status;
+   device->vk.copy_sync_payloads = vk_drm_syncobj_copy_payloads;
 
    device->kmod.allocator = (struct pan_kmod_allocator){
       .zalloc = panvk_kmod_zalloc,
@@ -506,7 +508,10 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
       }
    }
 
-   panvk_per_arch(utrace_context_init)(device);
+   result = panvk_per_arch(utrace_context_init)(device);
+   if (result != VK_SUCCESS)
+      goto err_finish_queues;
+
 #if PAN_ARCH >= 10
    panvk_utrace_perfetto_init(device, PANVK_SUBQUEUE_COUNT);
 #else

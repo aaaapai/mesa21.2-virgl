@@ -1680,9 +1680,6 @@ anv_image_init(struct anv_device *device, struct anv_image *image,
    if (image->vk.external_handle_types &
        VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) {
       image->from_ahb = true;
-#if DETECT_OS_ANDROID
-      image->vk.ahb_format = anv_ahb_format_for_vk_format(image->vk.format);
-#endif
       return VK_SUCCESS;
    }
 
@@ -2240,14 +2237,9 @@ resolve_ahw_image(struct anv_device *device,
    assert(result == VK_SUCCESS);
    isl_tiling_flags_t isl_tiling_flags = (1u << tiling);
 
-   /* Check format. */
-   VkFormat vk_format = vk_format_from_android(desc.format, desc.usage);
-   assert(vk_format != VK_FORMAT_UNDEFINED);
-
    /* Now we are able to fill anv_image fields properly and create
     * isl_surface for it.
     */
-   vk_image_set_format(&image->vk, vk_format);
    image->n_planes = anv_get_format_planes(device->physical, image->vk.format);
 
    result = add_all_surfaces_implicit_layout(device, image, NULL, desc.stride,

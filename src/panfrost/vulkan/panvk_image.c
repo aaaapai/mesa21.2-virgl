@@ -29,6 +29,7 @@
 #include "pan_afbc.h"
 #include "pan_props.h"
 
+#include "panvk_android.h"
 #include "panvk_device.h"
 #include "panvk_device_memory.h"
 #include "panvk_entrypoints.h"
@@ -178,7 +179,6 @@ panvk_image_get_explicit_mod(
    assert(image->vk.samples == 1);
    assert(image->vk.array_layers == 1);
    assert(image->vk.image_type != VK_IMAGE_TYPE_3D);
-   assert(explicit->drmFormatModifierPlaneCount == 1);
    assert(panvk_image_can_use_mod(image, mod));
 
    return mod;
@@ -399,7 +399,7 @@ panvk_image_get_total_size(const struct panvk_image *image)
    return size;
 }
 
-static VkResult
+VkResult
 panvk_image_init(struct panvk_image *image,
                  const VkImageCreateInfo *pCreateInfo)
 {
@@ -416,11 +416,12 @@ panvk_image_init(struct panvk_image *image,
 
 static void
 panvk_image_plane_bind(struct panvk_device *dev,
-                       struct panvk_image_plane *plane, struct pan_kmod_bo *bo,
-                       uint64_t base, uint64_t offset)
+                       struct panvk_image_plane *plane,
+                       struct panvk_device_memory *mem, uint64_t offset)
 {
-   plane->plane.base = base + offset;
-   plane->offset = offset;
+   plane->plane.base = mem->addr.dev + offset;
+   plane->mem = mem;
+   plane->mem_offset = offset;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -430,6 +431,11 @@ panvk_CreateImage(VkDevice device, const VkImageCreateInfo *pCreateInfo,
    VK_FROM_HANDLE(panvk_device, dev, device);
    struct panvk_physical_device *phys_dev =
       to_panvk_physical_device(dev->vk.physical);
+
+   if (panvk_android_is_gralloc_image(pCreateInfo)) {
+      return panvk_android_create_gralloc_image(device, pCreateInfo, pAllocator,
+                                                pImage);
+   }
 
    const VkImageSwapchainCreateInfoKHR *swapchain_info =
       vk_find_struct_const(pCreateInfo->pNext, IMAGE_SWAPCHAIN_CREATE_INFO_KHR);
@@ -583,7 +589,8 @@ panvk_GetImageMemoryRequirements2(VkDevice device,
       switch (ext->sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
          VkMemoryDedicatedRequirements *dedicated = (void *)ext;
-         dedicated->requiresDedicatedAllocation = false;
+         dedicated->requiresDedicatedAllocation =
+            vk_image_is_android_hardware_buffer(&image->vk);
          dedicated->prefersDedicatedAllocation = dedicated->requiresDedicatedAllocation;
          break;
       }
@@ -633,42 +640,46 @@ panvk_GetDeviceImageSparseMemoryRequirements(VkDevice device,
    *pSparseMemoryRequirementCount = 0;
 }
 
-static void
+static VkResult
 panvk_image_bind(struct panvk_device *dev,
-                 const VkBindImageMemoryInfo *bind_info) {
+                 const VkBindImageMemoryInfo *bind_info)
+{
    VK_FROM_HANDLE(panvk_image, image, bind_info->image);
    VK_FROM_HANDLE(panvk_device_memory, mem, bind_info->memory);
+   uint64_t offset = bind_info->memoryOffset;
 
    if (!mem) {
-#if DETECT_OS_ANDROID
-      /* TODO handle VkNativeBufferANDROID when we support ANB */
-      UNREACHABLE("VkBindImageMemoryInfo with no memory");
+      VkDeviceMemory mem_handle;
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+      VkResult result =
+         panvk_android_get_wsi_memory(dev, bind_info, &mem_handle);
+      if (result != VK_SUCCESS)
+         return result;
 #else
       const VkBindImageMemorySwapchainInfoKHR *swapchain_info =
          vk_find_struct_const(bind_info->pNext,
                               BIND_IMAGE_MEMORY_SWAPCHAIN_INFO_KHR);
       assert(swapchain_info && swapchain_info->swapchain != VK_NULL_HANDLE);
-      VkDeviceMemory mem_handle = wsi_common_get_memory(
-         swapchain_info->swapchain, swapchain_info->imageIndex);
-      mem = panvk_device_memory_from_handle(mem_handle);
+      mem_handle = wsi_common_get_memory(swapchain_info->swapchain,
+                                         swapchain_info->imageIndex);
 #endif
+      mem = panvk_device_memory_from_handle(mem_handle);
+      offset = 0;
    }
 
    assert(mem);
-   image->mem = mem;
    if (is_disjoint(image)) {
       const VkBindImagePlaneMemoryInfo *plane_info =
          vk_find_struct_const(bind_info->pNext, BIND_IMAGE_PLANE_MEMORY_INFO);
       const uint8_t plane =
          panvk_plane_index(image->vk.format, plane_info->planeAspect);
-      panvk_image_plane_bind(dev, &image->planes[plane], mem->bo,
-                             mem->addr.dev, bind_info->memoryOffset);
+      panvk_image_plane_bind(dev, &image->planes[plane], mem, offset);
    } else {
-      for (unsigned plane = 0; plane < image->plane_count; plane++) {
-         panvk_image_plane_bind(dev, &image->planes[plane], mem->bo,
-                                mem->addr.dev, bind_info->memoryOffset);
-      }
+      for (unsigned plane = 0; plane < image->plane_count; plane++)
+         panvk_image_plane_bind(dev, &image->planes[plane], mem, offset);
    }
+
+   return VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -676,14 +687,17 @@ panvk_BindImageMemory2(VkDevice device, uint32_t bindInfoCount,
                        const VkBindImageMemoryInfo *pBindInfos)
 {
    VK_FROM_HANDLE(panvk_device, dev, device);
+   VkResult result = VK_SUCCESS;
 
    for (uint32_t i = 0; i < bindInfoCount; i++) {
       const VkBindMemoryStatus *bind_status =
          vk_find_struct_const(&pBindInfos[i], BIND_MEMORY_STATUS);
-      panvk_image_bind(dev, &pBindInfos[i]);
+      VkResult bind_result = panvk_image_bind(dev, &pBindInfos[i]);
       if (bind_status)
-         *bind_status->pResult = VK_SUCCESS;
+         *bind_status->pResult = bind_result;
+      if (bind_result != VK_SUCCESS)
+         result = bind_result;
    }
 
-   return VK_SUCCESS;
+   return result;
 }

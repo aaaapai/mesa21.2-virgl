@@ -115,7 +115,11 @@ enum radv_cmd_dirty_bits {
    RADV_CMD_DIRTY_BLEND_CONSTANTS_STATE = 1ull << 29,
    RADV_CMD_DIRTY_SAMPLE_LOCATIONS_STATE = 1ull << 30,
    RADV_CMD_DIRTY_SCISSOR_STATE = 1ull << 31,
-   RADV_CMD_DIRTY_ALL = (1ull << 32) - 1,
+   RADV_CMD_DIRTY_TESS_DOMAIN_ORIGIN_STATE = 1ull << 32,
+   RADV_CMD_DIRTY_PATCH_CONTROL_POINTS_STATE = 1ull << 33,
+   RADV_CMD_DIRTY_VGT_PRIM_STATE = 1ull << 34,
+   RADV_CMD_DIRTY_FORCE_VRS_STATE = 1ull << 35,
+   RADV_CMD_DIRTY_ALL = (1ull << 36) - 1,
 
    RADV_CMD_DIRTY_SHADER_QUERY = RADV_CMD_DIRTY_NGG_STATE | RADV_CMD_DIRTY_TASK_STATE,
 };
@@ -162,7 +166,6 @@ enum radv_cmd_flush_bits {
 struct radv_vertex_binding {
    uint64_t addr;
    VkDeviceSize size;
-   VkDeviceSize stride;
 };
 
 struct radv_streamout_binding {
@@ -414,7 +417,6 @@ struct radv_cmd_state {
    struct radv_compute_pipeline *emitted_compute_pipeline;
    struct radv_ray_tracing_pipeline *rt_pipeline; /* emitted = emitted_compute_pipeline */
    struct radv_dynamic_state dynamic;
-   struct radv_vertex_input_state vertex_input;
    struct radv_streamout_state streamout;
 
    struct radv_rendering_state render;
@@ -494,16 +496,9 @@ struct radv_cmd_state {
    uint32_t rt_stack_size;
 
    struct radv_shader_part *emitted_vs_prolog;
-   uint32_t vbo_misaligned_mask;
-   uint32_t vbo_unaligned_mask;
-   uint32_t vbo_misaligned_mask_invalid;
    uint32_t vbo_bound_mask;
 
    struct radv_shader_part *emitted_ps_epilog;
-
-   /* Per-vertex VRS state. */
-   uint32_t last_vrs_rates;
-   int32_t last_force_vrs_rates_offset;
 
    /* Whether to suspend streamout for internal driver operations. */
    bool suspend_streamout;
@@ -529,7 +524,7 @@ struct radv_cmd_state {
 
    unsigned last_cb_target_mask;
 
-   unsigned rast_prim;
+   unsigned vgt_outprim_type;
 
    uint32_t vtx_base_sgpr;
    uint8_t vtx_emit_num;

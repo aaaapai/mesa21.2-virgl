@@ -237,6 +237,8 @@ struct nvk_cmd_buffer {
    struct util_dynarray pushes;
 
    uint64_t tls_space_needed;
+
+   uint8_t prev_subc;
 };
 
 VK_DEFINE_HANDLE_CASTS(nvk_cmd_buffer, vk.base, VkCommandBuffer,
@@ -333,6 +335,24 @@ nvk_get_descriptor_state_for_stages(struct nvk_cmd_buffer *cmd,
    }
 }
 
+/**
+ * Gets the most recently used subchannel in the nvk_cmd_buffer, or a valid
+ * default subchannel if none has been used.
+ *
+ * Note that this isn't guaranteed to be the subchannel that the hardware is
+ * actually using (eg. at the beginning of the command buffer or after an
+ * indirect) so callers cannot rely on this value for correctness.
+ */
+static inline uint8_t
+nvk_cmd_buffer_last_subchannel(const struct nvk_cmd_buffer *cmd)
+{
+   if (cmd->push.last_hdr_dw) {
+      return NVC0_FIFO_SUBC_FROM_PKHDR(cmd->push.last_hdr_dw);
+   } else {
+      return cmd->prev_subc;
+   }
+}
+
 VkResult nvk_cmd_buffer_upload_alloc(struct nvk_cmd_buffer *cmd,
                                      uint32_t size, uint32_t alignment,
                                      uint64_t *addr, void **ptr);
@@ -390,8 +410,6 @@ void nvk_cmd_dispatch_shader(struct nvk_cmd_buffer *cmd,
 
 void nvk_meta_resolve_rendering(struct nvk_cmd_buffer *cmd,
                                 const VkRenderingInfo *pRenderingInfo);
-
-void nvk_cmd_buffer_dump(struct nvk_cmd_buffer *cmd, FILE *fp);
 
 void nvk_linear_render_copy(struct nvk_cmd_buffer *cmd,
                             const struct nvk_image_view *iview,

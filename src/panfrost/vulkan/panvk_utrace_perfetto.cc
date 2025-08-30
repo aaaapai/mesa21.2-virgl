@@ -1,5 +1,6 @@
 /*
  * Copyright 2024 Google LLC
+ * Copyright 2025 Arm Ltd.
  * SPDX-License-Identifier: MIT
  */
 
@@ -187,6 +188,11 @@ panvk_utrace_perfetto_begin_event(struct panvk_device *dev,
    if (!ev)
       return;
 
+   struct panvk_utrace_perfetto *utp = &dev->utrace.utp;
+   if (utp->queues[data->subqueue].stack_depth == 1) {
+      utp->base_ts_ns = ts_ns;
+   }
+
    ev->begin_ns = ts_ns;
 }
 
@@ -200,6 +206,21 @@ panvk_utrace_perfetto_end_event(
    const struct panvk_utrace_perfetto_event *ev = end_event(dev, data, stage);
    if (!ev)
       return;
+
+   struct panvk_utrace_perfetto *utp = &dev->utrace.utp;
+   if (ev->begin_ns < utp->base_ts_ns) {
+      /* The event has started before the base event of this nested stack of
+       * events. Is is likely data from a previous submission, so we just drop
+       * it here. */
+      return;
+   }
+
+   uint64_t duration = ts_ns - ev->begin_ns;
+   /* Drop unwritten and zero duration events.
+    * If the timestamp wraps around, end can be before start. Also drop those. */
+   if (duration == 0 || ts_ns == 0 || ts_ns < ev->begin_ns) {
+      return;
+   }
 
    PanVKRenderpassDataSource::Trace(
       [=](PanVKRenderpassDataSource::TraceContext ctx) {

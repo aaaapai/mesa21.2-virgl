@@ -1738,6 +1738,7 @@ struct anv_gfx_dynamic_state {
       bool PixelShaderKillsPixel;
       bool PixelShaderIsPerCoarsePixel;
       bool EnablePSDependencyOnCPsizeChange;
+      uint32_t InputCoverageMaskState;
    } ps_extra;
 
    /* 3DSTATE_PS_BLEND */
@@ -5610,9 +5611,6 @@ bool anv_formats_ccs_e_compatible(const struct anv_physical_device *device,
                                   VkFormat vk_format, VkImageTiling vk_tiling,
                                   VkImageUsageFlags vk_usage,
                                   const VkImageFormatListCreateInfo *fmt_list);
-
-extern VkFormat
-vk_format_from_android(unsigned android_format, unsigned android_usage);
 
 static inline VkFormat
 anv_get_compressed_format_emulation(const struct anv_physical_device *pdevice,
