@@ -306,9 +306,11 @@ disk_cache_init(struct zink_screen *screen)
    /* Hash in the zink driver build. */
    const struct build_id_note *note =
        build_id_find_nhdr_for_addr(disk_cache_init);
-   unsigned build_id_len = build_id_length(note);
-   assert(note && build_id_len == 20); /* blake3 */
-   _mesa_blake3_update(&ctx, build_id_data(note), build_id_len);
+   if (note != NULL) {
+    unsigned build_id_len = build_id_length(note);
+    assert(note && build_id_len == 20); /* blake3 */
+    _mesa_blake3_update(&ctx, build_id_data(note), build_id_len);
+   }
 #endif
 
    /* Hash in the Vulkan pipeline cache UUID to identify the combination of
@@ -354,10 +356,10 @@ disk_cache_init(struct zink_screen *screen)
    if (!util_queue_init(&screen->cache_put_thread, "zcq", 8, 1, UTIL_QUEUE_INIT_RESIZE_IF_FULL, screen)) {
       mesa_loge("zink: Failed to create disk cache queue\n");
 
-      disk_cache_destroy(screen->disk_cache);
+      /*disk_cache_destroy(screen->disk_cache);
       screen->disk_cache = NULL;
 
-      return false;
+      return false;*/
    }
 #endif
 
@@ -1639,7 +1641,7 @@ choose_pdev(struct zink_screen *screen, int64_t dev_major, int64_t dev_minor, ui
       VkPhysicalDevice *pdevs;
       VkResult result = VKSCR(EnumeratePhysicalDevices)(screen->instance, &pdev_count, NULL);
       if (result != VK_SUCCESS) {
-         if (!screen->driver_name_is_inferred)
+         //if (!screen->driver_name_is_inferred)
             mesa_loge("ZINK: vkEnumeratePhysicalDevices failed (%s)", vk_Result_to_str(result));
          return;
       }
@@ -3268,11 +3270,12 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 
    u_trace_state_init();
 
-   screen->loader_lib = util_dl_open(VK_LIBNAME);
+   const char* preloaded_ptr = getenv("VULKAN_PTR");
+   screen->loader_lib = preloaded_ptr ? (void*) strtoul(preloaded_ptr, NULL, 0x10) : util_dl_open(VK_LIBNAME);
    if (!screen->loader_lib) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("ZINK: failed to load "VK_LIBNAME);
-      goto fail;
+      //goto fail;
    }
 
    screen->vk_GetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)util_dl_get_proc_address(screen->loader_lib, "vkGetInstanceProcAddr");
