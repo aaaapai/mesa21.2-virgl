@@ -106,7 +106,7 @@ u_gralloc_cros_api_create()
    struct cros_gralloc *gr = CALLOC_STRUCT(cros_gralloc);
    int err = 0;
 
-   err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
+   /*err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
                        (const hw_module_t **)&gr->gralloc_module);
 
    if (err)
@@ -118,7 +118,7 @@ u_gralloc_cros_api_create()
    if (!gr->gralloc_module->perform) {
       mesa_logw("Oops. CrOS gralloc doesn't have perform callback");
       goto fail;
-   }
+   }*/
 
    gr->base.ops.get_buffer_basic_info = cros_get_buffer_info;
    gr->base.ops.get_front_rendering_usage = cros_get_front_rendering_usage;
