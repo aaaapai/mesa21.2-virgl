@@ -56,17 +56,17 @@ jobs:
             --prefix=/tmp/build \
             --wrap-mode=nofallback \
             -Dforce_fallback_for=llvm \
-            -Dosmesa=true \
+            -Dosmesa=false \
             --native-file="build-crossfile" \
             --cross-file "build-crossfile" \
             --buildtype release \
             -Dplatforms=android \
-            -Dplatform-sdk-version=26 \
+            -Dplatform-sdk-version=29 \
             -Dandroid-stub=true \
             -Dllvm=disabled \
             -Dshared-llvm=disabled \
             -Dxlib-lease=disabled \
-            -Degl=disabled \
+            -Degl=enabled \
             -Degl-native-platform=android \
             -Dgbm=disabled \
             -Dopengl=true \
