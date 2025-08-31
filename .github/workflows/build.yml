@@ -52,14 +52,6 @@ jobs:
 
           cd ..
 
-          # 应用所有 patch 文件
-          for patch_file in ../gitlab-mesa/.gitlab-ci/container/patches/*.patch; do
-            if [ -f "$patch_file" ]; then
-              echo "Applying patch: $(basename "$patch_file")"
-              patch -p1 < "$patch_file" || exit 1
-            fi
-          done
-
           envsubst < android-cross >build-crossfile
           meson setup "build-android" \
             --prefix=/tmp/build \
@@ -81,6 +73,7 @@ jobs:
             -Dopengl=true \
             -Dgles2=enabled \
             -Degl-lib-suffix=-mesa \
+            -Dgles-lib-suffix=-mesa \
             -Dvulkan-drivers= \
             -Dtools= \
             -Dgallium-drivers=zink
