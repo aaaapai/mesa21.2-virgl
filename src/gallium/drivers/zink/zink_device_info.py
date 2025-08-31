@@ -59,8 +59,7 @@ import sys
 #
 #  - guard: adds a #if defined(`extension_name`)/#endif guard around the code generated for this Extension.
 EXTENSIONS = [
-    Extension("VK_KHR_maintenance1",
-              required=False),
+    Extension("VK_KHR_maintenance1"),
     Extension("VK_KHR_maintenance2"),
     Extension("VK_KHR_maintenance3"),
     Extension("VK_KHR_maintenance4",
@@ -179,8 +178,7 @@ EXTENSIONS = [
     Extension("VK_KHR_sampler_ycbcr_conversion"),
     Extension("VK_KHR_imageless_framebuffer",
               alias="imgless",
-              features=True,
-              required=False),
+              features=True),
     Extension("VK_EXT_robustness2",
               alias="rb2",
               properties=True,
@@ -201,8 +199,7 @@ EXTENSIONS = [
               features=True),
     Extension("VK_KHR_dynamic_rendering",
               alias="dynamic_render",
-              features=True,
-              required=False),
+              features=True),
     Extension("VK_KHR_dynamic_rendering_local_read",
               alias="drlr",
               features=True),
@@ -306,7 +303,7 @@ EXTENSIONS = [
               alias="push",
               properties=True),
     Extension("VK_KHR_descriptor_update_template",
-              alias="template", required=False),
+              alias="template", features=True),
     Extension("VK_EXT_line_rasterization",
               alias="line_rast",
               properties=True,
