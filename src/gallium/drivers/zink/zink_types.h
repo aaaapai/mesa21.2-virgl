@@ -764,6 +764,7 @@ struct zink_shader_info {
    uint32_t sampler_mask;
    bool have_sparse;
    bool have_vulkan_memory_model;
+   bool have_relaxed_interface_matching;
    bool have_workgroup_memory_explicit_layout;
    bool broken_arbitary_type_const;
    struct {
