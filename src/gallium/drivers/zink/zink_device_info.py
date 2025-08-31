@@ -303,7 +303,7 @@ EXTENSIONS = [
               alias="push",
               properties=True),
     Extension("VK_KHR_descriptor_update_template",
-              alias="template", features=True),
+              alias="template"),
     Extension("VK_EXT_line_rasterization",
               alias="line_rast",
               properties=True,
