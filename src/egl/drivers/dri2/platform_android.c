@@ -1470,5 +1470,5 @@ dri2_initialize_android(_EGLDisplay *disp)
 
 cleanup:
    printf("droid_probe_device: clenup\n");
-   //return _eglError(EGL_NOT_INITIALIZED, err);
+   return _eglError(EGL_NOT_INITIALIZED, err);
 }
