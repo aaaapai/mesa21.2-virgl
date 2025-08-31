@@ -65,7 +65,8 @@ struct mesa_trace_flow {
  *
  *   https://github.com/android/ndk/issues/1178
  */
-#elif 0
+
+#elif DETECT_OS_ANDROID && !defined(__cplusplus)
 
 #include <cutils/trace.h>
 
