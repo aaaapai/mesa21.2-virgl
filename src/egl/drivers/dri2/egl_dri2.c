@@ -1444,7 +1444,7 @@ dri2_make_current(_EGLDisplay *disp, _EGLSurface *dsurf, _EGLSurface *rsurf,
           * setting the error to EGL_BAD_MATCH is surely better than leaving it
           * as EGL_SUCCESS.
           */
-         egl_error = EGL_SUCCESS
+         egl_error = EGL_SUCCESS;
          //egl_error = EGL_BAD_MATCH;
 
          /* undo the previous _eglBindContext */
