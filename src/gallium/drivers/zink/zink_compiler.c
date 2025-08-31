@@ -6123,6 +6123,7 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir)
                        nir->info.outputs_written & VARYING_BIT_EDGE;
 
    zs->sinfo.have_vulkan_memory_model = screen->info.vukan_memory_model_feats.vulkanMemoryModel;
+   zs->sinfo.have_relaxed_interface_matching = screen->info.maint4_feats.maintenance4;
    zs->sinfo.have_workgroup_memory_explicit_layout = screen->info.have_KHR_workgroup_memory_explicit_layout;
    zs->sinfo.broken_arbitary_type_const = screen->driver_compiler_workarounds.broken_const;
    if (screen->info.have_KHR_shader_float_controls) {
