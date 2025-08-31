@@ -1338,9 +1338,9 @@ dri2_initialize_android(_EGLDisplay *disp)
         dri2_dpy->pure_swrast = true;
         dri2_detect_swrast_kopper(disp);
         if (!dri2_create_screen(disp)) {
-            dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_AUTO);
-            /*err = "DRI2: Failed to create swrast screen";
-            goto cleanup;*/
+            printf("DRI2: Failed to create swrast screen\n");
+            err = "DRI2: Failed to create swrast screen";
+            goto cleanup;
         }
         device_opened = EGL_TRUE;
    } else {
@@ -1432,7 +1432,7 @@ dri2_initialize_android(_EGLDisplay *disp)
         * restrict the enabling of this extension to ES only.
         */
        (disp->ClientAPIs & ~(EGL_OPENGL_ES_BIT | EGL_OPENGL_ES2_BIT |
-                             EGL_OPENGL_ES3_BIT_KHR | EGL_OPENGL_BIT)) == 0) {
+                             EGL_OPENGL_ES3_BIT_KHR/* | EGL_OPENGL_BIT*/)) == 0) {
       /* For cros gralloc, if the front rendering query is supported, then all
        * available window surface configs support front rendering because:
        *
