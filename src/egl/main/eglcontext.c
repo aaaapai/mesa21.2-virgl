@@ -515,6 +515,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
              * one of these bits set; or if the implementation does not support
              * the requested profile, then an EGL_BAD_MATCH error is generated."
              */
+            printf("_eglParseContextAttribList: EGL_BAD_MATCH");
             //err = EGL_BAD_MATCH;
             break;
          }
@@ -541,18 +542,21 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
        *          - Forward-compatible flag set and major version < 3"
        */
       if (ctx->ClientMajorVersion < 1 || ctx->ClientMinorVersion < 0)
+         printf("_eglParseContextAttribList: EGL_BAD_MATCH");
          //err = EGL_BAD_MATCH;
 
       switch (ctx->ClientMajorVersion) {
       case 1:
          if (ctx->ClientMinorVersion > 5 ||
              (ctx->Flags & EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR) != 0)
+            printf("_eglParseContextAttribList: EGL_BAD_MATCH");
             //err = EGL_BAD_MATCH;
          break;
 
       case 2:
          if (ctx->ClientMinorVersion > 1 ||
              (ctx->Flags & EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR) != 0)
+            printf("_eglParseContextAttribList: EGL_BAD_MATCH");
             //err = EGL_BAD_MATCH;
          break;
 
@@ -560,6 +564,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
          /* Note: The text above is incorrect.  There *is* an OpenGL 3.3!
           */
          if (ctx->ClientMinorVersion > 3)
+            printf("_eglParseContextAttribList: EGL_BAD_MATCH");
             //err = EGL_BAD_MATCH;
          break;
 
