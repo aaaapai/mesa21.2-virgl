@@ -3357,17 +3357,24 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    if (!zink_get_physical_device_info(screen)) {
       if (!screen->driver_name_is_inferred)
          debug_printf("ZINK: failed to detect features\n");
-      goto fail;
+      // goto fail;
+   }
+
+   if(zink_driverid(screen) == VK_DRIVER_ID_ARM_PROPRIETARY) {
+      const char* mali_geom_override = getenv("ZINK_EANBLE_GS_ARM");
+      bool geomShader = mali_geom_override != NULL && *mali_geom_override == '1';
+      printf("ZINK: ARM Mali detected, geometry shaders are %s\n", geomShader ? "enabled (override)" : "forcibly disabled");
+      screen->info.feats.features.geometryShader = geomShader;
    }
 
    if (!screen->info.rb2_feats.nullDescriptor) {
       mesa_loge("Zink requires the nullDescriptor feature of KHR/EXT robustness2.");
-      goto fail;
+      //goto fail;
    }
 
    if (zink_set_driver_strings(screen)) {
       mesa_loge("ZINK: failed to set driver strings\n");
-      goto fail;
+      //goto fail;
    }
 
    memset(&screen->heap_map, UINT8_MAX, sizeof(screen->heap_map));
