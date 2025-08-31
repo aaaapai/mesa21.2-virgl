@@ -249,6 +249,8 @@ dri2_match_config(const _EGLConfig *conf, const _EGLConfig *criteria)
       return EGL_FALSE;
 #endif
 
+   _eglCompareConfigs(conf, criteria, NULL, EGL_FALSE);
+   _eglMatchConfig(conf, criteria);
    /*if (_eglCompareConfigs(conf, criteria, NULL, EGL_FALSE) != 0)
       return EGL_FALSE;
 
