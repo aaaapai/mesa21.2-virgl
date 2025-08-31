@@ -585,19 +585,26 @@ dri2_query_device_info(const void* driver_device_identifier,
 void
 dri2_setup_screen(_EGLDisplay *disp)
 {
+   printf("dri2_setup_screen:1\n");
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+   printf("dri2_setup_screen:2\n");
    struct dri_screen *screen = dri2_dpy->dri_screen_render_gpu;
+   printf("dri2_setup_screen:3\n");
    struct pipe_screen *pscreen = screen->base.screen;
+   printf("dri2_setup_screen:4\n");
    unsigned int api_mask = screen->api_mask;
 
 #ifdef HAVE_LIBDRM
+   printf("dri2_setup_screen:5\n");
    unsigned caps = pscreen->caps.dmabuf;
    dri2_dpy->has_dmabuf_import = (caps & DRM_PRIME_CAP_IMPORT) > 0;
    dri2_dpy->has_dmabuf_export = (caps & DRM_PRIME_CAP_EXPORT) > 0;
 #endif
 #ifdef HAVE_ANDROID_PLATFORM
+   printf("dri2_setup_screen:6\n");
    dri2_dpy->has_native_fence_fd = pscreen->caps.native_fence_fd;
 #endif
+   printf("dri2_setup_screen:7\n");
    dri2_dpy->has_compression_modifiers = pscreen->query_compression_rates &&
                                          (pscreen->query_compression_modifiers || dri2_dpy->kopper);
 
@@ -609,10 +616,12 @@ dri2_setup_screen(_EGLDisplay *disp)
     * changing the interval. Platforms, which allow it (e.g. x11, wayland)
     * override these values already.
     */
+   printf("dri2_setup_screen:8\n");
    dri2_dpy->min_swap_interval = 1;
    dri2_dpy->max_swap_interval = 1;
    dri2_dpy->default_swap_interval = 1;
 
+   printf("dri2_setup_screen:9\n");
    disp->ClientAPIs = 0;
    if ((api_mask & (1 << __DRI_API_OPENGL)) && _eglIsApiValid(EGL_OPENGL_API))
       disp->ClientAPIs |= EGL_OPENGL_BIT;
@@ -623,6 +632,7 @@ dri2_setup_screen(_EGLDisplay *disp)
    if ((api_mask & (1 << __DRI_API_GLES3)) && _eglIsApiValid(EGL_OPENGL_ES_API))
       disp->ClientAPIs |= EGL_OPENGL_ES3_BIT_KHR;
 
+   printf("dri2_setup_screen:10\n");
    disp->Extensions.KHR_create_context = EGL_TRUE;
    disp->Extensions.KHR_create_context_no_error = EGL_TRUE;
    disp->Extensions.KHR_no_config_context = EGL_TRUE;
@@ -642,16 +652,19 @@ dri2_setup_screen(_EGLDisplay *disp)
     * violation for IMG_context_priority.
     */
 #ifndef HAVE_ANDROID_PLATFORM
+   printf("dri2_setup_screen:11\n");
    disp->Extensions.NV_context_priority_realtime =
       disp->Extensions.IMG_context_priority &
       (1 << __EGL_CONTEXT_PRIORITY_REALTIME_BIT);
 #endif
 
+   printf("dri2_setup_screen:12\n");
    disp->Extensions.EXT_pixel_format_float = EGL_TRUE;
 
    if (pscreen->is_format_supported(pscreen, PIPE_FORMAT_B8G8R8A8_SRGB,
                                     PIPE_TEXTURE_2D, 0, 0,
                                     PIPE_BIND_RENDER_TARGET)) {
+      printf("dri2_setup_screen:13\n");
       disp->Extensions.KHR_gl_colorspace = EGL_TRUE;
    }
 
@@ -704,6 +717,7 @@ dri2_setup_screen(_EGLDisplay *disp)
 
    disp->Extensions.EXT_protected_surface = pscreen->caps.device_protected_surface;
    disp->Extensions.EXT_protected_content = pscreen->caps.device_protected_context;
+   printf("dri2_setup_screen:end\n");
 }
 
 void
