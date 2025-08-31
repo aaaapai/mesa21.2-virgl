@@ -148,7 +148,7 @@ droid_window_dequeue_buffer(struct dri2_egl_surface *dri2_surf)
    int fence_fd;
 
    ANativeWindow_dequeueBuffer(dri2_surf->window, &dri2_surf->buffer,
-                                   &fence_fd)
+                                   &fence_fd);
       /*return EGL_FALSE;*/
 
    close_in_fence_fd(dri2_surf);
@@ -485,7 +485,7 @@ update_buffers(struct dri2_egl_surface *dri2_surf)
    if (!dri2_surf->buffer && !droid_window_dequeue_buffer(dri2_surf)) {
       _eglLog(_EGL_WARNING, "Could not dequeue buffer from native window");
       dri2_surf->base.Lost = EGL_TRUE;
-      /*return -1;
+      /*return -1;*/
    }
 
    /* free outdated buffers and update the surface size */
