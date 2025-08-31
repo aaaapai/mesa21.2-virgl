@@ -75,7 +75,7 @@ jobs:
             -Dgles2=enabled \
             -Dvulkan-drivers= \
             -Dtools= \
-            -Dgallium-drivers=zink
+            -Dgallium-drivers=zink,swrast
           meson compile -C "build-android" -j 4
           meson install -C "build-android"
       - name: Upload libraries
