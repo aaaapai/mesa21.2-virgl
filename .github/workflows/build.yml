@@ -81,7 +81,6 @@ jobs:
             -Dopengl=true \
             -Dgles2=enabled \
             -Degl-lib-suffix=-mesa \
-            -Dgles-lib-suffix=-mesa \
             -Dvulkan-drivers= \
             -Dtools= \
             -Dgallium-drivers=zink
