@@ -1277,9 +1277,9 @@ dri2_create_context(_EGLDisplay *disp, _EGLConfig *conf,
 
 cleanup:
    printf("dri2_create_context: cleanup\n");
-   /*mtx_unlock(&dri2_dpy->lock);
+   mtx_unlock(&dri2_dpy->lock);
    free(dri2_ctx);
-   return NULL;*/
+   return NULL;
 }
 
 /**
