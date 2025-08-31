@@ -71,7 +71,7 @@ jobs:
             -Dgbm=disabled \
             -Dopengl=true \
             -Dgles2=enabled \
-            -Dvulkan-drivers=swrast \
+            -Dvulkan-drivers= \
             -Dtools= \
             -Dgallium-drivers=zink
           meson compile -C "build-android" -j 4
