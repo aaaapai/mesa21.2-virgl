@@ -3438,6 +3438,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    if (zink_driverid(screen) == VK_DRIVER_ID_IMAGINATION_PROPRIETARY && screen->info.props.driverVersion < 6554834) {
       debug_printf("zink: Imagination proprietary driver is too old to be supported, expect failure\n");
       if (screen->driver_name_is_inferred)
+         printf("goto fail\n");
          // goto fail;
    }
 
@@ -3452,6 +3453,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 
    screen->dev = zink_create_logical_device(screen);
    if (!screen->dev)
+      printf("goto fail\n");
       // goto fail;
 
    vk_device_uncompacted_dispatch_table_load(&screen->vk.device,
@@ -3485,6 +3487,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    }
 
    if (screen->info.have_EXT_calibrated_timestamps && !check_have_device_time(screen))
+      printf("goto fail\n");
       // goto fail;
 
    screen->have_triangle_fans = true;
@@ -3564,6 +3567,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    }
 
    if (!zink_screen_resource_init(&screen->base))
+      printf("goto fail\n");
       // goto fail;
    if (!zink_bo_init(screen)) {
       if (!screen->driver_name_is_inferred)
@@ -3580,6 +3584,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    }
    if (!util_queue_init(&screen->cache_get_thread, "zcfq", 8, 4,
                         UTIL_QUEUE_INIT_RESIZE_IF_FULL, screen))
+      printf("goto fail\n");
       // goto fail;
    populate_format_props(screen);
 
