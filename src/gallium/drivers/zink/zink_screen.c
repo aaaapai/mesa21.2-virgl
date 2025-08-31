@@ -304,12 +304,12 @@ disk_cache_init(struct zink_screen *screen)
 
 #ifdef HAVE_DL_ITERATE_PHDR
    /* Hash in the zink driver build. */
-   const struct build_id_note *note =
+   /*const struct build_id_note *note =
        build_id_find_nhdr_for_addr(disk_cache_init);
    if (note != NULL) {
-    unsigned build_id_len = build_id_length(note);
-    assert(note && build_id_len == 20); /* blake3 */
-    _mesa_blake3_update(&ctx, build_id_data(note), build_id_len);
+    unsigned build_id_len = build_id_length(note);*/
+    // assert(note && build_id_len == 20); /* blake3 */
+    // _mesa_blake3_update(&ctx, build_id_data(note), build_id_len);
    }
 #endif
 
@@ -3287,14 +3287,14 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
       goto fail;
    }
 
-   if (config) {
+   /*if (config) {
       driParseConfigFiles(config->options, config->options_info, 0, "zink",
                           NULL, NULL, NULL, 0, NULL, 0);
       screen->driconf.dual_color_blend_by_location = driQueryOptionb(config->options, "dual_color_blend_by_location");
       //screen->driconf.inline_uniforms = driQueryOptionb(config->options, "radeonsi_inline_uniforms");
       screen->driconf.emulate_point_smooth = driQueryOptionb(config->options, "zink_emulate_point_smooth");
       screen->driconf.zink_shader_object_enable = driQueryOptionb(config->options, "zink_shader_object_enable");
-   }
+   }*/
 
    simple_mtx_lock(&instance_lock);
    if (++instance_refcount == 1) {
