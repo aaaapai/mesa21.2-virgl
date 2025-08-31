@@ -1198,10 +1198,10 @@ droid_load_driver(_EGLDisplay *disp, bool swrast)
    return true;
 
 error:
-   printf("droid_load_driver\n");
-   /*free(dri2_dpy->driver_name);
+   printf("droid_load_driver: error\n");
+   free(dri2_dpy->driver_name);
    dri2_dpy->driver_name = NULL;
-    return false;*/
+    return false;
 }
 
 static void
