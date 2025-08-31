@@ -74,6 +74,9 @@ init_dt_type(struct kopper_displaytarget *cdt)
    case VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR:
       cdt->type = KOPPER_ANDROID;
       break;
+
+#else
+#error no android define
 #endif
    default:
       UNREACHABLE("unsupported!");
@@ -306,12 +309,18 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
       cswap->scci.pQueueFamilyIndices = NULL;
       cswap->scci.compositeAlpha = has_alpha && !cdt->info.present_opaque
                                    ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
-                                   : VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+                                   : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
       cswap->scci.clipped = VK_TRUE;
    }
    cswap->scci.presentMode = cdt->present_mode;
    cswap->scci.minImageCount = cdt->caps.minImageCount;
-   cswap->scci.preTransform = cdt->caps.currentTransform;
+   if(cdt->caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) {
+      VkSurfaceTransformFlagBitsKHR currentTransform = cdt->caps.currentTransform;
+      cdt->pre_rotated = currentTransform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+      cswap->scci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+   } else {
+      cswap->scci.preTransform = cdt->caps.currentTransform;
+   }
    if (cdt->formats[1])
       cswap->scci.pNext = &cdt->format_list;
 
@@ -806,7 +815,7 @@ kopper_present(void *data, void *gdata, int thread_idx)
    swapchain->last_present = cpi->image;
    if (cpi->indefinite_acquire)
       p_atomic_dec(&swapchain->num_acquires);
-   if (error2 == VK_SUBOPTIMAL_KHR && cdt->swapchain == swapchain)
+   if ((!cdt->pre_rotated && error2 == VK_SUBOPTIMAL_KHR) && cdt->swapchain == swapchain)
       cpi->res->obj->new_dt = true;
 
    /* it's illegal to destroy semaphores if they're in use by a cmdbuf.
