@@ -701,7 +701,7 @@ eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
          }
          else {
             bool success = false;
-            if (disp->Options.Zink && getenv("GALLIUM_DRIVER")) {
+            if (!disp->Options.Zink && !getenv("GALLIUM_DRIVER")) {
                printf("eglInitialize-11\n");
                disp->Options.Zink = EGL_TRUE;
                printf("eglInitialize-12\n");
