@@ -1332,10 +1332,12 @@ dri2_initialize_android(_EGLDisplay *disp)
    const char *err;
 
    if (disp->Options.Zink) {
+        printf("dri2_initialize_android: 1\n");
         dri2_dpy->driver_name = strdup("zink");
         dri2_dpy->loader_extensions = droid_kopper_image_loader_extensions;
         dri2_dpy->fd_render_gpu = -1;
         dri2_dpy->pure_swrast = true;
+        printf("dri2_initialize_android: 2\n");
         dri2_detect_swrast_kopper(disp);
         if (!dri2_create_screen(disp)) {
             printf("DRI2: Failed to create swrast screen\n");
@@ -1344,6 +1346,7 @@ dri2_initialize_android(_EGLDisplay *disp)
         }
         device_opened = EGL_TRUE;
    } else {
+        printf("dri2_initialize_android: 3\n");
         dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_AUTO);
         if (dri2_dpy->gralloc == NULL) {
             err = "DRI2: failed to get gralloc";
@@ -1379,6 +1382,7 @@ dri2_initialize_android(_EGLDisplay *disp)
    }
 
    if (!device_opened) {
+      printf("DRI2: failed to open device\n");
       /*err = "DRI2: failed to open device";
       goto cleanup;*/
    }
@@ -1391,14 +1395,17 @@ dri2_initialize_android(_EGLDisplay *disp)
       goto cleanup;*/
    }
 
+   printf("dri2_initialize_android: 4\n");
    dri2_setup_screen(disp);
 
    /* We set the maximum swap interval as 1 for Android platform, since it is
     * the maximum value supported by Android according to the value of
     * ANativeWindow::maxSwapInterval.
     */
+   printf("dri2_initialize_android: 5\n");
    dri2_setup_swap_interval(disp, 1);
 
+   printf("dri2_initialize_android: 6\n");
    disp->Extensions.ANDROID_framebuffer_target = EGL_TRUE;
    disp->Extensions.ANDROID_image_native_buffer = EGL_TRUE;
    disp->Extensions.ANDROID_recordable = EGL_TRUE;
