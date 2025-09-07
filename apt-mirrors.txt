@@ -1,0 +1,4 @@
+http://mirrors.163.com/ubuntu/ 	priority:1
+http://azure.archive.ubuntu.com/ubuntu/	priority:2
+https://archive.ubuntu.com/ubuntu/	priority:3
+https://security.ubuntu.com/ubuntu/	priority:4

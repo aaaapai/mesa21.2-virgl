@@ -51,6 +51,11 @@
 #include "platform_android.h"
 #include "dri_util.h"
 
+#ifdef __ANDROID__
+#include <vulkan/vulkan_core.h>
+#include <vulkan/vulkan_android.h>
+#endif
+
 static struct dri_image *
 droid_create_image_from_buffer_info(
    struct dri2_egl_display *dri2_dpy, int width, int height,
@@ -84,11 +89,13 @@ droid_create_image_from_native_buffer(_EGLDisplay *disp,
 
    if (u_gralloc_get_buffer_basic_info(dri2_dpy->gralloc, &gr_handle,
                                        &buf_info))
-      return NULL;
+      printf("droid_create_image_from_native_buffer: return NULL");
+      //return NULL;
 
    if (u_gralloc_get_buffer_color_info(dri2_dpy->gralloc, &gr_handle,
                                        &color_info))
-      return NULL;
+      printf("droid_create_image_from_native_buffer: return NULL");
+      //return NULL;
 
    img = droid_create_image_from_buffer_info(dri2_dpy, buf->width, buf->height,
                                              &buf_info, &color_info, priv);
@@ -140,9 +147,9 @@ droid_window_dequeue_buffer(struct dri2_egl_surface *dri2_surf)
 {
    int fence_fd;
 
-   if (ANativeWindow_dequeueBuffer(dri2_surf->window, &dri2_surf->buffer,
-                                   &fence_fd))
-      return EGL_FALSE;
+   ANativeWindow_dequeueBuffer(dri2_surf->window, &dri2_surf->buffer,
+                                   &fence_fd);
+      /*return EGL_FALSE;*/
 
    close_in_fence_fd(dri2_surf);
 
@@ -245,7 +252,7 @@ droid_set_shared_buffer_mode(_EGLDisplay *disp, _EGLSurface *surf, bool mode)
               "failed ANativeWindow_setSharedBufferMode"
               "(window=%p, mode=%d)",
               window, mode);
-      return false;
+      //return false;
    }
 
    if (mode)
@@ -257,14 +264,14 @@ droid_set_shared_buffer_mode(_EGLDisplay *disp, _EGLSurface *surf, bool mode)
       _eglLog(_EGL_WARNING,
               "failed ANativeWindow_setUsage(window=%p, usage=%u)", window,
               dri2_surf->gralloc_usage);
-      return false;
+      //return false;
    }
 
    return true;
 #else
    _eglLog(_EGL_FATAL, "%s:%d: internal error: unreachable", __FILE__,
            __LINE__);
-   return false;
+   //return false;
 #endif
 }
 
@@ -280,8 +287,8 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
 
    dri2_surf = calloc(1, sizeof *dri2_surf);
    if (!dri2_surf) {
-      _eglError(EGL_BAD_ALLOC, "droid_create_surface");
-      return NULL;
+      /*_eglError(EGL_BAD_ALLOC, "droid_create_surface");
+      return NULL;*/
    }
 
    dri2_surf->in_fence_fd = -1;
@@ -297,8 +304,8 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
 
       format = ANativeWindow_getFormat(window);
       if (format < 0) {
-         _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
-         goto cleanup_surface;
+         /*_eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
+         goto cleanup_surface;*/
       }
 
       /* Query ANativeWindow for MIN_UNDEQUEUED_BUFFER, minimum amount
@@ -307,8 +314,8 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       if (ANativeWindow_query(window,
                               ANATIVEWINDOW_QUERY_MIN_UNDEQUEUED_BUFFERS,
                               &min_undequeued_buffers)) {
-         _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
-         goto cleanup_surface;
+         /*_eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
+         goto cleanup_surface;*/
       }
 
       /* Required buffer caching slots. */
@@ -317,8 +324,8 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       dri2_surf->color_buffers =
          calloc(buffer_count, sizeof(*dri2_surf->color_buffers));
       if (!dri2_surf->color_buffers) {
-         _eglError(EGL_BAD_ALLOC, "droid_create_surface");
-         goto cleanup_surface;
+         /*_eglError(EGL_BAD_ALLOC, "droid_create_surface");
+         goto cleanup_surface;*/
       }
       dri2_surf->color_buffers_count = buffer_count;
 
@@ -342,8 +349,8 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
          dri2_surf->gralloc_usage |= dri2_dpy->front_rendering_usage;
 
       if (ANativeWindow_setUsage(window, dri2_surf->gralloc_usage)) {
-         _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
-         goto cleanup_surface;
+         /*_eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
+         goto cleanup_surface;*/
       }
    }
 
@@ -352,6 +359,13 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       _eglError(EGL_BAD_MATCH,
                 "Unsupported surfacetype/colorspace configuration");
       goto cleanup_surface;
+   }
+
+   /* `dri2_surf->window` will be required in dri2_create_drawable for Kopper,
+    * (in kopperSetSurfaceCreateInfo), so set it in advance here.
+    */
+   if (dri2_dpy->kopper) {
+        dri2_surf->window = window;
    }
 
    if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
@@ -426,14 +440,36 @@ droid_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
 static EGLBoolean
 droid_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
 {
+
+   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+
    struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
    struct ANativeWindow *window = dri2_surf->window;
 
-   if (ANativeWindow_setSwapInterval(window, interval))
-      return EGL_FALSE;
+   if (dri2_dpy->kopper) {
+      kopperSetSwapInterval(dri2_surf->dri_drawable, interval);
+   } else if (ANativeWindow_setSwapInterval(window, interval)) {
+      //return EGL_FALSE;
+   }
 
    surf->SwapInterval = interval;
    return EGL_TRUE;
+}
+
+static void
+droid_get_window_size(struct dri2_egl_surface *dri2_surf, int *w, int *h) {
+   struct ANativeWindow* window = dri2_surf->window;
+   *w = ANativeWindow_getWidth(window);
+   *h = ANativeWindow_getHeight(window);
+}
+
+static void
+update_buffer_size(struct dri2_egl_surface *dri2_surf)
+{
+   // _eglLog(_EGL_WARNING, "update_buffer_size: dri2_surf->buffer %p", dri2_surf->buffer);
+   droid_get_window_size(dri2_surf, &dri2_surf->base.Width, &dri2_surf->base.Height);
+   /*dri2_surf->base.Width = dri2_surf->buffer->width;
+   dri2_surf->base.Height = dri2_surf->buffer->height;*/
 }
 
 static int
@@ -449,15 +485,16 @@ update_buffers(struct dri2_egl_surface *dri2_surf)
    if (!dri2_surf->buffer && !droid_window_dequeue_buffer(dri2_surf)) {
       _eglLog(_EGL_WARNING, "Could not dequeue buffer from native window");
       dri2_surf->base.Lost = EGL_TRUE;
-      return -1;
+      /*return -1;*/
    }
 
    /* free outdated buffers and update the surface size */
-   if (dri2_surf->base.Width != dri2_surf->buffer->width ||
+   /*if (dri2_surf->base.Width != dri2_surf->buffer->width ||
        dri2_surf->base.Height != dri2_surf->buffer->height) {
       dri2_surf->base.Width = dri2_surf->buffer->width;
       dri2_surf->base.Height = dri2_surf->buffer->height;
-   }
+   }*/
+   update_buffer_size(dri2_surf);
 
    return 0;
 }
@@ -486,7 +523,7 @@ get_front_bo(struct dri2_egl_surface *dri2_surf, unsigned int format)
          dri2_surf->base.Height, format, NULL, 0, 0, NULL);
       if (!dri2_surf->dri_image_front) {
          _eglLog(_EGL_WARNING, "dri2_image_front allocation failed");
-         return -1;
+         //return -1;
       }
    }
 
@@ -504,14 +541,14 @@ get_back_bo(struct dri2_egl_surface *dri2_surf)
    if (dri2_surf->base.Type == EGL_WINDOW_BIT) {
       if (!dri2_surf->buffer) {
          _eglLog(_EGL_WARNING, "Could not get native buffer");
-         return -1;
+         //return -1;
       }
 
       dri2_surf->dri_image_back =
          droid_create_image_from_native_buffer(disp, dri2_surf->buffer, NULL);
       if (!dri2_surf->dri_image_back) {
          _eglLog(_EGL_WARNING, "failed to create DRI image from FD");
-         return -1;
+         //return -1;
       }
 
       handle_in_fence_fd(dri2_surf, dri2_surf->dri_image_back);
@@ -551,16 +588,20 @@ droid_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
                         uint32_t buffer_mask, struct __DRIimageList *images)
 {
    struct dri2_egl_surface *dri2_surf = loaderPrivate;
+   struct dri2_egl_display *dri2_dpy = dri2_egl_display(dri2_surf->base.Resource.Display);
 
    images->image_mask = 0;
    images->front = NULL;
    images->back = NULL;
 
-   if (update_buffers(dri2_surf) < 0)
+   if (dri2_dpy->kopper) {
+      update_buffer_size(dri2_surf);
+   } else if (update_buffers(dri2_surf) < 0) {
       return 0;
+   }
 
    if (_eglSurfaceInSharedBufferMode(&dri2_surf->base)) {
-      if (get_back_bo(dri2_surf) < 0)
+      if (!dri2_dpy->kopper && get_back_bo(dri2_surf) < 0)
          return 0;
 
       /* We have dri_image_back because this is a window surface and
@@ -575,7 +616,7 @@ droid_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
    }
 
    if (buffer_mask & __DRI_IMAGE_BUFFER_FRONT) {
-      if (get_front_bo(dri2_surf, format) < 0)
+      if (!dri2_dpy->kopper && get_front_bo(dri2_surf, format) < 0)
          return 0;
 
       if (dri2_surf->dri_image_front) {
@@ -585,7 +626,7 @@ droid_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
    }
 
    if (buffer_mask & __DRI_IMAGE_BUFFER_BACK) {
-      if (get_back_bo(dri2_surf) < 0)
+      if (!dri2_dpy->kopper && get_back_bo(dri2_surf) < 0)
          return 0;
 
       if (dri2_surf->dri_image_back) {
@@ -608,6 +649,52 @@ droid_query_buffer_age(_EGLDisplay *disp, _EGLSurface *surface)
    }
 
    return dri2_surf->back ? dri2_surf->back->age : 0;
+}
+
+static EGLint
+droid_query_buffer_age_kopper(_EGLDisplay *disp, _EGLSurface *surface)	
+{
+struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surface);
+   return kopperQueryBufferAge(dri2_surf->dri_drawable);
+}
+
+static EGLBoolean
+droid_swap_buffers_kopper(_EGLDisplay *disp, _EGLSurface *draw)
+{
+   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(draw);
+   const bool has_mutable_rb = _eglSurfaceHasMutableRenderBuffer(draw);
+	
+   /* From the EGL_KHR_mutable_render_buffer spec (v12):
+	
+    *
+	
+    *    If surface is a single-buffered window, pixmap, or pbuffer surface
+	
+    *    for which there is no pending change to the EGL_RENDER_BUFFER
+	
+    *    attribute, eglSwapBuffers has no effect.
+	
+    */
+   if (has_mutable_rb && draw->RequestedRenderBuffer == EGL_SINGLE_BUFFER &&
+       draw->ActiveRenderBuffer == EGL_SINGLE_BUFFER) {
+      _eglLog(_EGL_DEBUG, "%s: remain in shared buffer mode", __func__);
+      return EGL_TRUE;
+   }
+	
+   kopperSwapBuffers(dri2_surf->dri_drawable, __DRI2_FLUSH_INVALIDATE_ANCILLARY);
+	
+   /* Update the shared buffer mode */
+	
+   if (has_mutable_rb &&
+       draw->ActiveRenderBuffer != draw->RequestedRenderBuffer) {
+      bool mode = (draw->RequestedRenderBuffer == EGL_SINGLE_BUFFER);
+      _eglLog(_EGL_DEBUG, "%s: change to shared buffer mode %d", __func__,
+              mode);
+      if (!droid_set_shared_buffer_mode(disp, draw, mode))
+         return EGL_FALSE;
+      draw->ActiveRenderBuffer = draw->RequestedRenderBuffer;
+   }
+   return EGL_TRUE;	
 }
 
 static EGLBoolean
@@ -865,6 +952,20 @@ droid_add_configs_for_visuals(_EGLDisplay *disp)
    }
 }
 
+static const struct dri2_egl_display_vtbl droid_display_kopper_vtbl = {
+   .authenticate = NULL,
+   .create_window_surface = droid_create_window_surface,
+   .create_pbuffer_surface = droid_create_pbuffer_surface,
+   .destroy_surface = droid_destroy_surface,
+   .create_image = droid_create_image_khr,
+   .swap_buffers = droid_swap_buffers_kopper,
+   .swap_interval = droid_swap_interval,
+   .query_buffer_age = droid_query_buffer_age_kopper,
+   .query_surface = droid_query_surface,
+   .get_dri_drawable = dri2_surface_get_dri_drawable,
+   .set_shared_buffer_mode = droid_set_shared_buffer_mode,
+};
+
 static const struct dri2_egl_display_vtbl droid_display_vtbl = {
    .authenticate = NULL,
    .create_window_surface = droid_create_window_surface,
@@ -954,8 +1055,15 @@ droid_swrast_get_drawable_info(struct dri_drawable *drawable,
 	        void *loaderPrivate)
 {
    struct dri2_egl_surface *dri2_surf = loaderPrivate;
+   struct dri2_egl_display *dri2_dpy = dri2_egl_display(dri2_surf->base.Resource.Display);
 
-   update_buffers(dri2_surf);
+   _eglLog(_EGL_WARNING, "droid_swrast_get_drawable_info: dri2_dpy %p", dri2_dpy);
+   _eglLog(_EGL_WARNING, "droid_swrast_get_drawable_info: kopper %d", dri2_dpy->kopper);
+   if (dri2_dpy->kopper) {
+      update_buffer_size(dri2_surf);
+	} else {
+      update_buffers(dri2_surf);
+   }
 
    *x = 0;
    *y = 0;
@@ -1014,6 +1122,45 @@ static const __DRIextension *droid_swrast_image_loader_extensions[] = {
    NULL,
 };
 
+static_assert(sizeof(struct kopper_vk_surface_create_storage) >=
+                 sizeof(VkAndroidSurfaceCreateInfoKHR),
+              "");
+static void	
+kopperSetSurfaceCreateInfo(void *_draw, struct kopper_loader_info *out)
+{
+   struct dri2_egl_surface *dri2_surf = _draw;
+   VkAndroidSurfaceCreateInfoKHR *asci = (VkAndroidSurfaceCreateInfoKHR *)&out->bos;
+   asci->sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+   asci->pNext = NULL;
+   asci->flags = 0;
+   asci->window = dri2_surf->window;
+   out->present_opaque = true;
+}
+
+static void
+kopperGetDrawableInfo(struct dri_drawable *draw, int *w, int *h, void *loaderPrivate)
+	
+{
+   struct dri2_egl_surface *dri2_surf = loaderPrivate;
+   droid_get_window_size(dri2_surf, w, h);
+}
+
+static const __DRIkopperLoaderExtension kopper_loader_extension = {
+   .base = {__DRI_KOPPER_LOADER, 1},
+   .SetSurfaceCreateInfo = kopperSetSurfaceCreateInfo,
+   .GetDrawableInfo = kopperGetDrawableInfo,
+};
+
+static const __DRIextension *droid_kopper_image_loader_extensions[] = {
+   &droid_image_loader_extension.base,
+   &image_lookup_extension.base,
+   // &use_invalidate.base,
+   &droid_mutable_render_buffer_extension.base,
+   &swrast_loader_extension.base,
+   &kopper_loader_extension.base,
+   NULL,
+};
+
 static EGLBoolean
 droid_load_driver(_EGLDisplay *disp, bool swrast)
 {
@@ -1040,15 +1187,21 @@ droid_load_driver(_EGLDisplay *disp, bool swrast)
       }
    }
 
-   dri2_dpy->loader_extensions = droid_image_loader_extensions;
+   if (disp->Options.Zink) {
+      dri2_dpy->loader_extensions = droid_kopper_image_loader_extensions;
+   } else {
+      dri2_dpy->loader_extensions = droid_image_loader_extensions;
+   }
+
    dri2_detect_swrast_kopper(disp);
 
    return true;
 
 error:
+   printf("droid_load_driver: error\n");
    free(dri2_dpy->driver_name);
    dri2_dpy->driver_name = NULL;
-   return false;
+    return false;
 }
 
 static void
@@ -1178,11 +1331,33 @@ dri2_initialize_android(_EGLDisplay *disp)
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    const char *err;
 
-   dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_AUTO);
+   if (disp->Options.Zink) {
+        printf("dri2_initialize_android: 1\n");
+        dri2_dpy->driver_name = strdup("zink");
+        dri2_dpy->loader_extensions = droid_kopper_image_loader_extensions;
+        dri2_dpy->fd_render_gpu = -1;
+        dri2_dpy->pure_swrast = true;
+        printf("dri2_initialize_android: 2\n");
+        dri2_detect_swrast_kopper(disp);
+        if (!dri2_create_screen(disp)) {
+            printf("DRI2: Failed to create swrast screen\n");
+            err = "DRI2: Failed to create swrast screen";
+            goto cleanup;
+        }
+        device_opened = EGL_TRUE;
+   } else {
+        printf("dri2_initialize_android: 3\n");
+        dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_AUTO);
+        if (dri2_dpy->gralloc == NULL) {
+            err = "DRI2: failed to get gralloc";
+            goto cleanup;
+        }
+
+   /*dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_LIBDRM);
    if (dri2_dpy->gralloc == NULL) {
       err = "DRI2: failed to get gralloc";
       goto cleanup;
-   }
+   }*/
 
    bool force_pure_swrast = debug_get_bool_option("MESA_ANDROID_NO_KMS_SWRAST", false);
 
@@ -1204,27 +1379,33 @@ dri2_initialize_android(_EGLDisplay *disp)
 
       device_opened = EGL_TRUE;
    }
+   }
 
    if (!device_opened) {
-      err = "DRI2: failed to open device";
-      goto cleanup;
+      printf("DRI2: failed to open device\n");
+      /*err = "DRI2: failed to open device";
+      goto cleanup;*/
    }
 
    dri2_dpy->fd_display_gpu = dri2_dpy->fd_render_gpu;
 
    if (!dri2_dpy->pure_swrast && !dri2_setup_device(disp, false)) {
-      err = "DRI2: failed to setup EGLDevice";
-      goto cleanup;
+      printf("DRI2: failed to setup EGLDevice\n");
+      /*err = "DRI2: failed to setup EGLDevice";
+      goto cleanup;*/
    }
 
+   printf("dri2_initialize_android: 4\n");
    dri2_setup_screen(disp);
 
    /* We set the maximum swap interval as 1 for Android platform, since it is
     * the maximum value supported by Android according to the value of
     * ANativeWindow::maxSwapInterval.
     */
+   printf("dri2_initialize_android: 5\n");
    dri2_setup_swap_interval(disp, 1);
 
+   printf("dri2_initialize_android: 6\n");
    disp->Extensions.ANDROID_framebuffer_target = EGL_TRUE;
    disp->Extensions.ANDROID_image_native_buffer = EGL_TRUE;
    disp->Extensions.ANDROID_recordable = EGL_TRUE;
@@ -1258,7 +1439,7 @@ dri2_initialize_android(_EGLDisplay *disp)
         * restrict the enabling of this extension to ES only.
         */
        (disp->ClientAPIs & ~(EGL_OPENGL_ES_BIT | EGL_OPENGL_ES2_BIT |
-                             EGL_OPENGL_ES3_BIT_KHR)) == 0) {
+                             EGL_OPENGL_ES3_BIT_KHR/* | EGL_OPENGL_BIT*/)) == 0) {
       /* For cros gralloc, if the front rendering query is supported, then all
        * available window surface configs support front rendering because:
        *
@@ -1291,10 +1472,11 @@ dri2_initialize_android(_EGLDisplay *disp)
    /* Fill vtbl last to prevent accidentally calling virtual function during
     * initialization.
     */
-   dri2_dpy->vtbl = &droid_display_vtbl;
+   dri2_dpy->vtbl = dri2_dpy->kopper ? &droid_display_kopper_vtbl : &droid_display_vtbl;
 
    return EGL_TRUE;
 
 cleanup:
+   printf("droid_probe_device: clenup\n");
    return _eglError(EGL_NOT_INITIALIZED, err);
 }

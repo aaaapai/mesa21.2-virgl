@@ -11,6 +11,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <string.h>
+#include <stdio.h>
 #include <hardware/gralloc.h>
 
 #include "util/log.h"
@@ -76,31 +77,45 @@ destroy(struct u_gralloc *gralloc)
 struct u_gralloc *
 u_gralloc_libdrm_create()
 {
+   printf("1");
    struct libdrm_gralloc *gr = CALLOC_STRUCT(libdrm_gralloc);
+   printf("2");
    int err = 0;
 
-   err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
-                       (const hw_module_t **)&gr->gralloc_module);
+   printf("3");
+   /*err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
+                       (const hw_module_t **)&gr->gralloc_module);*/
 
-   if (err)
-      goto fail;
-
+   printf("4");
+   /*if (err)
+      printf("5");
+      goto fail;*/
+   
+   printf("6");
    if (strcmp(gr->gralloc_module->common.name, gbm_gralloc_module_name) != 0)
-      goto fail;
+      printf("7");
+      // goto fail;
 
+   printf("8");
    gr->base.ops.get_buffer_basic_info = get_buffer_info;
+   printf("9");
    gr->base.ops.destroy = destroy;
 
+   printf("10");
    mesa_logw("Using gralloc header from libdrm/android/gralloc_handle.h. "
              " This is not recommended for new distributions. "
              " Initializing a fallback gralloc as a helper:");
 
+   printf("11");
    gr->fallback_gralloc = u_gralloc_fallback_create();
 
+   printf("12");
    return &gr->base;
 
 fail:
+   printf("fail");
    destroy(&gr->base);
 
+   printf("fail return NULL");
    return NULL;
 }

@@ -38,7 +38,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
@@ -56,6 +55,10 @@
 #include "drm_shim.h"
 
 #define REAL_FUNCTION_POINTER(x) __typeof__(x) *real_##x
+
+#define ioctl drm_shim_ioctl
+#include <sys/ioctl.h>
+#undef ioctl
 
 static simple_mtx_t shim_lock = SIMPLE_MTX_INITIALIZER;
 struct set *opendir_set;

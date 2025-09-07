@@ -540,6 +540,13 @@ option(
 )
 
 option(
+  'osmesa',
+  type : 'boolean',
+  value : false,
+  description : 'Build OSmesa.'
+)
+
+option(
   'tools',
   type : 'array',
   value : [],
@@ -586,7 +593,7 @@ option(
 option(
   'platform-sdk-version',
   type : 'integer',
-  min : 25,
+  min : 24,
   max : 10000,
   value : 34,
   description : 'Android Platform SDK version. Default: Android14 version.'

@@ -306,9 +306,11 @@ disk_cache_init(struct zink_screen *screen)
    /* Hash in the zink driver build. */
    const struct build_id_note *note =
        build_id_find_nhdr_for_addr(disk_cache_init);
-   unsigned build_id_len = build_id_length(note);
-   assert(note && build_id_len == 20); /* blake3 */
-   _mesa_blake3_update(&ctx, build_id_data(note), build_id_len);
+   if (note != NULL) {
+    unsigned build_id_len = build_id_length(note);
+    assert(note && build_id_len == 20); /* blake3 */
+    _mesa_blake3_update(&ctx, build_id_data(note), build_id_len);
+   }
 #endif
 
    /* Hash in the Vulkan pipeline cache UUID to identify the combination of
@@ -354,10 +356,10 @@ disk_cache_init(struct zink_screen *screen)
    if (!util_queue_init(&screen->cache_put_thread, "zcq", 8, 1, UTIL_QUEUE_INIT_RESIZE_IF_FULL, screen)) {
       mesa_loge("zink: Failed to create disk cache queue\n");
 
-      disk_cache_destroy(screen->disk_cache);
+      /*disk_cache_destroy(screen->disk_cache);
       screen->disk_cache = NULL;
 
-      return false;
+      return false;*/
    }
 #endif
 
@@ -1645,7 +1647,7 @@ choose_pdev(struct zink_screen *screen, int64_t dev_major, int64_t dev_minor, ui
       VkPhysicalDevice *pdevs;
       VkResult result = VKSCR(EnumeratePhysicalDevices)(screen->instance, &pdev_count, NULL);
       if (result != VK_SUCCESS) {
-         if (!screen->driver_name_is_inferred)
+         //if (!screen->driver_name_is_inferred)
             mesa_loge("ZINK: vkEnumeratePhysicalDevices failed (%s)", vk_Result_to_str(result));
          return;
       }
@@ -3274,11 +3276,12 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 
    u_trace_state_init();
 
-   screen->loader_lib = util_dl_open(VK_LIBNAME);
+   const char* preloaded_ptr = getenv("VULKAN_PTR");
+   screen->loader_lib = preloaded_ptr ? (void*) strtoul(preloaded_ptr, NULL, 0x10) : util_dl_open(VK_LIBNAME);
    if (!screen->loader_lib) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("ZINK: failed to load "VK_LIBNAME);
-      goto fail;
+      //// goto fail;
    }
 
    screen->vk_GetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)util_dl_get_proc_address(screen->loader_lib, "vkGetInstanceProcAddr");
@@ -3287,7 +3290,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
        !screen->vk_GetDeviceProcAddr) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("ZINK: failed to get proc address");
-      goto fail;
+      // goto fail;
    }
 
    if (config) {
@@ -3309,7 +3312,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
        * to create another instance on subsequent calls.
        */
       simple_mtx_unlock(&instance_lock);
-      goto fail;
+      // goto fail;
    }
    screen->instance = instance;
    screen->instance_info = &instance_info;
@@ -3320,7 +3323,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
           !screen->instance_info->have_layer_LUNARG_standard_validation) {
          if (!screen->driver_name_is_inferred)
             mesa_loge("Failed to load validation layer");
-         goto fail;
+         // goto fail;
       }
    }
 
@@ -3343,7 +3346,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    if (screen->pdev == VK_NULL_HANDLE) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("ZINK: failed to choose pdev");
-      goto fail;
+      // goto fail;
    }
    screen->is_cpu = screen->info.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
 
@@ -3360,17 +3363,24 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    if (!zink_get_physical_device_info(screen)) {
       if (!screen->driver_name_is_inferred)
          debug_printf("ZINK: failed to detect features\n");
-      goto fail;
+      // // goto fail;
+   }
+
+   if(zink_driverid(screen) == VK_DRIVER_ID_ARM_PROPRIETARY) {
+      const char* mali_geom_override = getenv("ZINK_EANBLE_GS_ARM");
+      bool geomShader = mali_geom_override != NULL && *mali_geom_override == '1';
+      printf("ZINK: ARM Mali detected, geometry shaders are %s\n", geomShader ? "enabled (override)" : "forcibly disabled");
+      screen->info.feats.features.geometryShader = geomShader;
    }
 
    if (!screen->info.rb2_feats.nullDescriptor) {
       mesa_loge("Zink requires the nullDescriptor feature of KHR/EXT robustness2.");
-      goto fail;
+      //// goto fail;
    }
 
    if (zink_set_driver_strings(screen)) {
       mesa_loge("ZINK: failed to set driver strings\n");
-      goto fail;
+      //// goto fail;
    }
 
    memset(&screen->heap_map, UINT8_MAX, sizeof(screen->heap_map));
@@ -3420,21 +3430,22 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    if (screen->threaded_submit && !util_queue_init(&screen->flush_queue, "zfq", 8, 1, UTIL_QUEUE_INIT_RESIZE_IF_FULL, screen)) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("zink: Failed to create flush queue.\n");
-      goto fail;
+      // goto fail;
    }
 
    zink_internal_setup_moltenvk(screen);
    if (!screen->info.have_KHR_timeline_semaphore && !screen->info.feats12.timelineSemaphore) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("zink: KHR_timeline_semaphore is required");
-      goto fail;
+      // goto fail;
    }
 
    /* Reject IMG blobs with DDK below 24.1@6554834 if not forced */
    if (zink_driverid(screen) == VK_DRIVER_ID_IMAGINATION_PROPRIETARY && screen->info.props.driverVersion < 6554834) {
       debug_printf("zink: Imagination proprietary driver is too old to be supported, expect failure\n");
       if (screen->driver_name_is_inferred)
-         goto fail;
+         printf("goto fail\n");
+         // goto fail;
    }
 
    if (zink_debug & ZINK_DEBUG_MEM) {
@@ -3448,7 +3459,8 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 
    screen->dev = zink_create_logical_device(screen);
    if (!screen->dev)
-      goto fail;
+      printf("goto fail\n");
+      // goto fail;
 
    vk_device_uncompacted_dispatch_table_load(&screen->vk.device,
                                              screen->vk_GetDeviceProcAddr,
@@ -3481,7 +3493,8 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    }
 
    if (screen->info.have_EXT_calibrated_timestamps && !check_have_device_time(screen))
-      goto fail;
+      printf("goto fail\n");
+      // goto fail;
 
    screen->have_triangle_fans = true;
 #if defined(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)
@@ -3540,7 +3553,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    if (!os_get_total_physical_memory(&screen->total_mem)) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("ZINK: failed to get total physical memory");
-      goto fail;
+      // goto fail;
    }
 
    zink_init_shader_caps(screen);
@@ -3560,11 +3573,12 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    }
 
    if (!zink_screen_resource_init(&screen->base))
-      goto fail;
+      printf("goto fail\n");
+      // goto fail;
    if (!zink_bo_init(screen)) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("ZINK: failed to initialize suballocator");
-      goto fail;
+      // goto fail;
    }
    zink_screen_fence_init(&screen->base);
 
@@ -3572,11 +3586,12 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    if (!disk_cache_init(screen)) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("ZINK: failed to initialize disk cache");
-      goto fail;
+      // goto fail;
    }
    if (!util_queue_init(&screen->cache_get_thread, "zcfq", 8, 4,
                         UTIL_QUEUE_INIT_RESIZE_IF_FULL, screen))
-      goto fail;
+      printf("goto fail\n");
+      // goto fail;
    populate_format_props(screen);
 
    slab_create_parent(&screen->transfer_pool, sizeof(struct zink_transfer), 16);
@@ -3586,7 +3601,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    if (!zink_screen_init_semaphore(screen)) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("zink: failed to create timeline semaphore");
-      goto fail;
+      // goto fail;
    }
 
    bool can_db = true;
@@ -3595,7 +3610,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
          if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
             if (!screen->driver_name_is_inferred)
                mesa_loge("Cannot use db descriptor mode without EXT_descriptor_buffer");
-            goto fail;
+            // goto fail;
          }
          can_db = false;
       }
@@ -3603,7 +3618,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
          if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
             if (!screen->driver_name_is_inferred)
                mesa_loge("Cannot use db descriptor mode without EXT_non_seamless_cube_map");
-            goto fail;
+            // goto fail;
          }
          can_db = false;
       }
@@ -3611,7 +3626,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
          if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
             if (!screen->driver_name_is_inferred)
                mesa_loge("Cannot use db descriptor mode with inputAttachmentDescriptorSize(%u) > %u", (unsigned)screen->info.db_props.inputAttachmentDescriptorSize, ZINK_FBFETCH_DESCRIPTOR_SIZE);
-            goto fail;
+            // goto fail;
          }
          mesa_logw("zink: bug detected: inputAttachmentDescriptorSize(%u) > %u", (unsigned)screen->info.db_props.inputAttachmentDescriptorSize, ZINK_FBFETCH_DESCRIPTOR_SIZE);
          can_db = false;
@@ -3677,13 +3692,13 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    if (!init_layouts(screen)) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("ZINK: failed to initialize layouts");
-      goto fail;
+      // goto fail;
    }
 
    if (!zink_descriptor_layouts_init(screen)) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("ZINK: failed to initialize descriptor layouts");
-      goto fail;
+      // goto fail;
    }
 
    simple_mtx_init(&screen->copy_context_lock, mtx_plain);

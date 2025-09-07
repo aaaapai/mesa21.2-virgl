@@ -230,6 +230,10 @@ if with_dri
   subdir('frontends/dri')
   subdir('targets/dri')
 endif
+if with_osmesa
+  subdir('frontends/osmesa')
+  subdir('targets/osmesa')
+endif
 if with_platform_haiku
   subdir('frontends/hgl')
 endif
