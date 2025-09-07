@@ -370,7 +370,7 @@ mesa_log_get_file(void)
    return mesa_log_file;
 }
 
-/*void
+void
 mesa_log(enum mesa_log_level level, const char *tag, const char *format, ...)
 {
    va_list va;
@@ -413,60 +413,9 @@ mesa_log_v(enum mesa_log_level level, const char *tag, const char *format,
          va_end(copy);
       }
    }
-}*/
-
-void
-mesa_log(enum mesa_log_level level, const char *tag, const char *format, ...)
-{
-   va_list va;
-
-   va_start(va, format);
-   mesa_log_v(level, tag, format, va);
-   va_end(va);
 }
 
 void
-mesa_log_v(enum mesa_log_level level, const char *tag, const char *format,
-            va_list va)
-{
-   // 强制启用文件输出（如果未初始化）
-   if (mesa_log_control == 0) {
-       mesa_log_control = MESA_LOG_CONTROL_FILE;
-   }
-
-   static const struct {
-      enum mesa_log_control bit;
-      void (*log)(enum mesa_log_level level,
-                  const char *tag,
-                  const char *format,
-                  va_list va);
-   } loggers[] = {
-      { MESA_LOG_CONTROL_FILE, logger_file },
-#if DETECT_OS_POSIX
-      { MESA_LOG_CONTROL_SYSLOG, logger_syslog },
-#endif
-#if DETECT_OS_ANDROID
-      { MESA_LOG_CONTROL_ANDROID, logger_android },
-#endif
-#if DETECT_OS_WINDOWS
-      { MESA_LOG_CONTROL_WINDBG, logger_windbg },
-#endif
-   };
-   
-   // ... 原有代码不变
-   mesa_log_init();
-
-   for (uint32_t i = 0; i < ARRAY_SIZE(loggers); i++) {
-      if (mesa_log_control & loggers[i].bit) {
-         va_list copy;
-         va_copy(copy, va);
-         loggers[i].log(level, tag, format, copy);
-         va_end(copy);
-      }
-   }
-}
-
-/*void
 _mesa_log(const char *fmtString, ...)
 {
    char s[MAX_LOG_MESSAGE_LENGTH];
@@ -475,16 +424,6 @@ _mesa_log(const char *fmtString, ...)
    printf(s, MAX_LOG_MESSAGE_LENGTH, fmtString, args);
    va_end(args);
    mesa_log_if_debug(MESA_LOG_INFO, s);
-}*/
-
-void
-_mesa_log(const char *fmtString, ...)
-{
-   va_list args;
-   va_start(args, fmtString);
-   vprintf(fmtString, args);
-   printf("\n");  // 确保换行
-   va_end(args);
 }
 
 void
