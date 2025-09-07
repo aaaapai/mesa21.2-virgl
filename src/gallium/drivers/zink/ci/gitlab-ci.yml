@@ -153,7 +153,7 @@ zink-anv-tgl-traces-restricted:
     PIGLIT_REPLAY_EXTRA_ARGS: --db-path ${CI_PROJECT_DIR}/replayer-db/ --minio_bucket=${S3_TRACIE_PRIVATE_BUCKET} --jwt-file=${S3_JWT_FILE}
   allow_failure: true
 
-zink-anv-cml-asan:
+.zink-anv-cml-asan:
   extends:
     - .lava-x86_64-test-asan-gl
     - .anv-test
@@ -177,6 +177,7 @@ zink-tu-a618:
     HWCI_START_WESTON: 1
     GPU_VERSION: zink-tu-a618
     DRIVER_NAME: null  # Don't use freedreno skips
+    ZINK_DEBUG: validation
   parallel: 3
 
 zink-tu-a618-traces:
@@ -284,6 +285,18 @@ zink-radv-vangogh-valve:
     - farm:$RUNNER_FARM_LOCATION
     - amdgpu:codename:VANGOGH
 
+zink-radv-vangogh-traces:
+  extends:
+    - zink-radv-vangogh-valve
+    - .zink-radv-valve-rules
+    - .zink-trace-test
+    - .piglit-traces-test
+  parallel: null
+  timeout: 10m
+  variables:
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 5  # normal runtime = 40-50 sec
+    PIGLIT_TRACES_FILE: traces-zink.yml
+
 zink-radv-navi31-valve:
   extends:
     - .radv-zink-test-valve
@@ -321,3 +334,14 @@ zink-radv-gfx1201-valve:
     GPU_VERSION: zink-radv-gfx1201
     CI_TRON_TIMEOUT__OVERALL__MINUTES: 10
     RADV_PERFTEST: hic
+
+zink-radv-gfx1201-traces:
+  extends:
+    - zink-radv-gfx1201-valve
+    - .zink-radv-valve-rules
+    - .zink-trace-test
+    - .piglit-traces-test
+  timeout: 10m
+  variables:
+    CI_TRON_TIMEOUT__OVERALL__MINUTES: 5  # normal runtime = 30-40 sec
+    PIGLIT_TRACES_FILE: traces-zink.yml

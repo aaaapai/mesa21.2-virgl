@@ -54,6 +54,7 @@
 #include "util/simple_mtx.h"
 #include "util/u_dynarray.h"
 #include "vbo/vbo.h"
+#include "state_tracker/st_atom.h"
 
 #include "pipe/p_state.h"
 
@@ -2202,6 +2203,30 @@ struct gl_compute_program_state
 
 
 /**
+ * Context state for task programs.
+ */
+struct gl_task_program_state
+{
+   /** Currently enabled and valid program (including internal programs
+    * and compiled shader programs).
+    */
+   struct gl_program *_Current;
+};
+
+
+/**
+ * Context state for mesh programs.
+ */
+struct gl_mesh_program_state
+{
+   /** Currently enabled and valid program (including internal programs
+    * and compiled shader programs).
+    */
+   struct gl_program *_Current;
+};
+
+
+/**
  * ATI_fragment_shader runtime state
  */
 
@@ -2890,28 +2915,28 @@ struct gl_driver_flags
    /**
     * gl_context::AtomicBufferBindings
     */
-   uint64_t NewAtomicBuffer;
+   st_state_bitset NewAtomicBuffer;
 
    /** gl_context::Color::Alpha* */
-   uint64_t NewAlphaTest;
+   st_state_bitset NewAlphaTest;
 
    /** gl_context::Multisample::Enabled */
-   uint64_t NewMultisampleEnable;
+   st_state_bitset NewMultisampleEnable;
 
    /** gl_context::Multisample::(Min)SampleShading */
-   uint64_t NewSampleShading;
+   st_state_bitset NewSampleShading;
 
    /** gl_context::Transform::ClipPlanesEnabled */
-   uint64_t NewClipPlaneEnable;
+   st_state_bitset NewClipPlaneEnable;
 
    /** gl_context::Color::ClampFragmentColor */
-   uint64_t NewFragClamp;
+   st_state_bitset NewFragClamp;
 
    /** Shader constants (uniforms, program parameters, state constants) */
-   uint64_t NewShaderConstants[MESA_SHADER_MESH_STAGES];
+   st_state_bitset NewShaderConstants[MESA_SHADER_MESH_STAGES];
 
    /** For GL_CLAMP emulation */
-   uint64_t NewSamplersWithClamp;
+   st_state_bitset NewSamplersWithClamp;
 };
 
 struct gl_buffer_binding
@@ -3414,6 +3439,8 @@ struct gl_context
    struct gl_tess_ctrl_program_state TessCtrlProgram;
    struct gl_tess_eval_program_state TessEvalProgram;
    struct gl_ati_fragment_shader_state ATIFragmentShader;
+   struct gl_task_program_state TaskProgram;
+   struct gl_mesh_program_state MeshProgram;
 
    struct gl_pipeline_shader_state Pipeline; /**< GLSL pipeline shader object state */
    struct gl_pipeline_object Shader; /**< GLSL shader object state */
@@ -3534,7 +3561,7 @@ struct gl_context
    GLenum16 RenderMode;      /**< either GL_RENDER, GL_SELECT, GL_FEEDBACK */
    GLbitfield NewState;      /**< bitwise-or of _NEW_* flags */
    GLbitfield PopAttribState; /**< Updated state since glPushAttrib */
-   uint64_t NewDriverState;  /**< bitwise-or of flags from DriverFlags */
+   st_state_bitset NewDriverState;  /**< bitwise-or of flags from DriverFlags */
 
    struct gl_driver_flags DriverFlags;
 
@@ -3680,7 +3707,8 @@ enum _debug
    DEBUG_ALWAYS_FLUSH		= (1 << 1),
    DEBUG_INCOMPLETE_TEXTURE     = (1 << 2),
    DEBUG_INCOMPLETE_FBO         = (1 << 3),
-   DEBUG_CONTEXT                = (1 << 4)
+   DEBUG_CONTEXT                = (1 << 4),
+   DEBUG_FALLBACK_TEXTURE       = (1 << 5),
 };
 
 #ifdef __cplusplus

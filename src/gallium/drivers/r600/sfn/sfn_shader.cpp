@@ -186,11 +186,29 @@ Shader::emit_instruction_from_string(const std::string& s)
 {
 
    sfn_log << SfnLog::instr << "Create Instr from '" << s << "'\n";
-   if (s == "BLOCK_START") {
+   if (s.compare(0, 11, "BLOCK_START") == 0) {
+      std::istringstream ins(s.substr(11));
+      string type;
+      ins >> type;
       if (!m_current_block->empty()) {
          start_new_block(m_current_block->nesting_offset());
          sfn_log << SfnLog::instr << "   Emit start block\n";
       }
+
+      if (type == "ALU")
+         m_current_block->set_cf_start(new ControlFlowInstr(ControlFlowInstr::cf_alu));
+      else if (type == "ALU_PUSH_BEFORE")
+         m_current_block->set_cf_start(
+            new ControlFlowInstr(ControlFlowInstr::cf_alu_push_before));
+      else if (type == "GDS")
+         m_current_block->set_cf_start(new ControlFlowInstr(ControlFlowInstr::cf_gds));
+      else if (type == "TEX")
+         m_current_block->set_cf_start(new ControlFlowInstr(ControlFlowInstr::cf_tex));
+      else if (type == "VTX")
+         m_current_block->set_cf_start(new ControlFlowInstr(ControlFlowInstr::cf_vtx));
+      else if (type == "POP")
+         m_current_block->set_cf_start(new ControlFlowInstr(ControlFlowInstr::cf_pop));
+
       return;
    }
 
@@ -1240,6 +1258,10 @@ Shader::emit_load_scratch(nir_intrinsic_instr *intr)
       for (unsigned i = 0; i < intr->num_components; ++i)
          dest_swz[i] = i;
 
+      auto wait = new ControlFlowInstr(ControlFlowInstr::cf_wait_ack);
+      emit_instruction(wait);
+      chain_scratch_read(wait);
+
       auto *ir = new LoadFromScratch(dest, dest_swz, addr, m_scratch_size);
       emit_instruction(ir);
       chain_scratch_read(ir);
@@ -1417,13 +1439,19 @@ void Shader::InstructionChain::visit(AluInstr *instr)
       if (last_ssbo_instr)
          instr->add_required_instr(last_ssbo_instr);
    }
-
 }
 
 void
 Shader::InstructionChain::visit(ScratchIOInstr *instr)
 {
    apply(instr, &last_scratch_instr);
+}
+
+void
+Shader::InstructionChain::visit(IfInstr *instr)
+{
+   if (last_group_barrier)
+      instr->predicate()->add_required_instr(last_group_barrier);
 }
 
 void

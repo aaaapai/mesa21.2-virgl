@@ -140888,7 +140888,7 @@ shader-blocks:
 	:0:0051:0063[19d70515x_81d857bex] no match: 19d7051581d857be
 	:3:0052:0064[7972f999x_e4df0ecbx] (sy)(ss)(jp)(rpt1)(ul)mad.s16 r38.y, (r)hc<a0.x + -309>, (neg)hr57.y, (neg)(r)(last)hr55.w
 	:6:0053:0066[dda7eb4fx_f96f6ddfx] no match: dda7eb4ff96f6ddf
-	:5:0054:0067[a4e7fe75x_ab4ffb7fx] no match: a4e7fe75ab4ffb7f
+	:5:0054:0067[a4e7fe75x_ab4ffb7fx] gather4a.3d.a.p.s.clp.rck (yzw)r29.y, r47.w, r63.y, s#10, t#85	; dontcare bits in gather4a: 0000000000020000, WARNING: unexpected bits[19:20] in #instruction-cat5-tex-base: 0000000000000001 vs 0000000000000000, WARNING: unexpected bits[47:47] in #instruction-cat5: 0000000000000001 vs 0000000000000000
 	:6:0055:0068[d1937f77x_effcfeefx] no match: d1937f77effcfeef
 	:0:0056:0069[1134c8d0x_34200204x] (sy)jump #874512900	; dontcare bits in jump: 0034c8d000000000
 	:5:0057:0070[ac44c0eax_60215b2ex] (jp)gather4g.s (s16)()hr58.z, hr37.w, s#1, t#48	; WARNING: unexpected bits[47:47] in #instruction-cat5: 0000000000000001 vs 0000000000000000, WARNING: unexpected bits[0:7] in #cat5-src2: 00000000000000ad vs 0000000000000000

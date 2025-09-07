@@ -145,9 +145,7 @@ def run_target_job(
 def monitor_pipeline(
     project: gitlab.v4.objects.Project,
     pipeline: gitlab.v4.objects.ProjectPipeline,
-    target_jobs_regex: re.Pattern,
-    include_stage_regex: re.Pattern,
-    exclude_stage_regex: re.Pattern,
+    job_filter: callable,
     dependencies: set[str],
     stress: int,
 ) -> tuple[Optional[int], Optional[int], Dict[str, Dict[int, Tuple[float, str, str]]]]:
@@ -167,10 +165,11 @@ def monitor_pipeline(
     if stress:
         # When stress test, it is necessary to collect this information before start.
         for job in pipeline.jobs.list(all=True, include_retried=True):
-            if target_jobs_regex.fullmatch(job.name) and \
-               include_stage_regex.fullmatch(job.stage) and \
-               not exclude_stage_regex.fullmatch(job.stage) and \
-               job.status in COMPLETED_STATUSES:
+            if job_filter(
+                job_name=job.name,
+                job_stage=job.stage,
+                job_tags=job.tag_list,
+            ) and job.status in COMPLETED_STATUSES:
                 execution_times[job.name][job.id] = (job_duration(job), job.status, job.web_url)
 
     # jobs_waiting is a list of job names that are waiting for status update.
@@ -191,9 +190,11 @@ def monitor_pipeline(
         jobs_waiting.clear()
         for job in sorted(pipeline.jobs.list(all=True), key=lambda j: j.name):
             job = cast(gitlab.v4.objects.ProjectPipelineJob, job)
-            if target_jobs_regex.fullmatch(job.name) and \
-               include_stage_regex.fullmatch(job.stage) and \
-               not exclude_stage_regex.fullmatch(job.stage):
+            if job_filter(
+                job_name=job.name,
+                job_stage=job.stage,
+                job_tags=job.tag_list,
+            ):
                 run_target_job(
                     job,
                     enable_job_fn,
@@ -466,6 +467,18 @@ def parse_args() -> argparse.Namespace:
         nargs=argparse.ONE_OR_MORE,
     )
     parser.add_argument(
+        "--job-tags",
+        metavar="job-tags",
+        help="Job tags to require when searching for target jobs. If multiple "
+             "values are passed, eg. `--job-tags 'foo.*' 'bar'`, the job will "
+             "need to have a tag matching `foo.*` *and* a tag matching `bar` "
+             "to qualify. Passing `--job-tags '.*'` makes sure the job has "
+             "a tag defined, while not passing `--job-tags` also allows "
+             "untagged jobs.",
+        default=[],
+        nargs=argparse.ONE_OR_MORE,
+    )
+    parser.add_argument(
         "--token",
         metavar="token",
         type=str,
@@ -553,9 +566,7 @@ def print_detected_jobs(
 def find_dependencies(
     server: str,
     token: str | None,
-    target_jobs_regex: re.Pattern,
-    include_stage_regex: re.Pattern,
-    exclude_stage_regex: re.Pattern,
+    job_filter: callable,
     project_path: str,
     iid: int
 ) -> set[str]:
@@ -588,7 +599,7 @@ def find_dependencies(
         gql_instance, {"projectPath": project_path.path_with_namespace, "iid": iid}
     )
 
-    target_dep_dag = filter_dag(dag, target_jobs_regex, include_stage_regex, exclude_stage_regex)
+    target_dep_dag = filter_dag(dag, job_filter)
     if not target_dep_dag:
         print(Fore.RED + "The job(s) were not found in the pipeline." + Fore.RESET)
         sys.exit(1)
@@ -721,12 +732,35 @@ def main() -> None:
 
         exclude_stage_regex = re.compile(exclude_stage)
 
+        print("🞋 target jobs with tags: " + Fore.BLUE + str(args.job_tags) + Style.RESET_ALL)  # U+1F78B Round target
+        job_tags_regexes = [re.compile(job_tag) for job_tag in args.job_tags]
+
+        def job_filter(
+            job_name: str,
+            job_stage: str,
+            job_tags: set[str],
+        ) -> bool:
+            """
+            Apply user-specified filters to a job, and return whether the
+            filters allow that job (True) or not (False).
+            """
+            if not target_jobs_regex.fullmatch(job_name):
+                return False
+            if not include_stage_regex.fullmatch(job_stage):
+                return False
+            if exclude_stage_regex.fullmatch(job_stage):
+                return False
+            if not all(
+                any(job_tags_regex.fullmatch(tag) for tag in job_tags)
+                for job_tags_regex in job_tags_regexes
+            ):
+                return False
+            return True
+
         deps = find_dependencies(
             server=args.server,
             token=token,
-            target_jobs_regex=target_jobs_regex,
-            include_stage_regex=include_stage_regex,
-            exclude_stage_regex=exclude_stage_regex,
+            job_filter=job_filter,
             iid=pipe.iid,
             project_path=cur_project
         )
@@ -737,9 +771,7 @@ def main() -> None:
         target_job_id, ret, exec_t = monitor_pipeline(
             cur_project,
             pipe,
-            target_jobs_regex,
-            include_stage_regex,
-            exclude_stage_regex,
+            job_filter,
             deps,
             args.stress
         )

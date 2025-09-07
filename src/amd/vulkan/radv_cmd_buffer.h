@@ -96,7 +96,7 @@ enum radv_cmd_dirty_bits {
    RADV_CMD_DIRTY_GRAPHICS_SHADERS = 1ull << 10,
    RADV_CMD_DIRTY_FRAGMENT_OUTPUT = 1ull << 11,
    RADV_CMD_DIRTY_FBFETCH_OUTPUT = 1ull << 12,
-   RADV_CMD_DIRTY_FS_STATE = 1ull << 13,
+   RADV_CMD_DIRTY_PS_STATE = 1ull << 13,
    RADV_CMD_DIRTY_NGG_STATE = 1ull << 14,
    RADV_CMD_DIRTY_TASK_STATE = 1ull << 15,
    RADV_CMD_DIRTY_DEPTH_STENCIL_STATE = 1ull << 16,
@@ -107,19 +107,22 @@ enum radv_cmd_dirty_bits {
    RADV_CMD_DIRTY_CB_RENDER_STATE = 1ull << 21,
    RADV_CMD_DIRTY_VIEWPORT_STATE = 1ull << 22,
    RADV_CMD_DIRTY_BINNING_STATE = 1ull << 23,
-   RADV_CMD_DIRTY_NGGC_STATE = 1ull << 24,
-   RADV_CMD_DIRTY_FSR_STATE = 1ull << 25,
-   RADV_CMD_DIRTY_RAST_SAMPLES_STATE = 1ull << 26,
-   RADV_CMD_DIRTY_DEPTH_BIAS_STATE = 1ull << 27,
-   RADV_CMD_DIRTY_VS_PROLOG_STATE = 1ull << 28,
-   RADV_CMD_DIRTY_BLEND_CONSTANTS_STATE = 1ull << 29,
-   RADV_CMD_DIRTY_SAMPLE_LOCATIONS_STATE = 1ull << 30,
-   RADV_CMD_DIRTY_SCISSOR_STATE = 1ull << 31,
-   RADV_CMD_DIRTY_TESS_DOMAIN_ORIGIN_STATE = 1ull << 32,
-   RADV_CMD_DIRTY_PATCH_CONTROL_POINTS_STATE = 1ull << 33,
-   RADV_CMD_DIRTY_VGT_PRIM_STATE = 1ull << 34,
-   RADV_CMD_DIRTY_FORCE_VRS_STATE = 1ull << 35,
-   RADV_CMD_DIRTY_ALL = (1ull << 36) - 1,
+   RADV_CMD_DIRTY_FSR_STATE = 1ull << 24,
+   RADV_CMD_DIRTY_RAST_SAMPLES_STATE = 1ull << 25,
+   RADV_CMD_DIRTY_DEPTH_BIAS_STATE = 1ull << 26,
+   RADV_CMD_DIRTY_VS_PROLOG_STATE = 1ull << 27,
+   RADV_CMD_DIRTY_BLEND_CONSTANTS_STATE = 1ull << 28,
+   RADV_CMD_DIRTY_SAMPLE_LOCATIONS_STATE = 1ull << 29,
+   RADV_CMD_DIRTY_SCISSOR_STATE = 1ull << 30,
+   RADV_CMD_DIRTY_TESS_DOMAIN_ORIGIN_STATE = 1ull << 31,
+   RADV_CMD_DIRTY_LS_HS_CONFIG = 1ull << 32,
+   RADV_CMD_DIRTY_VGT_PRIM_STATE = 1ull << 33,
+   RADV_CMD_DIRTY_FORCE_VRS_STATE = 1ull << 34,
+   RADV_CMD_DIRTY_NGGC_VIEWPORT = 1ull << 35,
+   RADV_CMD_DIRTY_NGGC_SETTINGS = 1ull << 36,
+   RADV_CMD_DIRTY_PS_EPILOG_SHADER = 1ull << 37,
+   RADV_CMD_DIRTY_PS_EPILOG_STATE = 1ull << 38,
+   RADV_CMD_DIRTY_ALL = (1ull << 39) - 1,
 
    RADV_CMD_DIRTY_SHADER_QUERY = RADV_CMD_DIRTY_NGG_STATE | RADV_CMD_DIRTY_TASK_STATE,
 };
@@ -481,9 +484,6 @@ struct radv_cmd_state {
    bool pending_sqtt_barrier_end;
    enum rgp_flush_bits sqtt_flush_bits;
 
-   /* NGG culling state. */
-   bool has_nggc;
-
    /* Mesh shading state. */
    bool mesh_shading;
 
@@ -498,7 +498,9 @@ struct radv_cmd_state {
    struct radv_shader_part *emitted_vs_prolog;
    uint32_t vbo_bound_mask;
 
-   struct radv_shader_part *emitted_ps_epilog;
+   struct radv_shader *emitted_ps;
+
+   struct radv_shader_part *ps_epilog;
 
    /* Whether to suspend streamout for internal driver operations. */
    bool suspend_streamout;
@@ -536,7 +538,6 @@ struct radv_cmd_state {
    bool uses_vrs;
    bool uses_vrs_attachment;
    bool uses_vrs_coarse_shading;
-   bool uses_dynamic_patch_control_points;
    bool uses_fbfetch_output;
 
    uint64_t shader_query_buf_va; /* GFX12+ */
@@ -709,19 +710,19 @@ radv_is_streamout_enabled(struct radv_cmd_buffer *cmd_buffer)
    return (so->streamout_enabled || cmd_buffer->state.active_prims_gen_queries) && !cmd_buffer->state.suspend_streamout;
 }
 
-static inline unsigned
+ALWAYS_INLINE static unsigned
 vk_to_bind_point(VkPipelineBindPoint bind_point)
 {
    return bind_point == VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR ? 2 : bind_point;
 }
 
-static inline struct radv_descriptor_state *
+ALWAYS_INLINE static struct radv_descriptor_state *
 radv_get_descriptors_state(struct radv_cmd_buffer *cmd_buffer, VkPipelineBindPoint bind_point)
 {
    return &cmd_buffer->descriptors[vk_to_bind_point(bind_point)];
 }
 
-static inline const struct radv_push_constant_state *
+ALWAYS_INLINE static const struct radv_push_constant_state *
 radv_get_push_constants_state(const struct radv_cmd_buffer *cmd_buffer, VkPipelineBindPoint bind_point)
 {
    return &cmd_buffer->push_constant_state[vk_to_bind_point(bind_point)];

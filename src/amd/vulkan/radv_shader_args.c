@@ -291,11 +291,11 @@ declare_ngg_sgprs(const struct radv_shader_info *info, struct radv_shader_args *
       add_ud_arg(args, 1, AC_ARG_VALUE, &args->ngg_state, AC_UD_NGG_STATE);
 
    if (info->has_ngg_culling) {
-      add_ud_arg(args, 1, AC_ARG_VALUE, &args->ngg_culling_settings, AC_UD_NGG_CULLING_SETTINGS);
-      add_ud_arg(args, 1, AC_ARG_VALUE, &args->ngg_viewport_scale[0], AC_UD_NGG_VIEWPORT);
-      add_ud_arg(args, 1, AC_ARG_VALUE, &args->ngg_viewport_scale[1], AC_UD_NGG_VIEWPORT);
-      add_ud_arg(args, 1, AC_ARG_VALUE, &args->ngg_viewport_translate[0], AC_UD_NGG_VIEWPORT);
-      add_ud_arg(args, 1, AC_ARG_VALUE, &args->ngg_viewport_translate[1], AC_UD_NGG_VIEWPORT);
+      add_ud_arg(args, 1, AC_ARG_VALUE, &args->nggc_settings, AC_UD_NGGC_SETTINGS);
+      add_ud_arg(args, 1, AC_ARG_VALUE, &args->nggc_viewport_scale[0], AC_UD_NGGC_VIEWPORT);
+      add_ud_arg(args, 1, AC_ARG_VALUE, &args->nggc_viewport_scale[1], AC_UD_NGGC_VIEWPORT);
+      add_ud_arg(args, 1, AC_ARG_VALUE, &args->nggc_viewport_translate[0], AC_UD_NGGC_VIEWPORT);
+      add_ud_arg(args, 1, AC_ARG_VALUE, &args->nggc_viewport_translate[1], AC_UD_NGGC_VIEWPORT);
    }
 }
 
@@ -322,7 +322,8 @@ radv_declare_rt_shader_args(enum amd_gfx_level gfx_level, struct radv_shader_arg
    add_ud_arg(args, 1, AC_ARG_CONST_ADDR, &args->descriptor_sets[0], AC_UD_INDIRECT_DESCRIPTOR_SETS);
    ac_add_arg(&args->ac, AC_ARG_SGPR, 1, AC_ARG_CONST_ADDR, &args->ac.push_constants);
    ac_add_arg(&args->ac, AC_ARG_SGPR, 2, AC_ARG_CONST_ADDR, &args->ac.rt.sbt_descriptors);
-   ac_add_arg(&args->ac, AC_ARG_SGPR, 2, AC_ARG_CONST_ADDR, &args->ac.rt.traversal_shader_addr);
+   ac_add_arg(&args->ac, AC_ARG_SGPR, 1, AC_ARG_CONST_ADDR, &args->ac.rt.traversal_shader_addr);
+   ac_add_arg(&args->ac, AC_ARG_SGPR, 1, AC_ARG_CONST_ADDR, NULL); /* unused */
 
    for (uint32_t i = 0; i < ARRAY_SIZE(args->ac.rt.launch_sizes); i++)
       ac_add_arg(&args->ac, AC_ARG_SGPR, 1, AC_ARG_VALUE, &args->ac.rt.launch_sizes[i]);
@@ -588,7 +589,8 @@ declare_shader_args(const struct radv_device *device, const struct radv_graphics
 
       if (info->type == RADV_SHADER_TYPE_RT_PROLOG) {
          add_ud_arg(args, 2, AC_ARG_CONST_ADDR, &args->ac.rt.sbt_descriptors, AC_UD_CS_SBT_DESCRIPTORS);
-         add_ud_arg(args, 2, AC_ARG_CONST_ADDR, &args->ac.rt.traversal_shader_addr, AC_UD_CS_TRAVERSAL_SHADER_ADDR);
+         add_ud_arg(args, 1, AC_ARG_CONST_ADDR, &args->ac.rt.traversal_shader_addr, AC_UD_CS_TRAVERSAL_SHADER_ADDR);
+         add_ud_arg(args, 1, AC_ARG_CONST_ADDR, NULL, AC_UD_PS_STATE); /* unused */
          add_ud_arg(args, 2, AC_ARG_CONST_ADDR, &args->ac.rt.launch_size_addr, AC_UD_CS_RAY_LAUNCH_SIZE_ADDR);
          add_ud_arg(args, 1, AC_ARG_VALUE, &args->ac.rt.dynamic_callable_stack_base,
                     AC_UD_CS_RAY_DYNAMIC_CALLABLE_STACK_BASE);

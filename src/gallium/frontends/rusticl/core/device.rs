@@ -75,6 +75,7 @@ impl Deref for Device {
 #[derive(Default)]
 pub struct DeviceCaps {
     pub has_3d_image_writes: bool,
+    has_create_fence_fd: bool,
     pub has_depth_images: bool,
     pub has_image_unorm_int_2_101010: bool,
     pub has_images: bool,
@@ -87,7 +88,7 @@ pub struct DeviceCaps {
 }
 
 impl DeviceCaps {
-    fn new(screen: &PipeScreen) -> Self {
+    fn new(screen: &PipeScreen, ctx: &PipeContext) -> Self {
         let cap_timestamp = screen.caps().query_timestamp;
         let timer_resolution = screen.caps().timer_resolution;
 
@@ -111,6 +112,7 @@ impl DeviceCaps {
             max_read_images: has_images.then_some(max_read_images).unwrap_or_default(),
             max_write_images: has_images.then_some(max_write_images).unwrap_or_default(),
             timer_resolution: timer_resolution,
+            has_create_fence_fd: ctx.is_create_fence_fd_supported(),
             ..Default::default()
         }
     }
@@ -128,7 +130,7 @@ pub trait HelperContextWrapper {
 
     fn buffer_map(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         offset: i32,
         size: i32,
         rw: RWFlags,
@@ -140,7 +142,7 @@ pub trait HelperContextWrapper {
 
     fn map_buffer_unsynchronized(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         offset: i32,
         size: i32,
         rw: RWFlags,
@@ -148,12 +150,11 @@ pub trait HelperContextWrapper {
 
     fn map_texture_unsynchronized(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         bx: &pipe_box,
         rw: RWFlags,
     ) -> Option<PipeTransfer<'_>>;
 
-    fn is_create_fence_fd_supported(&self) -> bool;
     fn import_fence(&self, fence_fd: &FenceFd, fence_type: pipe_fd_type) -> CLResult<PipeFence>;
 }
 
@@ -164,7 +165,7 @@ pub struct HelperContext<'a> {
 impl HelperContext<'_> {
     pub fn buffer_subdata(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         offset: c_uint,
         data: *const c_void,
         size: c_uint,
@@ -174,7 +175,7 @@ impl HelperContext<'_> {
 
     pub fn texture_subdata(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         bx: &pipe_box,
         data: *const c_void,
         stride: u32,
@@ -196,7 +197,7 @@ impl HelperContextWrapper for HelperContext<'_> {
 
     fn buffer_map(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         offset: i32,
         size: i32,
         rw: RWFlags,
@@ -222,7 +223,7 @@ impl HelperContextWrapper for HelperContext<'_> {
 
     fn map_buffer_unsynchronized(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         offset: i32,
         size: i32,
         rw: RWFlags,
@@ -237,16 +238,12 @@ impl HelperContextWrapper for HelperContext<'_> {
 
     fn map_texture_unsynchronized(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         bx: &pipe_box,
         rw: RWFlags,
     ) -> Option<PipeTransfer<'_>> {
         self.lock
             .texture_map_flags(res, bx, pipe_map_flags::PIPE_MAP_UNSYNCHRONIZED | rw.into())
-    }
-
-    fn is_create_fence_fd_supported(&self) -> bool {
-        self.lock.is_create_fence_fd_supported()
     }
 
     fn import_fence(&self, fd: &FenceFd, fence_type: pipe_fd_type) -> CLResult<PipeFence> {
@@ -773,6 +770,14 @@ impl DeviceBase {
             add_ext(1, 0, 2, "cl_ext_buffer_device_address");
         }
 
+        if self.are_semaphores_supported() {
+            if self.are_external_semaphores_supported() {
+                add_ext(1, 0, 1, "cl_khr_external_semaphore");
+                add_ext(1, 0, 1, "cl_khr_external_semaphore_sync_fd");
+            }
+            add_ext(1, 0, 1, "cl_khr_semaphore");
+        }
+
         self.extensions = exts;
         self.clc_features = feats;
         self.extension_string = exts_str.join(" ");
@@ -887,7 +892,7 @@ impl DeviceBase {
             && !self.is_device_software()
             && self.screen.is_res_handle_supported()
             && self.screen.device_uuid().is_some()
-            && self.helper_ctx().is_create_fence_fd_supported()
+            && self.caps.has_create_fence_fd
     }
 
     pub fn is_device_software(&self) -> bool {
@@ -1256,6 +1261,14 @@ impl DeviceBase {
             ..Default::default()
         }
     }
+
+    pub fn are_external_semaphores_supported(&self) -> bool {
+        self.caps.has_create_fence_fd && self.screen().has_fence_get_fd()
+    }
+
+    pub fn are_semaphores_supported(&self) -> bool {
+        self.screen().caps().fence_signal && self.screen().has_semaphore_create()
+    }
 }
 
 impl Device {
@@ -1269,7 +1282,7 @@ impl Device {
         // context being created.
         let helper_ctx = screen.create_context(PipeContextPrio::Med)?;
         let mut dev_base = DeviceBase {
-            caps: DeviceCaps::new(&screen),
+            caps: DeviceCaps::new(&screen, &helper_ctx),
             helper_ctx: Mutex::new(helper_ctx),
             screen: screen,
             cl_version: CLVersion::Cl3_0,

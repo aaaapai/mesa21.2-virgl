@@ -368,17 +368,19 @@ load_sbt_entry(nir_builder *b, const struct rt_variables *vars, nir_def *idx, en
 {
    nir_def *desc_base_addr = nir_load_sbt_base_amd(b);
 
-   nir_def *desc = nir_pack_64_2x32(b, nir_load_smem_amd(b, 2, desc_base_addr, nir_imm_int(b, binding)));
+   nir_def *desc = nir_pack_64_2x32(b, ac_nir_load_smem(b, 2, desc_base_addr, nir_imm_int(b, binding), 4, 0));
 
    nir_def *stride_offset = nir_imm_int(b, binding + (binding == SBT_RAYGEN ? 8 : 16));
-   nir_def *stride = nir_load_smem_amd(b, 1, desc_base_addr, stride_offset);
+   nir_def *stride = ac_nir_load_smem(b, 1, desc_base_addr, stride_offset, 4, 0);
 
    nir_def *addr = nir_iadd(b, desc, nir_u2u64(b, nir_iadd_imm(b, nir_imul(b, idx, stride), offset)));
 
    if (offset == SBT_RECURSIVE_PTR) {
-      nir_store_var(b, vars->shader_addr, nir_build_load_global(b, 1, 64, addr), 1);
+      nir_store_var(b, vars->shader_addr,
+                    nir_build_load_global(b, 1, 64, addr, .access = ACCESS_CAN_REORDER | ACCESS_NON_WRITEABLE), 1);
    } else {
-      nir_store_var(b, vars->idx, nir_build_load_global(b, 1, 32, addr), 1);
+      nir_store_var(b, vars->idx,
+                    nir_build_load_global(b, 1, 32, addr, .access = ACCESS_CAN_REORDER | ACCESS_NON_WRITEABLE), 1);
    }
 
    nir_def *record_addr = nir_iadd_imm(b, addr, RADV_RT_HANDLE_SIZE - offset);
@@ -927,8 +929,8 @@ radv_build_end_trace_token(nir_builder *b, struct rt_variables *vars, nir_def *t
       dst_addr = nir_iadd_imm(b, dst_addr, 8);
 
       nir_def *dispatch_indices =
-         nir_load_smem_amd(b, 2, nir_imm_int64(b, vars->device->rra_trace.ray_history_addr),
-                           nir_imm_int(b, offsetof(struct radv_ray_history_header, dispatch_index)), .align_mul = 4);
+         ac_nir_load_smem(b, 2, nir_imm_int64(b, vars->device->rra_trace.ray_history_addr),
+                          nir_imm_int(b, offsetof(struct radv_ray_history_header, dispatch_index)), 4, 0);
       nir_def *dispatch_index = nir_iadd(b, nir_channel(b, dispatch_indices, 0), nir_channel(b, dispatch_indices, 1));
       nir_def *dispatch_and_flags = nir_iand_imm(b, nir_load_var(b, vars->cull_mask_and_flags), 0xFFFF);
       dispatch_and_flags = nir_ior(b, dispatch_and_flags, dispatch_index);
@@ -1960,6 +1962,8 @@ radv_nir_lower_rt_abi(nir_shader *shader, const VkRayTracingPipelineCreateInfoKH
                       bool monolithic, bool has_position_fetch,
                       const struct radv_ray_tracing_stage_info *traversal_info)
 {
+   const struct radv_physical_device *pdev = radv_device_physical(device);
+
    nir_function_impl *impl = nir_shader_get_entrypoint(shader);
 
    const VkPipelineCreateFlagBits2 create_flags = vk_rt_pipeline_create_flags(pCreateInfo);
@@ -2011,7 +2015,8 @@ radv_nir_lower_rt_abi(nir_shader *shader, const VkRayTracingPipelineCreateInfoKH
    }
 
    nir_def *traversal_addr = ac_nir_load_arg(&b, &args->ac, args->ac.rt.traversal_shader_addr);
-   nir_store_var(&b, vars.traversal_addr, nir_pack_64_2x32(&b, traversal_addr), 1);
+   nir_store_var(&b, vars.traversal_addr,
+                 nir_pack_64_2x32_split(&b, traversal_addr, nir_imm_int(&b, pdev->info.address32_hi)), 1);
 
    nir_def *shader_addr = ac_nir_load_arg(&b, &args->ac, args->ac.rt.shader_addr);
    shader_addr = nir_pack_64_2x32(&b, shader_addr);

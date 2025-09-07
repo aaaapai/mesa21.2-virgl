@@ -45,7 +45,6 @@
 #include "tu_wsi.h"
 
 #if DETECT_OS_ANDROID
-#include "util/u_gralloc/u_gralloc.h"
 #include <vndk/hardware_buffer.h>
 #endif
 
@@ -409,7 +408,14 @@ tu_get_features(struct tu_physical_device *pdevice,
    features->shaderInt16 = true;
    features->sparseBinding = pdevice->has_sparse;
    features->sparseResidencyBuffer = pdevice->has_sparse_prr;
+   features->sparseResidencyImage2D = pdevice->has_sparse_prr &&
+      pdevice->info->a7xx.ubwc_all_formats_compatible;
+   features->sparseResidency2Samples = features->sparseResidencyImage2D;
+   features->sparseResidency4Samples = features->sparseResidencyImage2D;
+   features->sparseResidency8Samples = features->sparseResidencyImage2D;
    features->sparseResidencyAliased = pdevice->has_sparse_prr;
+   features->shaderResourceResidency = pdevice->has_sparse_prr;
+   features->shaderResourceMinLod = true;
    features->variableMultisampleRate = true;
    features->inheritedQueries = true;
 
@@ -904,7 +910,7 @@ tu_get_physical_device_properties_1_2(struct tu_physical_device *pdevice,
    p->shaderStorageBufferArrayNonUniformIndexingNative   = true;
    p->shaderStorageImageArrayNonUniformIndexingNative    = true;
    p->shaderInputAttachmentArrayNonUniformIndexingNative = false;
-   p->robustBufferAccessUpdateAfterBind                  = false;
+   p->robustBufferAccessUpdateAfterBind                  = true;
    p->quadDivergentImplicitLod                           = false;
 
    p->maxUpdateAfterBindDescriptorsInAllPools            = max_descriptor_set_size;
@@ -1156,10 +1162,10 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->dynamicRenderingLocalReadMultisampledAttachments = true;
 
    /* sparse properties */
-   props->sparseResidencyStandard2DBlockShape = { 0 };
-   props->sparseResidencyStandard2DMultisampleBlockShape = { 0 };
-   props->sparseResidencyStandard3DBlockShape = { 0 };
-   props->sparseResidencyAlignedMipSize = { 0 };
+   props->sparseResidencyStandard2DBlockShape = true;
+   props->sparseResidencyStandard2DMultisampleBlockShape = true;
+   props->sparseResidencyStandard3DBlockShape = false;
+   props->sparseResidencyAlignedMipSize = false;
    props->sparseResidencyNonResidentStrict = true;
 
    strcpy(props->deviceName, pdevice->name);

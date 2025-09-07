@@ -456,6 +456,11 @@ radv_amdgpu_winsys_cs_pad(struct radeon_cmdbuf *_cs, unsigned leave_dw_space)
             radeon_emit_unchecked(&cs->base, PKT3(PKT3_NOP, remaining - 2, 0));
             cs->base.cdw += remaining - 1;
          }
+      } else if (cs->base.cdw == 0 && leave_dw_space == 0) {
+         /* Emit a NOP packet to avoid submitting a completely empty IB. */
+         const int remaining = pad_dw_mask + 1;
+         radeon_emit_unchecked(&cs->base, PKT3(PKT3_NOP, remaining - 2, 0));
+         cs->base.cdw += remaining - 1;
       }
    } else {
       /* Don't pad on VCN encode/unified as no NOPs */
@@ -565,12 +570,13 @@ radv_amdgpu_cs_unchain(struct radeon_cmdbuf *cs)
       return;
 
    assert(cs->cdw <= cs->max_dw + 4);
+   const uint32_t nop_packet = get_nop_packet(acs);
 
    acs->chained_to = NULL;
-   cs->buf[cs->cdw - 4] = PKT3_NOP_PAD;
-   cs->buf[cs->cdw - 3] = PKT3_NOP_PAD;
-   cs->buf[cs->cdw - 2] = PKT3_NOP_PAD;
-   cs->buf[cs->cdw - 1] = PKT3_NOP_PAD;
+   cs->buf[cs->cdw - 4] = nop_packet;
+   cs->buf[cs->cdw - 3] = nop_packet;
+   cs->buf[cs->cdw - 2] = nop_packet;
+   cs->buf[cs->cdw - 1] = nop_packet;
 }
 
 static bool
@@ -729,7 +735,8 @@ radv_amdgpu_cs_execute_secondary(struct radeon_cmdbuf *_parent, struct radeon_cm
    struct radv_amdgpu_cs *parent = radv_amdgpu_cs(_parent);
    struct radv_amdgpu_cs *child = radv_amdgpu_cs(_child);
    struct radv_amdgpu_winsys *ws = parent->ws;
-   const bool use_ib2 = parent->use_ib && !parent->is_secondary && allow_ib2 && parent->hw_ip == AMD_IP_GFX;
+   const bool use_ib2 = parent->use_ib && !parent->is_secondary && allow_ib2 && parent->hw_ip == AMD_IP_GFX &&
+                        ws->info.gfx_level >= GFX7;
 
    if (parent->status != VK_SUCCESS || child->status != VK_SUCCESS)
       return;
@@ -1640,6 +1647,25 @@ radv_amdgpu_ctx_destroy(struct radeon_winsys_ctx *rwctx)
    FREE(ctx);
 }
 
+static VkResult
+radv_amdgpu_ctx_is_priority_permitted(struct radeon_winsys *_ws, enum radeon_ctx_priority priority)
+{
+   struct radv_amdgpu_winsys *ws = radv_amdgpu_winsys(_ws);
+   uint32_t amdgpu_priority = radv_to_amdgpu_priority(priority);
+   uint32_t ctx_handle;
+   int r;
+
+   r = ac_drm_cs_ctx_create2(ws->dev, amdgpu_priority, &ctx_handle);
+   if (r && r == -EACCES) {
+      return VK_ERROR_NOT_PERMITTED;
+   } else if (r) {
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+   }
+
+   ac_drm_cs_ctx_free(ws->dev, ctx_handle);
+   return VK_SUCCESS;
+}
+
 static uint32_t
 radv_amdgpu_ctx_queue_syncobj(struct radv_amdgpu_ctx *ctx, unsigned ip, unsigned ring)
 {
@@ -1955,6 +1981,7 @@ radv_amdgpu_cs_init_functions(struct radv_amdgpu_winsys *ws)
 {
    ws->base.ctx_create = radv_amdgpu_ctx_create;
    ws->base.ctx_destroy = radv_amdgpu_ctx_destroy;
+   ws->base.ctx_is_priority_permitted = radv_amdgpu_ctx_is_priority_permitted;
    ws->base.ctx_wait_idle = radv_amdgpu_ctx_wait_idle;
    ws->base.ctx_set_pstate = radv_amdgpu_ctx_set_pstate;
    ws->base.cs_domain = radv_amdgpu_cs_domain;

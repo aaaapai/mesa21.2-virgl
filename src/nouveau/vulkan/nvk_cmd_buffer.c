@@ -10,6 +10,7 @@
 #include "nvk_device.h"
 #include "nvk_device_memory.h"
 #include "nvk_entrypoints.h"
+#include "nvk_event.h"
 #include "nvk_mme.h"
 #include "nvk_physical_device.h"
 #include "nvk_shader.h"
@@ -21,6 +22,7 @@
 #include "clb097.h"
 #include "clcb97.h"
 #include "nv_push_cl906f.h"
+#include "nv_push_cl9097.h"
 #include "nv_push_cl90b5.h"
 #include "nv_push_cla097.h"
 #include "nv_push_cla0c0.h"
@@ -119,6 +121,7 @@ nvk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
    cmd->push_mem = NULL;
    cmd->push_mem_limit = NULL;
    cmd->push = (struct nv_push) {0};
+   cmd->cond_render_mem = NULL;
 
    util_dynarray_clear(&cmd->pushes);
 
@@ -157,7 +160,7 @@ const struct vk_command_buffer_ops nvk_cmd_buffer_ops = {
 /* If we ever fail to allocate a push, we use this */
 static uint32_t push_runout[NVK_CMD_BUFFER_MAX_PUSH];
 
-static VkResult
+VkResult
 nvk_cmd_buffer_alloc_mem(struct nvk_cmd_buffer *cmd, bool force_gart,
                          struct nvk_cmd_mem **mem_out)
 {
@@ -292,43 +295,6 @@ nvk_cmd_buffer_upload_data(struct nvk_cmd_buffer *cmd,
       return result;
 
    memcpy(map, data, size);
-
-   return VK_SUCCESS;
-}
-
-VkResult
-nvk_cmd_buffer_cond_render_alloc(struct nvk_cmd_buffer *cmd,
-                                 uint64_t *addr)
-{
-   uint32_t offset = cmd->cond_render_gart_offset;
-   uint32_t size = 64;
-
-   assert(offset <= NVK_CMD_MEM_SIZE);
-   if (cmd->cond_render_gart_mem != NULL && size <= NVK_CMD_MEM_SIZE - offset) {
-      *addr = cmd->cond_render_gart_mem->mem->va->addr + offset;
-
-      cmd->cond_render_gart_offset = offset + size;
-
-      return VK_SUCCESS;
-   }
-
-   struct nvk_cmd_mem *mem;
-   VkResult result = nvk_cmd_buffer_alloc_mem(cmd, true, &mem);
-   if (unlikely(result != VK_SUCCESS))
-      return result;
-
-   *addr = mem->mem->va->addr;
-
-   /* Pick whichever of the current upload BO and the new BO will have more
-    * room left to be the BO for the next upload.  If our upload size is
-    * bigger than the old offset, we're better off burning the whole new
-    * upload BO on this one allocation and continuing on the current upload
-    * BO.
-    */
-   if (cmd->cond_render_gart_mem == NULL || size < cmd->cond_render_gart_offset) {
-      cmd->cond_render_gart_mem = mem;
-      cmd->cond_render_gart_offset = size;
-   }
 
    return VK_SUCCESS;
 }
@@ -1256,4 +1222,26 @@ nvk_CmdPushDescriptorSetWithTemplate2KHR(
    nvk_cmd_dirty_cbufs_for_descriptors(cmd, NVK_VK_GRAPHICS_STAGE_BITS |
                                             VK_SHADER_STAGE_COMPUTE_BIT,
                                        set, set + 1);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+nvk_CmdWriteBufferMarker2AMD(VkCommandBuffer commandBuffer,
+                             VkPipelineStageFlags2 stage,
+                             VkBuffer _buffer,
+                             VkDeviceSize offset,
+                             uint32_t marker)
+{
+   VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
+   VK_FROM_HANDLE(nvk_buffer, buffer, _buffer);
+   const uint64_t marker_addr = vk_buffer_address(&buffer->vk, offset);
+   struct nv_push *p = nvk_cmd_buffer_push(cmd, 5);
+
+   P_MTHD(p, NV9097, SET_REPORT_SEMAPHORE_A);
+   P_NV9097_SET_REPORT_SEMAPHORE_A(p, marker_addr >> 32);
+   P_NV9097_SET_REPORT_SEMAPHORE_B(p, marker_addr);
+   P_NV9097_SET_REPORT_SEMAPHORE_C(p, marker);
+   P_NV9097_SET_REPORT_SEMAPHORE_D(p, {
+      .pipeline_location = vk_stage_flags_to_nv9097_pipeline_location(stage),
+      .structure_size = STRUCTURE_SIZE_ONE_WORD,
+   });
 }

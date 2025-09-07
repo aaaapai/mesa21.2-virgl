@@ -257,7 +257,7 @@ struct st_context
    } state;
 
    /** This masks out unused shader resources. Only valid in draw calls. */
-   uint64_t active_states;
+   st_state_bitset active_states;
 
    /**
     * The number of currently active queries (excluding timer queries).
@@ -273,6 +273,8 @@ struct st_context
          struct gl_program *gp;  /**< Currently bound geometry program */
          struct gl_program *fp;  /**< Currently bound fragment program */
          struct gl_program *cp;   /**< Currently bound compute program */
+         struct gl_program *tp; /**< Currently bound task program */
+         struct gl_program *mp; /**< Currently bound mesh program */
       };
       struct gl_program *current_program[MESA_SHADER_MESH_STAGES];
    };

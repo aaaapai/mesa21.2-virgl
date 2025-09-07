@@ -171,7 +171,7 @@ GL 4.3, GLSL 4.30 -- all DONE: freedreno/a6xx, nvc0, r600, radeonsi, llvmpipe, v
   GL_ARB_arrays_of_arrays                               DONE (all drivers that support GLSL 1.30)
   GL_ARB_ES3_compatibility                              DONE (all drivers that support GLSL 3.30)
   GL_ARB_clear_buffer_object                            DONE (all drivers)
-  GL_ARB_compute_shader                                 DONE (freedreno/a5xx+, softpipe, v3d, panfrost, crocus/gen7+)
+  GL_ARB_compute_shader                                 DONE (freedreno/a5xx+, softpipe, crocus/gen7+)
   GL_ARB_copy_image                                     DONE (freedreno/a6xx, nv50, softpipe, v3d, panfrost, crocus)
   GL_KHR_debug                                          DONE (all drivers)
   GL_ARB_explicit_uniform_location                      DONE (all drivers that support GLSL)
@@ -209,6 +209,7 @@ GL 4.4, GLSL 4.40 -- all DONE: freedreno/a6xx, nvc0, r600, radeonsi, llvmpipe, v
   GL_ARB_texture_mirror_clamp_to_edge                   DONE (freedreno, nv50, softpipe, v3d, panfrost, crocus)
   GL_ARB_texture_stencil8                               DONE (freedreno, nv50, softpipe, v3d, panfrost)
   GL_ARB_vertex_type_10f_11f_11f_rev                    DONE (freedreno, nv50, softpipe, panfrost, crocus)
+  GL_NV_shader_atomic_int64                             DONE (radeonsi, panfrost/v9+)
 
 GL 4.5, GLSL 4.50 -- all DONE: freedreno/a6xx, nvc0, r600, radeonsi, llvmpipe, virgl, zink, iris, crocus/gen7.5+, d3d12, asahi
 
@@ -243,7 +244,6 @@ These are the extensions cherry-picked to make GLES 3.1
 GLES3.1, GLSL ES 3.1 -- all DONE: freedreno/a5xx+, nvc0, r600, radeonsi, virgl, v3d, softpipe, llvmpipe, zink, panfrost, d3d12, iris, crocus/gen7.5+, asahi
 
   GL_ARB_arrays_of_arrays                               DONE (all drivers that support GLSL 1.30)
-  GL_ARB_compute_shader                                 DONE (freedreno/a5xx+, crocus/gen7+)
   GL_ARB_draw_indirect                                  DONE (freedreno, crocus/gen7+)
   GL_ARB_explicit_uniform_location                      DONE (all drivers that support GLSL)
   GL_ARB_framebuffer_no_attachments                     DONE (freedreno, softpipe, crocus/gen7+, etnaviv)
@@ -263,10 +263,11 @@ GLES3.1, GLSL ES 3.1 -- all DONE: freedreno/a5xx+, nvc0, r600, radeonsi, virgl, 
   GL_EXT_shader_integer_mix                             DONE (all drivers that support GLSL)
 
   Additional functionality not covered above:
+      Compute shader                                    DONE (crocus/gen7+, v3d)
       glMemoryBarrierByRegion                           DONE
       glGetTexLevelParameter[fi]v - needs updates       DONE
       glGetBooleani_v - restrict to GLES enums
-      gl_HelperInvocation support                       DONE (r600, panfrost, crocus)
+      gl_HelperInvocation support                       DONE (r600, crocus)
 
 GLES3.2, GLSL ES 3.2 -- all DONE: freedreno/a6xx, radeonsi, virgl, llvmpipe, zink, iris, crocus/gen7.5+, asahi
 
@@ -552,9 +553,9 @@ Khronos extensions that are not part of any Vulkan version:
   VK_KHR_get_display_properties2                        DONE (anv, hk, nvk, pvr, radv, tu, v3dv, vn)
   VK_KHR_get_surface_capabilities2                      DONE (anv, hk, lvp, nvk, pvr, radv, tu, v3dv, vn)
   VK_KHR_incremental_present                            DONE (anv, hasvk, hk, lvp, nvk, radv, tu, v3dv, vn)
-  VK_KHR_maintenance7                                   DONE (anv, hk, lvp, nvk, radv, tu, vn)
-  VK_KHR_maintenance8                                   DONE (nvk)
-  VK_KHR_maintenance9                                   DONE (lvp, radv, nvk)
+  VK_KHR_maintenance7                                   DONE (anv, hk, lvp, nvk, panvk/v10+, radv, tu, vn)
+  VK_KHR_maintenance8                                   DONE (anv, hk, lvp, nvk, panvk/v10+, radv, tu)
+  VK_KHR_maintenance9                                   DONE (lvp, radv, nvk, panvk)
   VK_KHR_performance_query                              DONE (anv, radv/gfx10.3+, tu, v3dv)
   VK_KHR_pipeline_binary                                DONE (radv)
   VK_KHR_pipeline_executable_properties                 DONE (anv, hk, nvk, panvk, hasvk, radv, tu, v3dv)
@@ -681,7 +682,7 @@ Khronos extensions that are not part of any Vulkan version:
   VK_NV_compute_shader_derivatives                      DONE (anv, hasvk, nvk, radv, vn)
   VK_EXT_acquire_drm_display                            DONE (anv, hk, nvk, radv, tu, v3dv, vn)
   VK_VALVE_mutable_descriptor_type                      DONE (anv, hasvk, hk, nvk, radv, tu, vn)
-  VK_AMD_buffer_marker                                  DONE (anv, radv, tu)
+  VK_AMD_buffer_marker                                  DONE (anv, nvk, radv, tu)
   VK_AMD_device_coherent_memory                         DONE (radv)
   VK_AMD_draw_indirect_count                            DONE (radv)
   VK_AMD_gcn_shader                                     DONE (radv)
@@ -839,9 +840,9 @@ Rusticl extensions:
   cl_khr_external_memory_dma_buf                        not started
   cl_khr_external_memory_opaque_fd                      not started
   cl_khr_external_memory_win32                          not started
-  cl_khr_external_semaphore                             not started
+  cl_khr_external_semaphore                             DONE (radeonsi, zink)
   cl_khr_external_semaphore_opaque_fd                   not started
-  cl_khr_external_semaphore_sync_fd                     not started
+  cl_khr_external_semaphore_sync_fd                     DONE (radeonsi, zink)
   cl_khr_external_semaphore_win32                       not started
   cl_khr_fp16                                           DONE (asahi, freedreno, llvmpipe, panfrost, radeonsi, zink)
   cl_khr_gl_depth_images                                not started
@@ -858,7 +859,7 @@ Rusticl extensions:
   cl_khr_mipmap_image_writes                            not started
   cl_khr_pci_bus_info                                   DONE (iris, nvc0, radeonsi, zink)
   cl_khr_priority_hints                                 DONE (asahi, freedreno, iris, panfrost, radeonsi)
-  cl_khr_semaphore                                      not started
+  cl_khr_semaphore                                      DONE (radeonsi, zink)
   cl_khr_spirv_extended_debug_info                      not started
   cl_khr_spirv_linkonce_odr                             DONE
   cl_khr_spirv_no_integer_wrap_decoration               DONE

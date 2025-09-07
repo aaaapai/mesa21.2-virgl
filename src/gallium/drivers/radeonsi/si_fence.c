@@ -206,6 +206,17 @@ static struct si_fence *si_alloc_fence()
    return fence;
 }
 
+static struct pipe_fence_handle *
+si_semaphore_create(struct pipe_screen *screen)
+{
+   struct radeon_winsys *rws = ((struct si_screen *)screen)->ws;
+   struct si_fence *fence = si_alloc_fence();
+
+   fence->gfx = rws->semaphore_create(rws);
+
+   return (struct pipe_fence_handle *)fence;
+}
+
 struct pipe_fence_handle *si_create_fence(struct pipe_context *ctx,
                                           struct tc_unflushed_batch_token *tc_token)
 {
@@ -527,7 +538,12 @@ static void si_flush_all_queues(struct pipe_context *ctx,
    }
    assert(!fine.buf);
 finish:
-   if (!(flags & (PIPE_FLUSH_DEFERRED | PIPE_FLUSH_ASYNC))) {
+   if (!(flags & (PIPE_FLUSH_DEFERRED | PIPE_FLUSH_ASYNC)) ||
+        (flags & PIPE_FLUSH_HINT_FINISH)) {
+      /* sync if PIPE_FLUSH_HINT_FINISH is set: this is required to get the
+       * BOs' num_active_ioctls value updated before the fence status can be
+       * read.
+       */
       ws->cs_sync_flush(&sctx->gfx_cs);
    }
 }
@@ -606,4 +622,6 @@ void si_init_screen_fence_functions(struct si_screen *screen)
    screen->b.fence_finish = si_fence_finish;
    screen->b.fence_reference = si_fence_reference;
    screen->b.fence_get_fd = si_fence_get_fd;
+   if (screen->ws->semaphore_create)
+      screen->b.semaphore_create = si_semaphore_create;
 }

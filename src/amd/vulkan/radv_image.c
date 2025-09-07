@@ -299,11 +299,11 @@ radv_use_dcc_for_image_early(struct radv_device *device, struct radv_image *imag
    }
 
    /* Force disable DCC for mips to workaround game bugs. */
-   if (instance->drirc.disable_dcc_mips && pCreateInfo->mipLevels > 1)
+   if (instance->drirc.debug.disable_dcc_mips && pCreateInfo->mipLevels > 1)
       return false;
 
    /* Force disable DCC for stores to workaround game bugs. */
-   if (instance->drirc.disable_dcc_stores && pdev->info.gfx_level < GFX12 &&
+   if (instance->drirc.debug.disable_dcc_stores && pdev->info.gfx_level < GFX12 &&
        (pCreateInfo->usage & VK_IMAGE_USAGE_STORAGE_BIT))
       return false;
 
@@ -900,7 +900,7 @@ radv_image_alloc_values(const struct radv_device *device, struct radv_image *ima
       assert(!surf->u.gfx9.zs.his.offset);
 
       /* Allocate HiZ metadata when the image has depth/stencil aspects to implement a workaround. */
-      if (!pdev->use_gfx12_hiz_his_event_wa && surf->u.gfx9.zs.hiz.offset &&
+      if (pdev->gfx12_hiz_wa == RADV_GFX12_HIZ_WA_FULL && surf->u.gfx9.zs.hiz.offset &&
           (image->vk.aspects == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
          image->hiz_valid_offset = image->size;
          image->size += image->vk.mip_levels * 4;
@@ -1594,7 +1594,7 @@ radv_layout_is_htile_compressed(const struct radv_device *device, const struct r
        * the number of decompressions from/to GENERAL.
        */
       if (radv_tc_compat_htile_enabled(image, level) && queue_mask & (1u << RADV_QUEUE_GENERAL) &&
-          !instance->drirc.disable_tc_compat_htile_in_general) {
+          !instance->drirc.debug.disable_tc_compat_htile_in_general) {
          return true;
       } else {
          return false;
@@ -1823,6 +1823,7 @@ radv_BindImageMemory2(VkDevice _device, uint32_t bindInfoCount, const VkBindImag
    for (uint32_t i = 0; i < bindInfoCount; ++i) {
       VK_FROM_HANDLE(radv_device_memory, mem, pBindInfos[i].memory);
       VK_FROM_HANDLE(radv_image, image, pBindInfos[i].image);
+      uint64_t offset = pBindInfos[i].memoryOffset;
       VkBindMemoryStatus *status = (void *)vk_find_struct_const(&pBindInfos[i], BIND_MEMORY_STATUS);
 
       if (status)
@@ -1836,6 +1837,7 @@ radv_BindImageMemory2(VkDevice _device, uint32_t bindInfoCount, const VkBindImag
          assert(swapchain_info && swapchain_info->swapchain != VK_NULL_HANDLE);
          mem = radv_device_memory_from_handle(
             wsi_common_get_memory(swapchain_info->swapchain, swapchain_info->imageIndex));
+         offset = 0;
       }
 #endif
 
@@ -1863,7 +1865,7 @@ radv_BindImageMemory2(VkDevice _device, uint32_t bindInfoCount, const VkBindImag
       radv_GetImageMemoryRequirements2(_device, &info, &reqs);
 
       if (mem->alloc_size) {
-         if (pBindInfos[i].memoryOffset + reqs.memoryRequirements.size > mem->alloc_size) {
+         if (offset + reqs.memoryRequirements.size > mem->alloc_size) {
             if (status)
                *status->pResult = VK_ERROR_UNKNOWN;
             return vk_errorf(device, VK_ERROR_UNKNOWN, "Device memory object too small for the image.\n");
@@ -1872,8 +1874,7 @@ radv_BindImageMemory2(VkDevice _device, uint32_t bindInfoCount, const VkBindImag
 
       const uint64_t addr = radv_buffer_get_va(mem->bo);
 
-      radv_bind_image_memory(device, image, bind_idx, mem->bo, addr, pBindInfos[i].memoryOffset,
-                             reqs.memoryRequirements.size);
+      radv_bind_image_memory(device, image, bind_idx, mem->bo, addr, offset, reqs.memoryRequirements.size);
    }
    return VK_SUCCESS;
 }

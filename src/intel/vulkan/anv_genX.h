@@ -40,6 +40,7 @@ struct intel_sample_positions;
 struct intel_urb_config;
 struct anv_async_submit;
 struct anv_embedded_sampler;
+struct anv_physical_device;
 struct anv_pipeline_embedded_sampler_binding;
 struct anv_trtt_bind;
 
@@ -102,10 +103,10 @@ void genX(emit_pipeline_select)(struct anv_batch *batch, uint32_t pipeline,
 
 void genX(apply_task_urb_workaround)(struct anv_cmd_buffer *cmd_buffer);
 
-void genX(batch_emit_pipeline_vertex_input)(struct anv_batch *batch,
-                                            struct anv_device *device,
-                                            struct anv_graphics_pipeline *pipeline,
-                                            const struct vk_vertex_input_state *vi);
+void genX(batch_emit_vertex_input)(struct anv_batch *batch,
+                                   struct anv_device *device,
+                                   struct anv_shader *shader,
+                                   const struct vk_vertex_input_state *vi);
 
 enum anv_pipe_bits
 genX(emit_apply_pipe_flushes)(struct anv_batch *batch,
@@ -173,6 +174,22 @@ genX(cmd_buffer_set_coarse_pixel_active)(struct anv_cmd_buffer *cmd_buffer,
 #endif
 }
 
+/*
+ * TDOD: Add INTEL_NEEDS_WA_14025112257 check once HSD is propogated for all
+ * other impacted platforms.
+ */
+static inline void
+genX(cmd_buffer_state_cache_inval_wa_14025112257)(
+      struct anv_cmd_buffer *cmd_buffer)
+{
+   if (cmd_buffer->device->info->ver >= 20 &&
+       anv_cmd_buffer_is_compute_queue(cmd_buffer)) {
+      anv_add_pending_pipe_bits(cmd_buffer,
+                                ANV_PIPE_STATE_CACHE_INVALIDATE_BIT,
+                                "WA_14025112257");
+   }
+}
+
 void genX(emit_so_memcpy_init)(struct anv_memcpy_state *state,
                                struct anv_device *device,
                                struct anv_cmd_buffer *cmd_buffer,
@@ -201,7 +218,7 @@ uint32_t
 genX(cmd_buffer_flush_descriptor_sets)(struct anv_cmd_buffer *cmd_buffer,
                                        struct anv_cmd_pipeline_state *pipe_state,
                                        const VkShaderStageFlags dirty,
-                                       const struct anv_shader_bin **shaders,
+                                       const struct anv_shader **shaders,
                                        uint32_t num_shaders);
 
 void genX(cmd_buffer_flush_gfx_hw_state)(struct anv_cmd_buffer *cmd_buffer);
@@ -277,16 +294,6 @@ genX(batch_emit_post_3dprimitive_was)(struct anv_batch *batch,
 void genX(batch_emit_fast_color_dummy_blit)(struct anv_batch *batch,
                                             struct anv_device *device);
 
-void
-genX(graphics_pipeline_emit)(struct anv_graphics_pipeline *pipeline,
-                             const struct vk_graphics_pipeline_state *state);
-
-void
-genX(compute_pipeline_emit)(struct anv_compute_pipeline *pipeline);
-
-void
-genX(ray_tracing_pipeline_emit)(struct anv_ray_tracing_pipeline *pipeline);
-
 #if GFX_VERx10 >= 300
 #define anv_shader_bin_get_handler(bin, local_arg_offset) ({         \
    assert((local_arg_offset) % 8 == 0);                              \
@@ -299,6 +306,36 @@ genX(ray_tracing_pipeline_emit)(struct anv_ray_tracing_pipeline *pipeline);
       .BindlessShaderDispatchMode = RT_SIMD16,                       \
       .KernelStartPointer = bin->kernel.offset,                      \
       .RegistersPerThread = ptl_register_blocks(prog_data->base.grf_used), \
+   };                                                                \
+})
+#endif
+
+#if GFX_VERx10 >= 300
+#define anv_shader_get_bsr(shader, local_arg_offset) ({              \
+   assert((local_arg_offset) % 8 == 0);                              \
+   const struct brw_bs_prog_data *prog_data =                        \
+      brw_bs_prog_data_const(shader->prog_data);                     \
+   assert(prog_data->simd_size == 16);                               \
+                                                                     \
+   (struct GENX(BINDLESS_SHADER_RECORD)) {                           \
+      .OffsetToLocalArguments = (local_arg_offset) / 8,              \
+      .BindlessShaderDispatchMode = RT_SIMD16,                       \
+      .KernelStartPointer = shader->kernel.offset,                   \
+      .RegistersPerThread = ptl_register_blocks(prog_data->base.grf_used), \
+   };                                                                \
+})
+#else
+#define anv_shader_get_bsr(shader, local_arg_offset) ({              \
+   assert((local_arg_offset) % 8 == 0);                              \
+   const struct brw_bs_prog_data *prog_data =                        \
+      brw_bs_prog_data_const(shader->prog_data);                     \
+   assert(prog_data->simd_size == 8 || prog_data->simd_size == 16);  \
+                                                                     \
+   (struct GENX(BINDLESS_SHADER_RECORD)) {                           \
+      .OffsetToLocalArguments = (local_arg_offset) / 8,              \
+      .BindlessShaderDispatchMode =                                  \
+         prog_data->simd_size == 16 ? RT_SIMD16 : RT_SIMD8,          \
+      .KernelStartPointer = shader->kernel.offset,                   \
    };                                                                \
 })
 #endif
@@ -485,3 +522,18 @@ genX(cmd_dispatch_unaligned)(
    uint32_t                                    invocations_x,
    uint32_t                                    invocations_y,
    uint32_t                                    invocations_z);
+
+void genX(init_instructions)(struct anv_physical_device *device);
+
+void genX(shader_emit)(struct anv_batch *batch,
+                       struct anv_device *device,
+                       struct anv_shader *shader);
+
+void genX(write_rt_shader_group)(struct anv_device *device,
+                                 VkRayTracingShaderGroupTypeKHR type,
+                                 const struct vk_shader **shaders,
+                                 uint32_t shader_count,
+                                 void *output);
+
+uint32_t genX(shader_cmd_size)(struct anv_device *device,
+                               mesa_shader_stage stage);

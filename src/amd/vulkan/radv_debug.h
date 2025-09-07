@@ -25,7 +25,7 @@ enum {
    RADV_DEBUG_ZERO_VRAM = 1ull << 10,
    RADV_DEBUG_SYNC_SHADERS = 1ull << 11,
    RADV_DEBUG_DUMP_PREOPT_IR = 1ull << 12,
-   RADV_DEBUG_NO_DYNAMIC_BOUNDS = 1ull << 13,
+   RADV_DEBUG_NO_DYNAMIC_BOUNDS = 1ull << 13, /* deprecated */
    RADV_DEBUG_INFO = 1ull << 14,
    RADV_DEBUG_STARTUP = 1ull << 15,
    RADV_DEBUG_CHECKIR = 1ull << 16,
@@ -37,7 +37,7 @@ enum {
    RADV_DEBUG_HANG = 1ull << 22,
    RADV_DEBUG_IMG = 1ull << 23,
    RADV_DEBUG_NO_UMR = 1ull << 24,
-   RADV_DEBUG_INVARIANT_GEOM = 1ull << 25,
+   RADV_DEBUG_INVARIANT_GEOM = 1ull << 25, /* deprecated */
    RADV_DEBUG_NO_DISPLAY_DCC = 1ull << 26,
    RADV_DEBUG_NO_TC_COMPAT_CMASK = 1ull << 27,
    RADV_DEBUG_NO_VRS_FLAT_SHADING = 1ull << 28,
@@ -45,7 +45,7 @@ enum {
    RADV_DEBUG_NO_NGGC = 1ull << 30,
    RADV_DEBUG_DUMP_PROLOGS = 1ull << 31,
    RADV_DEBUG_NO_DMA_BLIT = 1ull << 32,
-   RADV_DEBUG_SPLIT_FMA = 1ull << 33,
+   RADV_DEBUG_SPLIT_FMA = 1ull << 33, /* deprecated */
    RADV_DEBUG_DUMP_EPILOGS = 1ull << 34,
    RADV_DEBUG_NO_FMASK = 1ull << 35,
    RADV_DEBUG_SHADOW_REGS = 1ull << 36,
@@ -54,7 +54,7 @@ enum {
    RADV_DEBUG_VIDEO_ARRAY_PATH = 1ull << 39,
    RADV_DEBUG_NO_RT = 1ull << 40,
    RADV_DEBUG_NO_MESH_SHADER = 1ull << 41,
-   RADV_DEBUG_NO_NGG_GS = 1ull << 42,
+   RADV_DEBUG_NO_NGG_GS = 1ull << 42, /* deprecated */
    RADV_DEBUG_NO_ESO = 1ull << 43,
    RADV_DEBUG_PSO_CACHE_STATS = 1ull << 44,
    RADV_DEBUG_NIR_DEBUG_INFO = 1ull << 45,

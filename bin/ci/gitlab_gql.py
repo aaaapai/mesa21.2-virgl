@@ -14,7 +14,7 @@ from os import get_terminal_size
 from pathlib import Path
 from subprocess import check_output
 from textwrap import dedent
-from typing import Any, Iterable, Optional, Pattern, TypedDict, Union
+from typing import Any, Iterable, Optional, TypedDict, Union
 
 import yaml
 from filecache import DAY, filecache
@@ -29,6 +29,7 @@ DEFAULT_TERMINAL_SIZE: int = 80  # columns
 class DagNode(TypedDict):
     needs: set[str]
     stage: str
+    tags: set[str]
     # `name` is redundant but is here for retro-compatibility
     name: str
 
@@ -254,6 +255,7 @@ def extract_stages_and_job_needs(
         stage_sequence[job["stage"]["name"]].add(job["name"])
         dag_job: DagNode = {
             "name": job["name"],
+            "tags": set(job["tags"] or []),  # jobs with no tags defined return None here
             "stage": job["stage"]["name"],
             "needs": set([j["node"]["name"] for j in job["needs"]["edges"]]),
         }
@@ -329,19 +331,16 @@ def create_job_needs_dag(gl_gql: GitlabGQL, params, disable_cache: bool = True) 
     return final_dag
 
 
-def filter_dag(
-    dag: Dag, job_name_regex: Pattern, include_stage_regex: Pattern, exclude_stage_regex: Pattern
-) -> Dag:
-    filtered_jobs: Dag = Dag({})
-    for (job, data) in dag.items():
-        if not job_name_regex.fullmatch(job):
-            continue
-        if not include_stage_regex.fullmatch(data["stage"]):
-            continue
-        if exclude_stage_regex.fullmatch(data["stage"]):
-            continue
-        filtered_jobs[job] = data
-    return filtered_jobs
+def filter_dag(dag: Dag, job_filter: callable) -> Dag:
+    return Dag({
+        job: data
+        for job, data in dag.items()
+        if job_filter(
+            job_name=job,
+            job_stage=data["stage"],
+            job_tags=data["tags"],
+        )
+    })
 
 
 def print_dag(dag: Dag, indentation: int = 0) -> None:
@@ -534,6 +533,18 @@ def parse_args() -> Namespace:
         default="^$",
         help="Regex pattern for the stage name to be excluded",
     )
+    parser.add_argument(
+        "--job-tags",
+        metavar="job-tags",
+        help="Job tags to require when searching for target jobs. If multiple "
+             "values are passed, eg. `--job-tags 'foo.*' 'bar'`, the job will "
+             "need to have a tag matching `foo.*` *and* a tag matching `bar` "
+             "to qualify. Passing `--job-tags '.*'` makes sure the job has "
+             "a tag defined, while not passing `--job-tags` also allows "
+             "untagged jobs.",
+        default=[],
+        nargs='+',
+    )
     mutex_group_print = parser.add_mutually_exclusive_group()
     mutex_group_print.add_argument(
         "--print-dag",
@@ -575,7 +586,34 @@ def main():
             gl_gql, {"projectPath": args.project_path, "iid": iid}, disable_cache=True
         )
 
-        dag = filter_dag(dag, re.compile(args.regex), re.compile(args.include_stage), re.compile(args.exclude_stage))
+        job_name_regex = re.compile(args.regex)
+        include_stage_regex = re.compile(args.include_stage)
+        exclude_stage_regex = re.compile(args.exclude_stage)
+        job_tags_regexes = [re.compile(job_tag) for job_tag in args.job_tags]
+
+        def job_filter(
+            job_name: str,
+            job_stage: str,
+            job_tags: set[str],
+        ) -> bool:
+            """
+            Apply user-specified filters to a job, and return whether the
+            filters allow that job (True) or not (False).
+            """
+            if not job_name_regex.fullmatch(job_name):
+                return False
+            if not include_stage_regex.fullmatch(job_stage):
+                return False
+            if exclude_stage_regex.fullmatch(job_stage):
+                return False
+            if not all(
+                any(job_tags_regex.fullmatch(tag) for tag in job_tags)
+                for job_tags_regex in job_tags_regexes
+            ):
+                return False
+            return True
+
+        dag = filter_dag(dag, job_filter)
 
         print_dag(dag)
 

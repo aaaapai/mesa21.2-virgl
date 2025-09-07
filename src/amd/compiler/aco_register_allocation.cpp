@@ -72,6 +72,9 @@ struct assignment {
    }
    void set_precolor_affinity(PhysReg affinity_reg)
    {
+      if (assigned || precolor_affinity)
+         return;
+
       precolor_affinity = true;
       reg = affinity_reg;
    }
@@ -109,9 +112,10 @@ struct PhysRegIterator {
 };
 
 struct vector_info {
-   vector_info() : is_weak(false), num_parts(0), parts(NULL) {}
-   vector_info(Instruction* instr, unsigned start = 0, bool weak = false)
-       : is_weak(weak), num_parts(instr->operands.size() - start - (instr_disables_wqm(instr) * 2)),
+   vector_info() : is_weak(false), index(0), num_parts(0), parts(NULL) {}
+   vector_info(Instruction* instr, unsigned idx, unsigned start = 0, bool weak = false)
+       : is_weak(weak), index(idx),
+         num_parts(instr->operands.size() - start - (instr_disables_wqm(instr) * 2)),
          parts(instr->operands.begin() + start)
    {
       if (parts[0].isVectorAligned()) {
@@ -124,6 +128,7 @@ struct vector_info {
    /* If true, then we should stop trying to form a vector if anything goes wrong. Useful for when
     * the cost of failing does not introduce copies. */
    bool is_weak;
+   uint16_t index;
    uint32_t num_parts;
    Operand* parts;
 };
@@ -1750,13 +1755,8 @@ get_reg_vector(ra_ctx& ctx, const RegisterFile& reg_file, Temp temp, aco_ptr<Ins
    const vector_info& vec = ctx.vectors[temp.id()];
    if (!vec.is_weak || is_vector_intact(ctx, reg_file, vec)) {
       unsigned our_offset = 0;
-      for (unsigned i = 0; i < vec.num_parts; i++) {
-         const Operand& op = vec.parts[i];
-         if (op.isTemp() && op.tempId() == temp.id())
-            break;
-         else
-            our_offset += op.bytes();
-      }
+      for (unsigned i = 0; i < vec.index; i++)
+         our_offset += vec.parts[i].bytes();
 
       unsigned their_offset = 0;
       /* check for every operand of the vector
@@ -1765,12 +1765,15 @@ get_reg_vector(ra_ctx& ctx, const RegisterFile& reg_file, Temp temp, aco_ptr<Ins
        */
       for (unsigned i = 0; i < vec.num_parts; i++) {
          const Operand& op = vec.parts[i];
-         if (op.isTemp() && op.tempId() != temp.id() && op.getTemp().type() == temp.type() &&
-             ctx.assignments[op.tempId()].assigned) {
+         if (i != vec.index && op.isTemp() && op.getTemp().type() == temp.type() &&
+             (ctx.assignments[op.tempId()].assigned ||
+              ctx.assignments[op.tempId()].precolor_affinity)) {
             PhysReg reg = ctx.assignments[op.tempId()].reg;
             reg.reg_b += (our_offset - their_offset);
-            if (get_reg_specified(ctx, reg_file, temp.regClass(), instr, reg, operand))
+            if (get_reg_specified(ctx, reg_file, temp.regClass(), instr, reg, operand)) {
+               ctx.assignments[vec.parts[vec.index].tempId()].set_precolor_affinity(reg);
                return reg;
+            }
 
             /* return if MIMG vaddr components don't remain vector-aligned */
             if (vec.is_weak)
@@ -1788,8 +1791,10 @@ get_reg_vector(ra_ctx& ctx, const RegisterFile& reg_file, Temp temp, aco_ptr<Ins
       if (reg) {
          reg->reg_b += our_offset;
          /* make sure to only use byte offset if the instruction supports it */
-         if (get_reg_specified(ctx, reg_file, temp.regClass(), instr, *reg, operand))
+         if (get_reg_specified(ctx, reg_file, temp.regClass(), instr, *reg, operand)) {
+            ctx.assignments[vec.parts[vec.index].tempId()].set_precolor_affinity(reg.value());
             return reg;
+         }
       }
    }
    return {};
@@ -3020,20 +3025,13 @@ create_phi_vector_affinities(ra_ctx& ctx, aco_ptr<Instruction>& instr,
       }
    }
 
-   unsigned index = 0;
-   for (; index < dest_vector.num_parts; index++) {
-      if (dest_vector.parts[index].isTemp() &&
-          dest_vector.parts[index].tempId() == instr->definitions[0].tempId())
-         break;
-   }
-   assert(index != dest_vector.num_parts);
-
    for (int i = instr->operands.size() - 1; i >= 0; i--) {
       const Operand& op = instr->operands[i];
       if (!op.isTemp() || op.regClass() != instr->definitions[0].regClass())
          continue;
 
-      src_vectors[i].parts[index] = op;
+      src_vectors[i].parts[dest_vector.index] = op;
+      src_vectors[i].index = dest_vector.index;
       ctx.vectors[op.tempId()] = src_vectors[i];
    }
 }
@@ -3056,10 +3054,11 @@ get_affinities(ra_ctx& ctx)
 
          /* add vector affinities */
          if (instr->opcode == aco_opcode::p_create_vector) {
-            for (const Operand& op : instr->operands) {
+            for (unsigned i = 0; i < instr->operands.size(); i++) {
+               Operand op = instr->operands[i];
                if (op.isTemp() && op.isFirstKill() &&
                    op.getTemp().type() == instr->definitions[0].getTemp().type())
-                  ctx.vectors[op.tempId()] = vector_info(instr.get());
+                  ctx.vectors[op.tempId()] = vector_info(instr.get(), i);
             }
          } else if (instr->format == Format::MIMG && instr->operands.size() > 4 &&
                     !instr->mimg().strict_wqm) {
@@ -3068,9 +3067,11 @@ get_affinities(ra_ctx& ctx)
             unsigned op_count = instr->operands.size() - (instr->mimg().disable_wqm * 2);
             for (unsigned i = 3, vector_begin = 3; i < op_count; i++) {
                if (is_vector || instr->operands[i].isVectorAligned())
-                  ctx.vectors[instr->operands[i].tempId()] = vector_info(instr.get(), vector_begin);
+                  ctx.vectors[instr->operands[i].tempId()] =
+                     vector_info(instr.get(), i - vector_begin, vector_begin);
                else if (ctx.program->gfx_level < GFX12 && !instr->operands[3].isVectorAligned())
-                  ctx.vectors[instr->operands[i].tempId()] = vector_info(instr.get(), 3, true);
+                  ctx.vectors[instr->operands[i].tempId()] =
+                     vector_info(instr.get(), i - 3, 3, true);
                is_vector = instr->operands[i].isVectorAligned();
                vector_begin = is_vector ? vector_begin : i + 1;
             }
@@ -3098,7 +3099,8 @@ get_affinities(ra_ctx& ctx)
             bool is_vector = false;
             for (unsigned i = 0, vector_begin = 0; i < instr->operands.size(); i++) {
                if (is_vector || instr->operands[i].isVectorAligned())
-                  ctx.vectors[instr->operands[i].tempId()] = vector_info(instr.get(), vector_begin);
+                  ctx.vectors[instr->operands[i].tempId()] =
+                     vector_info(instr.get(), i - vector_begin, vector_begin);
                is_vector = instr->operands[i].isVectorAligned();
                vector_begin = is_vector ? vector_begin : i + 1;
             }
@@ -3120,8 +3122,6 @@ get_affinities(ra_ctx& ctx)
             if (it != temp_to_phi_resources.end()) {
                /* mark last-seen phi operand */
                phi_resources[it->second][0] = def.getTemp();
-            } else if (!ctx.assignments[def.tempId()].precolor_affinity) {
-               continue;
             }
 
             /* try to coalesce affinities with parallelcopies */
@@ -3146,6 +3146,9 @@ get_affinities(ra_ctx& ctx)
                   phi_resources[it->second].emplace_back(op.getTemp());
                   temp_to_phi_resources[op.tempId()] = it->second;
                }
+               auto vec_it = ctx.vectors.find(def.tempId());
+               if (vec_it != ctx.vectors.end())
+                  ctx.vectors[op.tempId()] = vec_it->second;
             }
          }
       }

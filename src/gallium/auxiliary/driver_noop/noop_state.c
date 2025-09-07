@@ -328,6 +328,12 @@ static void noop_fence_server_sync(struct pipe_context *pipe,
 {
 }
 
+static void noop_fence_server_signal(struct pipe_context *pipe,
+                                     struct pipe_fence_handle *fence,
+                                     uint64_t value)
+{
+}
+
 static void noop_texture_barrier(struct pipe_context *ctx, unsigned flags)
 {
 }
@@ -406,6 +412,8 @@ void noop_init_state_functions(struct pipe_context *ctx)
    ctx->create_tes_state = noop_create_shader_state;
    ctx->create_gs_state = noop_create_shader_state;
    ctx->create_vs_state = noop_create_shader_state;
+   ctx->create_ts_state = noop_create_shader_state;
+   ctx->create_ms_state = noop_create_shader_state;
    ctx->bind_blend_state = noop_bind_state;
    ctx->bind_depth_stencil_alpha_state = noop_bind_state;
    ctx->bind_sampler_states = noop_bind_sampler_states;
@@ -417,6 +425,8 @@ void noop_init_state_functions(struct pipe_context *ctx)
    ctx->bind_tes_state = noop_bind_state;
    ctx->bind_gs_state = noop_bind_state;
    ctx->bind_vs_state = noop_bind_state;
+   ctx->bind_ts_state = noop_bind_state;
+   ctx->bind_ms_state = noop_bind_state;
    ctx->delete_blend_state = noop_delete_state;
    ctx->delete_depth_stencil_alpha_state = noop_delete_state;
    ctx->delete_fs_state = noop_delete_state;
@@ -428,6 +438,8 @@ void noop_init_state_functions(struct pipe_context *ctx)
    ctx->delete_tes_state = noop_delete_state;
    ctx->delete_gs_state = noop_delete_state;
    ctx->delete_vs_state = noop_delete_state;
+   ctx->delete_ts_state = noop_delete_state;
+   ctx->delete_ms_state = noop_delete_state;
    ctx->set_blend_color = noop_set_blend_color;
    ctx->set_clip_state = noop_set_clip_state;
    ctx->set_constant_buffer = noop_set_constant_buffer;
@@ -448,6 +460,7 @@ void noop_init_state_functions(struct pipe_context *ctx)
    ctx->draw_vbo = noop_draw_vbo;
    ctx->draw_vertex_state = noop_draw_vertex_state;
    ctx->launch_grid = noop_launch_grid;
+   ctx->draw_mesh_tasks = noop_launch_grid;;
    ctx->create_stream_output_target = noop_create_stream_output_target;
    ctx->stream_output_target_destroy = noop_stream_output_target_destroy;
    ctx->set_stream_output_targets = noop_set_stream_output_targets;
@@ -459,6 +472,7 @@ void noop_init_state_functions(struct pipe_context *ctx)
    ctx->clear_texture = noop_clear_texture;
    ctx->clear_buffer = noop_clear_buffer;
    ctx->fence_server_sync = noop_fence_server_sync;
+   ctx->fence_server_signal = noop_fence_server_signal;
    ctx->texture_barrier = noop_texture_barrier;
    ctx->memory_barrier = noop_memory_barrier;
    ctx->resource_commit = noop_resource_commit;

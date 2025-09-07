@@ -348,8 +348,8 @@ create_cov(struct ir3_context *ctx, unsigned nrpt,
     * is used to achieve the result.
     */
    if (src_type == TYPE_U8 && full_type(dst_type) == TYPE_U32) {
-      struct ir3_instruction_rpt mask =
-         create_immed_typed_rpt(&ctx->build, nrpt, 0xff, TYPE_U8);
+      struct ir3_instruction_rpt mask = create_immed_typed_shared_rpt(
+         &ctx->build, nrpt, 0xff, TYPE_U8, ctx->compiler->has_scalar_alu);
       struct ir3_instruction_rpt cov =
          ir3_AND_B_rpt(&ctx->build, nrpt, src, 0, mask, 0);
       set_dst_flags(cov.rpts, nrpt, type_flags(dst_type));
@@ -366,8 +366,8 @@ create_cov(struct ir3_context *ctx, unsigned nrpt,
 
       struct ir3_instruction_rpt cov;
       if (op == nir_op_u2f16 || op == nir_op_u2f32) {
-         struct ir3_instruction_rpt mask =
-            create_immed_typed_rpt(&ctx->build, nrpt, 0xff, TYPE_U8);
+         struct ir3_instruction_rpt mask = create_immed_typed_shared_rpt(
+            &ctx->build, nrpt, 0xff, TYPE_U8, ctx->compiler->has_scalar_alu);
          cov = ir3_AND_B_rpt(&ctx->build, nrpt, src, 0, mask, 0);
          set_dst_flags(cov.rpts, nrpt, IR3_REG_HALF);
          cov = ir3_COV_rpt(&ctx->build, nrpt, cov, TYPE_U16, dst_type);
@@ -1767,7 +1767,7 @@ emit_intrinsic_load_image(struct ir3_context *ctx, nir_intrinsic_instr *intr,
 
    struct ir3_builder *b = &ctx->build;
    struct tex_src_info info = get_image_ssbo_samp_tex_src(ctx, &intr->src[0], true);
-   struct ir3_instruction *sam;
+   struct ir3_instruction *sam, *rck;
    struct ir3_instruction *const *src0 = ir3_get_src(ctx, &intr->src[1]);
    struct ir3_instruction *coords[4];
    unsigned flags, ncoords = ir3_get_image_coords(intr, &flags);
@@ -1799,6 +1799,17 @@ emit_intrinsic_load_image(struct ir3_context *ctx, nir_intrinsic_instr *intr,
    sam->barrier_conflict = IR3_BARRIER_IMAGE_W;
 
    ir3_split_dest(b, dst, sam, 0, 4);
+
+   if (intr->intrinsic == nir_intrinsic_image_sparse_load ||
+       intr->intrinsic == nir_intrinsic_bindless_image_sparse_load) {
+      /* The results of the residency check cannot change within the shader, so
+       * it doesn't need any barriers.
+       */
+      rck = emit_sam(ctx, OPC_ISAM, info, type, 0b1,
+                     ir3_create_collect(b, coords, ncoords), NULL);
+      rck->flags |= IR3_INSTR_RCK;
+      dst[4] = rck;
+   }
 }
 
 /* A4xx version of image_size, see ir3_a6xx.c for newer resinfo version. */
@@ -2901,6 +2912,8 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
       break;
    case nir_intrinsic_image_load:
    case nir_intrinsic_bindless_image_load:
+   case nir_intrinsic_image_sparse_load:
+   case nir_intrinsic_bindless_image_sparse_load:
       emit_intrinsic_load_image(ctx, intr, dst);
       break;
    case nir_intrinsic_image_store:
@@ -3586,12 +3599,12 @@ static void
 emit_tex(struct ir3_context *ctx, nir_tex_instr *tex)
 {
    struct ir3_builder *b = &ctx->build;
-   struct ir3_instruction **dst, *sam, *src0[12], *src1[4];
+   struct ir3_instruction **dst, *sam, *src0[12], *src1[5];
    struct ir3_instruction *const *coord, *const *off, *const *ddx, *const *ddy;
-   struct ir3_instruction *lod, *compare, *proj, *sample_index;
+   struct ir3_instruction *lod, *compare, *proj, *sample_index, *min_lod;
    struct tex_src_info info = {0};
    bool has_bias = false, has_lod = false, has_proj = false, has_off = false;
-   bool lod_zero = false;
+   bool lod_zero = false, has_min_lod = false;
    unsigned i, coords, flags, ncomp;
    unsigned nsrc0 = 0, nsrc1 = 0;
    type_t type;
@@ -3600,9 +3613,15 @@ emit_tex(struct ir3_context *ctx, nir_tex_instr *tex)
    ncomp = tex->def.num_components;
 
    coord = off = ddx = ddy = NULL;
-   lod = proj = compare = sample_index = NULL;
+   lod = proj = compare = sample_index = min_lod = NULL;
 
    dst = ir3_get_def(ctx, &tex->def, ncomp);
+
+   /* For sparse residency check, the last component is a residency code that is
+    * emitted separately.
+    */
+   if (tex->is_sparse)
+      ncomp--;
 
    for (unsigned i = 0; i < tex->num_srcs; i++) {
       switch (tex->src[i].src_type) {
@@ -3638,6 +3657,10 @@ emit_tex(struct ir3_context *ctx, nir_tex_instr *tex)
          break;
       case nir_tex_src_ms_index:
          sample_index = ir3_get_src(ctx, &tex->src[i].src)[0];
+         break;
+      case nir_tex_src_min_lod:
+         min_lod = ir3_get_src(ctx, &tex->src[i].src)[0];
+         has_min_lod = true;
          break;
       case nir_tex_src_texture_offset:
       case nir_tex_src_sampler_offset:
@@ -3812,7 +3835,7 @@ emit_tex(struct ir3_context *ctx, nir_tex_instr *tex)
     *  - lod
     *  - bias
     */
-   if (has_off | has_lod | has_bias) {
+   if (has_off | has_lod | has_bias | has_min_lod) {
       if (has_off) {
          unsigned off_coords = coords;
          if (tex->sampler_dim == GLSL_SAMPLER_DIM_CUBE)
@@ -3826,6 +3849,11 @@ emit_tex(struct ir3_context *ctx, nir_tex_instr *tex)
 
       if (has_lod | has_bias)
          src1[nsrc1++] = lod;
+
+      if (has_min_lod) {
+         src1[nsrc1++] = min_lod;
+         flags |= IR3_INSTR_CLP;
+      }
    }
 
    type = get_tex_dest_type(tex);
@@ -3919,6 +3947,14 @@ emit_tex(struct ir3_context *ctx, nir_tex_instr *tex)
    } else {
       info.flags |= flags;
       sam = emit_sam(ctx, opc, info, type, MASK(ncomp), col0, col1);
+   }
+
+   if (tex->is_sparse) {
+      info.flags |= flags;
+      struct ir3_instruction *rck =
+         emit_sam(ctx, opc, info, TYPE_U32, MASK(1), col0, col1);
+      rck->flags |= IR3_INSTR_RCK;
+      dst[ncomp] = rck;
    }
 
    if (tg4_swizzle_fixup) {

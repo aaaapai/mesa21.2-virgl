@@ -204,105 +204,102 @@ static const driOptionDescription radv_dri_options[] = {
 // clang-format on
 
 static void
-radv_init_dri_options(struct radv_instance *instance)
+radv_init_dri_debug_options(struct radv_instance *instance)
 {
-   driParseOptionInfo(&instance->drirc.available_options, radv_dri_options, ARRAY_SIZE(radv_dri_options));
-   driParseConfigFiles(&instance->drirc.options, &instance->drirc.available_options, 0, "radv", NULL, NULL,
-                       instance->vk.app_info.app_name, instance->vk.app_info.app_version,
-                       instance->vk.app_info.engine_name, instance->vk.app_info.engine_version);
+   struct radv_drirc *drirc = &instance->drirc;
 
-   instance->drirc.enable_mrt_output_nan_fixup =
-      driQueryOptionb(&instance->drirc.options, "radv_enable_mrt_output_nan_fixup");
+   drirc->debug.disable_aniso_single_level = driQueryOptionb(&drirc->options, "radv_disable_aniso_single_level");
+   drirc->debug.disable_dcc_mips = driQueryOptionb(&drirc->options, "radv_disable_dcc_mips");
+   drirc->debug.disable_dcc_stores = driQueryOptionb(&drirc->options, "radv_disable_dcc_stores");
+   drirc->debug.disable_depth_storage = driQueryOptionb(&drirc->options, "radv_disable_depth_storage");
+   drirc->debug.disable_hiz_his_gfx12 = driQueryOptionb(&drirc->options, "radv_disable_hiz_his_gfx12");
+   drirc->debug.disable_shrink_image_store = driQueryOptionb(&drirc->options, "radv_disable_shrink_image_store");
+   drirc->debug.disable_sinking_load_input_fs = driQueryOptionb(&drirc->options, "radv_disable_sinking_load_input_fs");
+   drirc->debug.disable_tc_compat_htile_in_general =
+      driQueryOptionb(&drirc->options, "radv_disable_tc_compat_htile_general");
 
-   instance->drirc.disable_shrink_image_store =
-      driQueryOptionb(&instance->drirc.options, "radv_disable_shrink_image_store");
-
-   instance->drirc.disable_tc_compat_htile_in_general =
-      driQueryOptionb(&instance->drirc.options, "radv_disable_tc_compat_htile_general");
-
-   if (driQueryOptionb(&instance->drirc.options, "radv_no_dynamic_bounds"))
-      instance->debug_flags |= RADV_DEBUG_NO_DYNAMIC_BOUNDS;
-
-   if (driQueryOptionb(&instance->drirc.options, "radv_invariant_geom"))
-      instance->debug_flags |= RADV_DEBUG_INVARIANT_GEOM;
-
-   if (driQueryOptionb(&instance->drirc.options, "radv_split_fma"))
-      instance->debug_flags |= RADV_DEBUG_SPLIT_FMA;
-
-   if (driQueryOptionb(&instance->drirc.options, "radv_disable_dcc"))
-      instance->debug_flags |= RADV_DEBUG_NO_DCC;
-
-   if (driQueryOptionb(&instance->drirc.options, "radv_disable_ngg_gs"))
-      instance->debug_flags |= RADV_DEBUG_NO_NGG_GS;
-
-   instance->drirc.clear_lds = driQueryOptionb(&instance->drirc.options, "radv_clear_lds");
-
-   instance->drirc.zero_vram = driQueryOptionb(&instance->drirc.options, "radv_zero_vram");
-
-   instance->drirc.disable_aniso_single_level =
-      driQueryOptionb(&instance->drirc.options, "radv_disable_aniso_single_level");
-
-   instance->drirc.disable_trunc_coord = driQueryOptionb(&instance->drirc.options, "radv_disable_trunc_coord");
+   drirc->debug.disable_trunc_coord = driQueryOptionb(&drirc->options, "radv_disable_trunc_coord");
    if (instance->vk.app_info.engine_name && !strcmp(instance->vk.app_info.engine_name, "DXVK")) {
       /* Since 2.3.1+, DXVK uses the application version to notify the driver about D3D9. */
       const bool is_d3d9 = instance->vk.app_info.app_version & 0x1;
 
-      instance->drirc.disable_trunc_coord &= !is_d3d9;
+      drirc->debug.disable_trunc_coord &= !is_d3d9;
    }
 
-   instance->drirc.disable_sinking_load_input_fs =
-      driQueryOptionb(&instance->drirc.options, "radv_disable_sinking_load_input_fs");
+   drirc->debug.enable_mrt_output_nan_fixup = driQueryOptionb(&drirc->options, "radv_enable_mrt_output_nan_fixup");
+   drirc->debug.flush_before_query_copy = driQueryOptionb(&drirc->options, "radv_flush_before_query_copy");
+   drirc->debug.flush_before_timestamp_write = driQueryOptionb(&drirc->options, "radv_flush_before_timestamp_write");
+   drirc->debug.invariant_geom = driQueryOptionb(&drirc->options, "radv_invariant_geom");
+   drirc->debug.lower_terminate_to_discard = driQueryOptionb(&drirc->options, "vk_lower_terminate_to_discard");
+   drirc->debug.no_dynamic_bounds = driQueryOptionb(&drirc->options, "radv_no_dynamic_bounds");
+   drirc->debug.split_fma = driQueryOptionb(&drirc->options, "radv_split_fma");
+   drirc->debug.ssbo_non_uniform = driQueryOptionb(&drirc->options, "radv_ssbo_non_uniform");
+   drirc->debug.tex_non_uniform = driQueryOptionb(&drirc->options, "radv_tex_non_uniform");
+   drirc->debug.zero_vram = driQueryOptionb(&drirc->options, "radv_zero_vram");
+   drirc->debug.app_layer = driQueryOptionstr(&drirc->options, "radv_app_layer");
 
-   instance->drirc.disable_depth_storage = driQueryOptionb(&instance->drirc.options, "radv_disable_depth_storage");
+   drirc->debug.override_uniform_offset_alignment =
+      driQueryOptioni(&drirc->options, "radv_override_uniform_offset_alignment");
 
-   instance->drirc.flush_before_query_copy = driQueryOptionb(&instance->drirc.options, "radv_flush_before_query_copy");
+   if (driQueryOptionb(&drirc->options, "radv_disable_dcc"))
+      instance->debug_flags |= RADV_DEBUG_NO_DCC;
 
-   instance->drirc.enable_unified_heap_on_apu =
-      driQueryOptionb(&instance->drirc.options, "radv_enable_unified_heap_on_apu");
-
-   instance->drirc.tex_non_uniform = driQueryOptionb(&instance->drirc.options, "radv_tex_non_uniform");
-
-   instance->drirc.ssbo_non_uniform = driQueryOptionb(&instance->drirc.options, "radv_ssbo_non_uniform");
-
-   instance->drirc.app_layer = driQueryOptionstr(&instance->drirc.options, "radv_app_layer");
-
-   instance->drirc.flush_before_timestamp_write =
-      driQueryOptionb(&instance->drirc.options, "radv_flush_before_timestamp_write");
-
-   if (driQueryOptionb(&instance->drirc.options, "radv_rt_wave64"))
+   if (driQueryOptionb(&drirc->options, "radv_rt_wave64"))
       instance->perftest_flags |= RADV_PERFTEST_RT_WAVE_64;
+}
 
-   instance->drirc.override_graphics_shader_version =
-      driQueryOptioni(&instance->drirc.options, "radv_override_graphics_shader_version");
-   instance->drirc.override_compute_shader_version =
-      driQueryOptioni(&instance->drirc.options, "radv_override_compute_shader_version");
-   instance->drirc.override_ray_tracing_shader_version =
-      driQueryOptioni(&instance->drirc.options, "radv_override_ray_tracing_shader_version");
+static void
+radv_init_dri_performance_options(struct radv_instance *instance)
+{
+   struct radv_drirc *drirc = &instance->drirc;
 
-   instance->drirc.override_vram_size = driQueryOptioni(&instance->drirc.options, "override_vram_size");
+   drirc->performance.disable_ngg_gs = driQueryOptionb(&drirc->options, "radv_disable_ngg_gs");
+   drirc->performance.enable_unified_heap_on_apu = driQueryOptionb(&drirc->options, "radv_enable_unified_heap_on_apu");
+   drirc->performance.report_llvm9_version_string =
+      driQueryOptionb(&drirc->options, "radv_report_llvm9_version_string");
+}
 
-   instance->drirc.override_uniform_offset_alignment =
-      driQueryOptioni(&instance->drirc.options, "radv_override_uniform_offset_alignment");
+static void
+radv_init_dri_features_options(struct radv_instance *instance)
+{
+   struct radv_drirc *drirc = &instance->drirc;
 
-   instance->drirc.report_llvm9_version_string =
-      driQueryOptionb(&instance->drirc.options, "radv_report_llvm9_version_string");
+   drirc->features.cooperative_matrix2_nv = driQueryOptionb(&drirc->options, "radv_cooperative_matrix2_nv");
+   drirc->features.emulate_rt = driQueryOptionb(&drirc->options, "radv_emulate_rt");
+   drirc->features.expose_float16_gfx8 = driQueryOptionb(&drirc->options, "radv_enable_float16_gfx8");
+   drirc->features.vk_require_etc2 = driQueryOptionb(&drirc->options, "vk_require_etc2");
+   drirc->features.vk_require_astc = driQueryOptionb(&drirc->options, "vk_require_astc");
+}
 
-   instance->drirc.vk_require_etc2 = driQueryOptionb(&instance->drirc.options, "vk_require_etc2");
-   instance->drirc.vk_require_astc = driQueryOptionb(&instance->drirc.options, "vk_require_astc");
+static void
+radv_init_dri_misc_options(struct radv_instance *instance)
+{
+   struct radv_drirc *drirc = &instance->drirc;
 
-   instance->drirc.disable_dcc_mips = driQueryOptionb(&instance->drirc.options, "radv_disable_dcc_mips");
-   instance->drirc.disable_dcc_stores = driQueryOptionb(&instance->drirc.options, "radv_disable_dcc_stores");
+   drirc->misc.clear_lds = driQueryOptionb(&drirc->options, "radv_clear_lds");
+   drirc->misc.override_vram_size = driQueryOptioni(&drirc->options, "override_vram_size");
+   drirc->misc.override_graphics_shader_version =
+      driQueryOptioni(&drirc->options, "radv_override_graphics_shader_version");
+   drirc->misc.override_compute_shader_version =
+      driQueryOptioni(&drirc->options, "radv_override_compute_shader_version");
+   drirc->misc.override_ray_tracing_shader_version =
+      driQueryOptioni(&drirc->options, "radv_override_ray_tracing_shader_version");
+}
 
-   instance->drirc.lower_terminate_to_discard =
-      driQueryOptionb(&instance->drirc.options, "vk_lower_terminate_to_discard");
+static void
+radv_init_dri_options(struct radv_instance *instance)
+{
+   struct radv_drirc *drirc = &instance->drirc;
 
-   instance->drirc.emulate_rt = driQueryOptionb(&instance->drirc.options, "radv_emulate_rt");
+   driParseOptionInfo(&drirc->available_options, radv_dri_options, ARRAY_SIZE(radv_dri_options));
+   driParseConfigFiles(&drirc->options, &drirc->available_options, 0, "radv", NULL, NULL,
+                       instance->vk.app_info.app_name, instance->vk.app_info.app_version,
+                       instance->vk.app_info.engine_name, instance->vk.app_info.engine_version);
 
-   instance->drirc.expose_float16_gfx8 = driQueryOptionb(&instance->drirc.options, "radv_enable_float16_gfx8");
-
-   instance->drirc.disable_hiz_his_gfx12 = driQueryOptionb(&instance->drirc.options, "radv_disable_hiz_his_gfx12");
-
-   instance->drirc.cooperative_matrix2_nv = driQueryOptionb(&instance->drirc.options, "radv_cooperative_matrix2_nv");
+   radv_init_dri_debug_options(instance);
+   radv_init_dri_performance_options(instance);
+   radv_init_dri_features_options(instance);
+   radv_init_dri_misc_options(instance);
 }
 
 static const struct vk_instance_extension_table radv_instance_extensions_supported = {
@@ -439,6 +436,31 @@ radv_CreateInstance(const VkInstanceCreateInfo *pCreateInfo, const VkAllocationC
    VG(VALGRIND_CREATE_MEMPOOL(instance, 0, false));
 
    radv_init_dri_options(instance);
+
+   /* Handle deprecated RADV_DEBUG options. */
+   if (instance->debug_flags & RADV_DEBUG_NO_DYNAMIC_BOUNDS) {
+      fprintf(stderr, "radv: RADV_DEBUG=nodynamicbounds is deprecated and will it be removed in future Mesa releases. "
+                      "Please use radv_no_dynamic_bounds=true instead.\n");
+      instance->drirc.debug.no_dynamic_bounds = true;
+   }
+
+   if (instance->debug_flags & RADV_DEBUG_INVARIANT_GEOM) {
+      fprintf(stderr, "radv: RADV_DEBUG=invariantgeom is deprecated and will it be removed in future Mesa releases. "
+                      "Please use radv_invariant_geom=true instead.\n");
+      instance->drirc.debug.invariant_geom = true;
+   }
+
+   if (instance->debug_flags & RADV_DEBUG_SPLIT_FMA) {
+      fprintf(stderr, "radv: RADV_DEBUG=splitfma is deprecated and will it be removed in future Mesa releases. "
+                      "Please use radv_split_fma=true instead.\n");
+      instance->drirc.debug.split_fma = true;
+   }
+
+   if (instance->debug_flags & RADV_DEBUG_NO_NGG_GS) {
+      fprintf(stderr, "radv: RADV_DEBUG=nongg_gs is deprecated and will it be removed in future Mesa releases. "
+                      "Please use radv_disable_ngg_gs=true instead.\n");
+      instance->drirc.performance.disable_ngg_gs = true;
+   }
 
    *pInstance = radv_instance_to_handle(instance);
 

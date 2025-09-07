@@ -1383,7 +1383,7 @@ RADV driver environment variables
       show GPU-related information
    ``invariantgeom``
       Mark geometry-affecting outputs as invariant. This works around a common
-      class of application bugs appearing as flickering.
+      class of application bugs appearing as flickering. (deprecated)
    ``metashaders``
       dump internal meta shaders
    ``noatocdithering``
@@ -1399,7 +1399,7 @@ RADV driver environment variables
    ``nodisplaydcc``
       disable Delta Color Compression (DCC) on displayable images
    ``nodynamicbounds``
-      do not check OOB access for dynamic descriptors
+      do not check OOB access for dynamic descriptors (deprecated)
    ``noeso``
       disable VK_EXT_shader_object
    ``nofastclears``
@@ -1419,7 +1419,7 @@ RADV driver environment variables
    ``nonggc``
       disable NGG culling for GFX10 and GFX10.3
    ``nongg_gs``
-      disable NGG GS for GFX10 and GFX10.3
+      disable NGG GS for GFX10 and GFX10.3 (deprecated)
    ``nort``
       skip executing vkCmdTraceRays and ray queries (RT extensions will still be
       advertised)
@@ -1451,6 +1451,7 @@ RADV driver environment variables
       dump SPIR-V
    ``splitfma``
       split application-provided fused multiply-add in geometry stages
+      (deprecated)
    ``startup``
       display info at startup
    ``syncshaders``
@@ -1611,6 +1612,19 @@ RADV driver environment variables
       force the memory clock to its minimum level
    ``peak``
       force GPU clocks to their maximum level, this is the default value
+
+.. envvar:: RADV_GFX12_HIZ_WA
+
+   choose the specific HiZ workaround to apply on GFX12 (RDNA4). The possible
+   values are:
+
+   ``disabled``
+     no HiZ workaround is enabled, use at your own risk but optimal for performance
+   ``partial``
+     mitigate the issue partially, potentially risky but performance should be
+     mostly optimal (default value)
+   ``full``
+     mitigate the issue completely, no risk but performance might be decreased
 
 .. envvar:: ACO_DEBUG
 

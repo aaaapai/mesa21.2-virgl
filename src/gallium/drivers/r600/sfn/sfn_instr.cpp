@@ -244,7 +244,10 @@ Block::do_print(std::ostream& os) const
 {
    for (int j = 0; j < 2 * m_nesting_depth; ++j)
       os << ' ';
-   os << "BLOCK START\n";
+   os << "BLOCK START ";
+   if (m_cf_start)
+      os << *m_cf_start;
+   os << "\n";
    for (auto& i : m_instructions) {
       for (int j = 0; j < 2 * (m_nesting_depth + i->nesting_corr()) + 2; ++j)
          os << ' ';
@@ -298,16 +301,25 @@ Block::set_type(Type t, r600_chip_class chip_class)
        * to 16 slots if the register pressure doesn't get too high.
        */
       m_remaining_slots = 8;
+      m_cf_start =
+         new ControlFlowInstr(chip_class >= ISA_CC_CAYMAN ? ControlFlowInstr::cf_tex
+                                                          : ControlFlowInstr::cf_vtx);
       break;
    case gds:
+      m_cf_start = new ControlFlowInstr(ControlFlowInstr::cf_gds);
+      m_remaining_slots = chip_class >= ISA_CC_EVERGREEN ? 16 : 8;
+      break;
    case tex:
+      m_cf_start = new ControlFlowInstr(ControlFlowInstr::cf_tex);
       m_remaining_slots = chip_class >= ISA_CC_EVERGREEN ? 16 : 8;
       break;
    case alu:
+      m_cf_start = new ControlFlowInstr(ControlFlowInstr::cf_alu);
       /* 128 but a follow up block might need to emit and ADDR + INDEX load */
       m_remaining_slots = 118;
       break;
    default:
+      m_cf_start = nullptr;
       m_remaining_slots = 0xffff;
    }
 }
@@ -373,6 +385,18 @@ Block::try_reserve_kcache(const AluGroup& group)
 }
 
 bool
+Block::kcache_needs_extended() const
+{
+   for (unsigned i = 0; i < s_max_kcache_banks; ++i) {
+      if (m_kcache[i].mode) {
+         if (i > 2 || m_kcache[i].index_mode)
+            return true;
+      }
+   }
+   return false;
+}
+
+bool
 Block::try_reserve_kcache(const AluInstr& instr)
 {
    auto kcache = m_kcache;
@@ -405,19 +429,21 @@ unsigned Block::s_max_kcache_banks = 4;
 bool
 Block::try_reserve_kcache(const UniformValue& u, std::array<KCacheLine, 4>& kcache) const
 {
-   const int kcache_banks = s_max_kcache_banks; // TODO: handle pre-evergreen
 
    int bank = u.kcache_bank();
    int sel = (u.sel() - 512);
    int line = sel >> 4;
    EBufferIndexMode index_mode = bim_none;
 
-   if (auto addr = u.buf_addr())
+   if (auto addr = u.buf_addr()) {
+      /* No indirect addressing with only two kcache banks (since this also
+       * means, we can't emit ALU_EXTENDED */
       index_mode = addr->sel() == AddressRegister::idx0 ?  bim_zero : bim_one;
+   }
 
    bool found = false;
 
-   for (int i = 0; i < kcache_banks && !found; ++i) {
+   for (unsigned i = 0; i < s_max_kcache_banks && !found; ++i) {
       if (kcache[i].mode) {
          if (kcache[i].bank < bank)
             continue;
@@ -430,12 +456,12 @@ Block::try_reserve_kcache(const UniformValue& u, std::array<KCacheLine, 4>& kcac
          }
          if ((kcache[i].bank == bank && kcache[i].addr > line + 1) ||
              kcache[i].bank > bank) {
-            if (kcache[kcache_banks - 1].mode)
+            if (kcache[s_max_kcache_banks - 1].mode)
                return false;
 
             memmove(&kcache[i + 1],
                     &kcache[i],
-                    (kcache_banks - i - 1) * sizeof(KCacheLine));
+                    (s_max_kcache_banks - i - 1) * sizeof(KCacheLine));
             kcache[i].mode = KCacheLine::lock_1;
             kcache[i].bank = bank;
             kcache[i].addr = line;
@@ -530,7 +556,7 @@ public:
       result = this_##TYPE->is_equal_to(instr);                                          \
    }                                                                                     \
                                                                                          \
-   const TYPE *this_##TYPE{nullptr};
+   const TYPE *this_##TYPE { nullptr }
 
    DECLARE_MEMBER(AluInstr);
    DECLARE_MEMBER(AluGroup);

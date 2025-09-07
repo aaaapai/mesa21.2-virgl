@@ -96,9 +96,9 @@ anv_per_hw_ver_files = files(
   'genX_gpu_memcpy.c',
   'genX_init_state.c',
   'genX_internal_kernels.c',
-  'genX_pipeline.c',
   'genX_query.c',
   'genX_simple_shader.c',
+  'genX_shader.c',
 )
 if with_intel_vk_rt
   anv_per_hw_ver_files += files(
@@ -180,13 +180,14 @@ libanv_files = files(
   'anv_nir_push_descriptor_analysis.c',
   'anv_perf.c',
   'anv_physical_device.c',
-  'anv_pipeline.c',
   'anv_pipeline_cache.c',
   'anv_private.h',
   'anv_queue.c',
   'anv_rmv.c',
   'anv_rmv.h',
   'anv_sampler.c',
+  'anv_shader.c',
+  'anv_shader_compile.c',
   'anv_slab_bo.c',
   'anv_slab_bo.h',
   'anv_sparse.c',

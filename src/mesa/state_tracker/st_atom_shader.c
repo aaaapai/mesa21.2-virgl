@@ -200,14 +200,16 @@ st_update_fp( struct st_context *st )
 void
 st_update_vp( struct st_context *st )
 {
-   struct gl_program *vp;
-
    /* find active shader and params -- Should be covered by
     * ST_NEW_VERTEX_PROGRAM
     */
-   assert(st->ctx->VertexProgram._Current);
-   vp = st->ctx->VertexProgram._Current;
-   assert(vp->info.stage == MESA_SHADER_VERTEX);
+   struct gl_program *vp = st->ctx->VertexProgram._Current;
+
+   if (!vp) {
+      _mesa_reference_program(st->ctx, &st->vp, NULL);
+      cso_set_vertex_shader_handle(st->cso_context, NULL);
+      return;
+   }
 
    if (st->shader_has_one_variant[MESA_SHADER_VERTEX] &&
        !st->ctx->Array._PerVertexEdgeFlagsEnabled) {
@@ -346,4 +348,22 @@ st_update_cp(struct st_context *st)
                                            st->ctx->ComputeProgram._Current,
                                            MESA_SHADER_COMPUTE, &st->cp);
    cso_set_compute_shader_handle(st->cso_context, shader);
+}
+
+void
+st_update_tp(struct st_context *st)
+{
+   void *shader = st_update_common_program(st,
+                                           st->ctx->TaskProgram._Current,
+                                           MESA_SHADER_TASK, &st->tp);
+   cso_set_task_shader_handle(st->cso_context, shader);
+}
+
+void
+st_update_mp(struct st_context *st)
+{
+   void *shader = st_update_common_program(st,
+                                           st->ctx->MeshProgram._Current,
+                                           MESA_SHADER_MESH, &st->mp);
+   cso_set_mesh_shader_handle(st->cso_context, shader);
 }

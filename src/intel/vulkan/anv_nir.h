@@ -68,9 +68,6 @@ struct anv_pipeline_push_map {
    struct anv_pipeline_binding *block_to_descriptor;
 };
 
-enum brw_robustness_flags
-anv_get_robust_flags(const struct vk_pipeline_robustness_state *rstate);
-
 bool anv_check_for_primitive_replication(struct anv_device *device,
                                          VkShaderStageFlags stages,
                                          nir_shader **shaders,
@@ -78,9 +75,6 @@ bool anv_check_for_primitive_replication(struct anv_device *device,
 
 bool anv_nir_lower_multiview(nir_shader *shader, uint32_t view_mask,
                              bool use_primitive_replication);
-
-bool anv_nir_lower_ycbcr_textures(nir_shader *shader,
-                                  const struct anv_pipeline_sets_layout *layout);
 
 static inline nir_address_format
 anv_nir_ssbo_addr_format(const struct anv_physical_device *pdevice,
@@ -114,11 +108,17 @@ bool anv_nir_apply_pipeline_layout(nir_shader *shader,
                                    struct anv_pipeline_push_map *push_map,
                                    void *push_map_mem_ctx);
 
+struct anv_nir_push_layout_info {
+   bool separate_tessellation;
+   bool fragment_dynamic;
+   bool mesh_dynamic;
+};
+
 bool anv_nir_compute_push_layout(nir_shader *nir,
                                  const struct anv_physical_device *pdevice,
                                  enum brw_robustness_flags robust_flags,
-                                 bool fragment_dynamic,
-                                 bool mesh_dynamic,
+                                 const struct anv_nir_push_layout_info *info,
+                                 struct brw_base_prog_key *prog_key,
                                  struct brw_stage_prog_data *prog_data,
                                  struct anv_pipeline_bind_map *map,
                                  const struct anv_pipeline_push_map *push_map,

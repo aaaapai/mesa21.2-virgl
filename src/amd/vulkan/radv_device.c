@@ -89,7 +89,7 @@ radv_device_should_clear_vram(const struct radv_device *device)
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
    /* Ignore drirc radv_zero_vram=true if the feature is enabled to let applications take control. */
-   return instance->drirc.zero_vram && !device->vk.enabled_features.zeroInitializeDeviceMemory;
+   return instance->drirc.debug.zero_vram && !device->vk.enabled_features.zeroInitializeDeviceMemory;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -786,11 +786,11 @@ init_dispatch_tables(struct radv_device *device, struct radv_physical_device *pd
    if (radv_device_fault_detection_enabled(device) || gather_ctx_rolls)
       add_entrypoints(&b, &annotate_device_entrypoints, RADV_ANNOTATE_DISPATCH_TABLE);
 
-   if (!strcmp(instance->drirc.app_layer, "metroexodus")) {
+   if (!strcmp(instance->drirc.debug.app_layer, "metroexodus")) {
       add_entrypoints(&b, &metro_exodus_device_entrypoints, RADV_APP_DISPATCH_TABLE);
-   } else if (!strcmp(instance->drirc.app_layer, "rage2")) {
+   } else if (!strcmp(instance->drirc.debug.app_layer, "rage2")) {
       add_entrypoints(&b, &rage2_device_entrypoints, RADV_APP_DISPATCH_TABLE);
-   } else if (!strcmp(instance->drirc.app_layer, "quanticdream")) {
+   } else if (!strcmp(instance->drirc.debug.app_layer, "quanticdream")) {
       add_entrypoints(&b, &quantic_dream_device_entrypoints, RADV_APP_DISPATCH_TABLE);
    }
 
@@ -1126,6 +1126,8 @@ radv_destroy_device(struct radv_device *device, const VkAllocationCallbacks *pAl
       if (device->hw_ctx[i])
          device->ws->ctx_destroy(device->hw_ctx[i]);
    }
+   if (device->hw_vcn_enc_ctx)
+      device->ws->ctx_destroy(device->hw_vcn_enc_ctx);
 
    mtx_destroy(&device->overallocation_mutex);
    simple_mtx_destroy(&device->ctx_roll_mtx);
@@ -1217,12 +1219,21 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
    if (pdev->info.has_kernelq_reg_shadowing || instance->debug_flags & RADV_DEBUG_SHADOW_REGS)
       device->uses_shadow_regs = true;
 
+   bool video_dec_queue = false;
+   bool video_enc_queue = false;
+
    /* Create one context per queue priority. */
    for (unsigned i = 0; i < pCreateInfo->queueCreateInfoCount; i++) {
       const VkDeviceQueueCreateInfo *queue_create = &pCreateInfo->pQueueCreateInfos[i];
       const VkDeviceQueueGlobalPriorityCreateInfo *global_priority =
          vk_find_struct_const(queue_create->pNext, DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO);
       enum radeon_ctx_priority priority = radv_get_queue_global_priority(global_priority);
+      enum radv_queue_family qf = vk_queue_to_radv(pdev, queue_create->queueFamilyIndex);
+
+      if (qf == RADV_QUEUE_VIDEO_DEC)
+         video_dec_queue = true;
+      else if (qf == RADV_QUEUE_VIDEO_ENC)
+         video_enc_queue = true;
 
       if (device->hw_ctx[priority])
          continue;
@@ -1230,6 +1241,13 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
       result = device->ws->ctx_create(device->ws, priority, &device->hw_ctx[priority]);
       if (result != VK_SUCCESS)
          goto fail;
+   }
+
+   /* Use extra context to allow use of both VCN instances for transcoding. */
+   if (video_dec_queue && video_enc_queue && pdev->info.ip[AMD_IP_VCN_ENC].num_instances > 1) {
+      result = device->ws->ctx_create(device->ws, RADEON_CTX_PRIORITY_MEDIUM, &device->hw_vcn_enc_ctx);
+      if (result != VK_SUCCESS)
+         return result;
    }
 
    for (unsigned i = 0; i < pCreateInfo->queueCreateInfoCount; i++) {

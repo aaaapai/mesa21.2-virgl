@@ -5476,7 +5476,7 @@ typedef struct nir_lower_subgroups_options {
     * will filter instructions for lowering if non-NULL. The data passed will be
     * filter_data.
     */
-   nir_instr_filter_cb filter;
+   nir_intrin_filter_cb filter;
 
    /* Extra data passed to the filter. */
    const void *filter_data;
@@ -6332,14 +6332,14 @@ typedef struct nir_opt_offsets_options {
     */
    uint32_t (*max_offset_cb)(nir_intrinsic_instr *intr, const void *data);
 
-   /** Data to pass to max_offset_cb. */
-   const void *max_offset_data;
+   /** Data to pass to callbacks. */
+   const void *cb_data;
 
    /**
     * Allow the offset calculation to wrap. If false, constant additions that
     * might wrap will not be folded into the offset.
     */
-   bool allow_offset_wrap;
+   bool (*allow_offset_wrap_cb)(nir_intrinsic_instr *intr, const void *data);
 } nir_opt_offsets_options;
 
 bool nir_opt_offsets(nir_shader *shader, const nir_opt_offsets_options *options);

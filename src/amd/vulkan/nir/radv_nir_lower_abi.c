@@ -34,14 +34,13 @@ load_ring(nir_builder *b, unsigned ring, lower_abi_state *s)
 
    nir_def *ring_offsets = ac_nir_load_arg(b, &s->args->ac, arg);
    ring_offsets = nir_pack_64_2x32_split(b, nir_channel(b, ring_offsets, 0), nir_channel(b, ring_offsets, 1));
-   return nir_load_smem_amd(b, 4, ring_offsets, nir_imm_int(b, ring * 16u), .align_mul = 4u,
-                            .access = ACCESS_CAN_SPECULATE);
+   return ac_nir_load_smem(b, 4, ring_offsets, nir_imm_int(b, ring * 16u), 4, ACCESS_CAN_SPECULATE);
 }
 
 static nir_def *
 nggc_bool_setting(nir_builder *b, unsigned mask, lower_abi_state *s)
 {
-   nir_def *settings = ac_nir_load_arg(b, &s->args->ac, s->args->ngg_culling_settings);
+   nir_def *settings = ac_nir_load_arg(b, &s->args->ac, s->args->nggc_settings);
    return nir_test_mask(b, settings, mask);
 }
 
@@ -174,7 +173,7 @@ lower_abi_instr(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
       nir_def *mask =
          nir_bcsel(b, small_workgroup, nir_imm_int(b, radv_nggc_none),
                    nir_imm_int(b, radv_nggc_front_face | radv_nggc_back_face | radv_nggc_small_primitives));
-      nir_def *settings = ac_nir_load_arg(b, &s->args->ac, s->args->ngg_culling_settings);
+      nir_def *settings = ac_nir_load_arg(b, &s->args->ac, s->args->nggc_settings);
       replacement = nir_ine_imm(b, nir_iand(b, settings, mask), 0);
       break;
    }
@@ -196,7 +195,7 @@ lower_abi_instr(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
        * exponent = nggc_settings >> 24
        * precision = 1.0 * 2 ^ exponent
        */
-      nir_def *settings = ac_nir_load_arg(b, &s->args->ac, s->args->ngg_culling_settings);
+      nir_def *settings = ac_nir_load_arg(b, &s->args->ac, s->args->nggc_settings);
       nir_def *exponent = nir_ishr_imm(b, settings, 24u);
       replacement = nir_ldexp(b, nir_imm_float(b, 1.0f), exponent);
       break;
@@ -204,10 +203,10 @@ lower_abi_instr(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
 
    case nir_intrinsic_load_cull_triangle_viewport_xy_scale_and_offset_amd: {
       nir_def *comps[] = {
-         ac_nir_load_arg(b, &s->args->ac, s->args->ngg_viewport_scale[0]),
-         ac_nir_load_arg(b, &s->args->ac, s->args->ngg_viewport_scale[1]),
-         ac_nir_load_arg(b, &s->args->ac, s->args->ngg_viewport_translate[0]),
-         ac_nir_load_arg(b, &s->args->ac, s->args->ngg_viewport_translate[1]),
+         ac_nir_load_arg(b, &s->args->ac, s->args->nggc_viewport_scale[0]),
+         ac_nir_load_arg(b, &s->args->ac, s->args->nggc_viewport_scale[1]),
+         ac_nir_load_arg(b, &s->args->ac, s->args->nggc_viewport_translate[0]),
+         ac_nir_load_arg(b, &s->args->ac, s->args->nggc_viewport_translate[1]),
       };
       replacement = nir_vec(b, comps, 4);
       break;
@@ -367,8 +366,8 @@ lower_abi_instr(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
    case nir_intrinsic_load_streamout_buffer_amd: {
       nir_def *ptr = nir_pack_64_2x32_split(b, ac_nir_load_arg(b, &s->args->ac, s->args->streamout_buffers),
                                             nir_imm_int(b, s->address32_hi));
-      replacement = nir_load_smem_amd(b, 4, ptr, nir_imm_int(b, nir_intrinsic_base(intrin) * 16),
-                                      .access = ACCESS_CAN_SPECULATE);
+      replacement =
+         ac_nir_load_smem(b, 4, ptr, nir_imm_int(b, nir_intrinsic_base(intrin) * 16), 16, ACCESS_CAN_SPECULATE);
       break;
    }
    case nir_intrinsic_load_xfb_state_address_gfx12_amd:

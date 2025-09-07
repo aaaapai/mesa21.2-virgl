@@ -27,6 +27,7 @@
 #include "anv_private.h"
 #include "anv_measure.h"
 #include "vk_render_pass.h"
+#include "vk_synchronization.h"
 #include "vk_util.h"
 
 #include "util/format_srgb.h"
@@ -2120,7 +2121,7 @@ emit_direct_descriptor_binding_table_entry(struct anv_cmd_buffer *cmd_buffer,
 static VkResult
 emit_binding_table(struct anv_cmd_buffer *cmd_buffer,
                    struct anv_cmd_pipeline_state *pipe_state,
-                   const struct anv_shader_bin *shader,
+                   const struct anv_shader *shader,
                    struct anv_state *bt_state)
 {
    uint32_t state_offset;
@@ -2152,7 +2153,7 @@ emit_binding_table(struct anv_cmd_buffer *cmd_buffer,
 
       case ANV_DESCRIPTOR_SET_COLOR_ATTACHMENTS:
          /* Color attachment binding */
-         assert(shader->stage == MESA_SHADER_FRAGMENT);
+         assert(shader->vk.stage == MESA_SHADER_FRAGMENT);
          uint32_t index = binding->index < MAX_RTS ?
             cmd_buffer->state.gfx.color_output_mapping[binding->index] :
             binding->index;
@@ -2267,7 +2268,7 @@ emit_binding_table(struct anv_cmd_buffer *cmd_buffer,
 static VkResult
 emit_samplers(struct anv_cmd_buffer *cmd_buffer,
               struct anv_cmd_pipeline_state *pipe_state,
-              const struct anv_shader_bin *shader,
+              const struct anv_shader *shader,
               struct anv_state *state)
 {
    const struct anv_pipeline_bind_map *map = &shader->bind_map;
@@ -2311,7 +2312,7 @@ uint32_t
 genX(cmd_buffer_flush_descriptor_sets)(struct anv_cmd_buffer *cmd_buffer,
                                        struct anv_cmd_pipeline_state *pipe_state,
                                        const VkShaderStageFlags dirty,
-                                       const struct anv_shader_bin **shaders,
+                                       const struct anv_shader **shaders,
                                        uint32_t num_shaders)
 {
    VkShaderStageFlags flushed = 0;
@@ -2321,7 +2322,7 @@ genX(cmd_buffer_flush_descriptor_sets)(struct anv_cmd_buffer *cmd_buffer,
       if (!shaders[i])
          continue;
 
-      mesa_shader_stage stage = shaders[i]->stage;
+      mesa_shader_stage stage = shaders[i]->vk.stage;
       VkShaderStageFlags vk_stage = mesa_to_vk_shader_stage(stage);
       if ((vk_stage & dirty) == 0)
          continue;
@@ -2360,7 +2361,7 @@ genX(cmd_buffer_flush_descriptor_sets)(struct anv_cmd_buffer *cmd_buffer,
          if (!shaders[i])
             continue;
 
-         mesa_shader_stage stage = shaders[i]->stage;
+         mesa_shader_stage stage = shaders[i]->vk.stage;
 
          result = emit_samplers(cmd_buffer, pipe_state, shaders[i],
                                 &cmd_buffer->state.samplers[stage]);
@@ -4563,6 +4564,9 @@ cmd_buffer_accumulate_barrier_bits(struct anv_cmd_buffer *cmd_buffer,
       }
    }
 
+   src_stages = vk_expand_src_stage_flags2(src_stages);
+   dst_stages = vk_expand_dst_stage_flags2(dst_stages);
+
    enum anv_pipe_bits bits =
       anv_pipe_flush_bits_for_access_flags(cmd_buffer, src_flags, src_flags3) |
       anv_pipe_invalidate_bits_for_access_flags(cmd_buffer, dst_flags, dst_flags3);
@@ -4571,9 +4575,7 @@ cmd_buffer_accumulate_barrier_bits(struct anv_cmd_buffer *cmd_buffer,
    VkPipelineStageFlags2 pb_stall_stages =
       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
-      VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT |
-      VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT |
-      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+      VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
    if (anv_cmd_buffer_is_render_queue(cmd_buffer)) {
       /* On a render queue, the following stages can also use a pixel shader.
        */
@@ -4584,12 +4586,18 @@ cmd_buffer_accumulate_barrier_bits(struct anv_cmd_buffer *cmd_buffer,
          VK_PIPELINE_STAGE_2_CLEAR_BIT;
    }
    VkPipelineStageFlags2 cs_stall_stages =
+      VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT |
+      VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT |
+      VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT |
+      VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+      VK_PIPELINE_STAGE_2_TESSELLATION_CONTROL_SHADER_BIT |
+      VK_PIPELINE_STAGE_2_TESSELLATION_EVALUATION_SHADER_BIT |
+      VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT |
       VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT |
       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
       VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
       VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR |
-      VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR |
-      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+      VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
    if (anv_cmd_buffer_is_compute_queue(cmd_buffer)) {
       /* On a compute queue, the following stages can also use a compute
        * shader.
@@ -4610,13 +4618,18 @@ cmd_buffer_accumulate_barrier_bits(struct anv_cmd_buffer *cmd_buffer,
    /* Prior to Gfx20, we can restrict pb-stall/cs-stall to some pipeline
     * modes. Gfx20 doesn't do pipeline switches so we have to assume the worse
     * case.
+    *
+    * To use a PB-stall we need both destination stages to be contained to the
+    * fragment shader stages. That way the HW can hold the fragment shader
+    * dispatch until the synchronization operation happened.
     */
    const bool needs_pb_stall =
       anv_cmd_buffer_is_render_queue(cmd_buffer) &&
 #if GFX_VER < 20
       cmd_buffer->state.current_pipeline == _3D &&
 #endif
-      (src_stages & pb_stall_stages);
+      (dst_stages & ~pb_stall_stages) == 0 &&
+      (dst_stages & pb_stall_stages);
    if (needs_pb_stall) {
       bits |= GFX_VERx10 >= 125 ?
               ANV_PIPE_PSS_STALL_SYNC_BIT :
@@ -4624,10 +4637,7 @@ cmd_buffer_accumulate_barrier_bits(struct anv_cmd_buffer *cmd_buffer,
    }
    const bool needs_cs_stall =
       anv_cmd_buffer_is_render_or_compute_queue(cmd_buffer) &&
-#if GFX_VER < 20
-      cmd_buffer->state.current_pipeline == GPGPU &&
-#endif
-      (src_stages & cs_stall_stages);
+      (dst_stages & cs_stall_stages);
    if (needs_cs_stall)
       bits |= ANV_PIPE_CS_STALL_BIT;
 

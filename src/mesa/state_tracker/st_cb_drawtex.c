@@ -135,7 +135,8 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
    st_flush_bitmap_cache(st);
    st_invalidate_readpix_cache(st);
 
-   st_validate_state(st, ST_PIPELINE_META_STATE_MASK);
+   ST_PIPELINE_META_STATE_MASK(mask);
+   st_validate_state(st, mask);
 
    /* determine if we need vertex color */
    if (ctx->FragmentProgram._Current->info.inputs_read & VARYING_BIT_COL0)
@@ -250,6 +251,8 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
                         CSO_BIT_TESSCTRL_SHADER |
                         CSO_BIT_TESSEVAL_SHADER |
                         CSO_BIT_GEOMETRY_SHADER |
+                        CSO_BIT_TASK_SHADER |
+                        CSO_BIT_MESH_SHADER |
                         CSO_BIT_VERTEX_ELEMENTS));
 
    {
@@ -259,6 +262,8 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
    cso_set_tessctrl_shader_handle(cso, NULL);
    cso_set_tesseval_shader_handle(cso, NULL);
    cso_set_geometry_shader_handle(cso, NULL);
+   cso_set_task_shader_handle(cso, NULL);
+   cso_set_mesh_shader_handle(cso, NULL);
 
    for (i = 0; i < numAttribs; i++) {
       velems.velems[i].src_offset = i * 4 * sizeof(float);
@@ -302,7 +307,7 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
    /* restore state */
    cso_restore_state(cso, 0);
    ctx->Array.NewVertexElements = true;
-   ctx->NewDriverState |= ST_NEW_VERTEX_ARRAYS;
+   ST_SET_STATE(ctx->NewDriverState, ST_NEW_VERTEX_ARRAYS);
 }
 
 /**

@@ -502,9 +502,8 @@ lower_boolean_shuffle(nir_builder *b, nir_intrinsic_instr *intrin,
    case nir_intrinsic_rotate: {
       nir_def *delta = nir_as_uniform(b, intrin->src[1].ssa);
       uint32_t cluster_size = nir_intrinsic_cluster_size(intrin);
-      unsigned subgroup_size = get_max_subgroup_size(options);
-      cluster_size = cluster_size ? cluster_size : subgroup_size;
-      cluster_size = MIN2(cluster_size, subgroup_size);
+      cluster_size = cluster_size ? cluster_size : options->subgroup_size;
+      cluster_size = MIN2(cluster_size, options->subgroup_size);
       if (cluster_size == 1) {
          return intrin->src[0].ssa;
       } else if (cluster_size == 2) {
@@ -545,7 +544,7 @@ lower_boolean_shuffle(nir_builder *b, nir_intrinsic_instr *intrin,
       nir_def *mask = nir_ishl(b, nir_imm_intN_t(b, 1, ballot->bit_size), index);
       return nir_ine_imm(b, nir_iand(b, ballot, mask), 0);
    } else {
-      return nir_inverse_ballot(b, 1, ballot);
+      return nir_inverse_ballot(b, ballot);
    }
 }
 
@@ -689,7 +688,7 @@ lower_boolean_reduce(nir_builder *b, nir_intrinsic_instr *intrin,
       val = nir_inot(b, val);
    }
 
-   return nir_inverse_ballot(b, 1, val);
+   return nir_inverse_ballot(b, val);
 }
 
 static nir_def *
@@ -764,7 +763,7 @@ build_scan_reduce(nir_builder *b, nir_intrinsic_op op, nir_op red_op,
        * take into account in the accumulator.
        */
       nir_def *has_buddy = nir_bany_inequal(b, remaining, nir_imm_int(b, 0));
-      nir_def *buddy = nir_ballot_find_msb(b, 32, remaining);
+      nir_def *buddy = nir_ballot_find_msb(b, remaining);
 
       /* Accumulate with our buddy channel, if any */
       nir_def *buddy_data = nir_shuffle(b, data, buddy);
@@ -789,7 +788,7 @@ build_scan_reduce(nir_builder *b, nir_intrinsic_op op, nir_op red_op,
        */
       nir_def *lower = nir_iand(b, mask, lt_mask);
       nir_def *has_buddy = nir_bany_inequal(b, lower, nir_imm_int(b, 0));
-      nir_def *buddy = nir_ballot_find_msb(b, 32, lower);
+      nir_def *buddy = nir_ballot_find_msb(b, lower);
 
       nir_def *buddy_data = nir_shuffle(b, data, buddy);
       nir_def *identity = build_identity(b, data->bit_size, red_op);
@@ -801,7 +800,7 @@ build_scan_reduce(nir_builder *b, nir_intrinsic_op op, nir_op red_op,
 
    case nir_intrinsic_reduce: {
       /* For reductions, we need to take the top value of the scan */
-      nir_def *idx = nir_ballot_find_msb(b, 32, mask);
+      nir_def *idx = nir_ballot_find_msb(b, mask);
       return nir_shuffle(b, data, idx);
    }
 
@@ -890,13 +889,16 @@ lower_scan_reduce(nir_builder *b, nir_intrinsic_instr *intrin,
 static bool
 lower_subgroups_filter(const nir_instr *instr, const void *_options)
 {
+   if (instr->type != nir_instr_type_intrinsic)
+      return false;
+
    const nir_lower_subgroups_options *options = _options;
 
    if (options->filter) {
-      return options->filter(instr, options->filter_data);
+      return options->filter(nir_instr_as_intrinsic(instr), options->filter_data);
    }
 
-   return instr->type == nir_instr_type_intrinsic;
+   return true;
 }
 
 static nir_def *
@@ -995,7 +997,7 @@ static nir_def *
 lower_first_invocation_to_ballot(nir_builder *b, nir_intrinsic_instr *intrin,
                                  const nir_lower_subgroups_options *options)
 {
-   return nir_ballot_find_lsb(b, 32, nir_ballot(b, 4, 32, nir_imm_true(b)));
+   return nir_ballot_find_lsb(b, nir_ballot(b, 4, 32, nir_imm_true(b)));
 }
 
 static nir_def *
@@ -1134,11 +1136,11 @@ lower_subgroups_instr(nir_builder *b, nir_instr *instr, void *_options)
 
    case nir_intrinsic_inverse_ballot:
       if (options->lower_inverse_ballot) {
-         return nir_ballot_bitfield_extract(b, 1, intrin->src[0].ssa,
+         return nir_ballot_bitfield_extract(b, intrin->src[0].ssa,
                                             nir_load_subgroup_invocation(b));
       } else if (intrin->src[0].ssa->num_components != options->ballot_components ||
                  intrin->src[0].ssa->bit_size != options->ballot_bit_size) {
-         return nir_inverse_ballot(b, 1, ballot_type_to_uint(b, intrin->src[0].ssa, options));
+         return nir_inverse_ballot(b, ballot_type_to_uint(b, intrin->src[0].ssa, options));
       }
       break;
 
@@ -1201,9 +1203,9 @@ lower_subgroups_instr(nir_builder *b, nir_instr *instr, void *_options)
 
    case nir_intrinsic_ballot_bit_count_exclusive:
    case nir_intrinsic_ballot_bit_count_inclusive: {
-      nir_def *int_val = ballot_type_to_uint(b, intrin->src[0].ssa,
-                                             options);
+      nir_def *ballot = intrin->src[0].ssa;
       if (options->lower_ballot_bit_count_to_mbcnt_amd) {
+         nir_def *int_val = ballot_type_to_uint(b, ballot, options);
          nir_def *acc;
          if (intrin->intrinsic == nir_intrinsic_ballot_bit_count_exclusive) {
             acc = nir_imm_int(b, 0);
@@ -1216,12 +1218,14 @@ lower_subgroups_instr(nir_builder *b, nir_instr *instr, void *_options)
 
       nir_def *mask;
       if (intrin->intrinsic == nir_intrinsic_ballot_bit_count_inclusive) {
-         mask = nir_inot(b, build_subgroup_gt_mask(b, options));
+         mask = nir_load_subgroup_le_mask(b, 4, 32);
       } else {
-         mask = nir_inot(b, build_subgroup_ge_mask(b, options));
+         mask = nir_load_subgroup_lt_mask(b, 4, 32);
       }
 
-      return vec_bit_count(b, nir_iand(b, int_val, mask));
+      ballot = nir_iand(b, ballot, mask);
+
+      return nir_ballot_bit_count_reduce(b, ballot);
    }
 
    case nir_intrinsic_elect: {

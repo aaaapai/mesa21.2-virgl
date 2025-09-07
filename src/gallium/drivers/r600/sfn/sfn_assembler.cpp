@@ -70,6 +70,7 @@ public:
    void emit_loop_end();
    void emit_loop_break();
    void emit_loop_cont();
+   void emit_alu_push_before();
 
    void emit_alu_op(const AluInstr& ai);
    void emit_lds_op(const AluInstr& lds);
@@ -103,6 +104,7 @@ public:
    bool m_last_op_was_barrier{false};
    bool m_result{true};
    bool m_legacy_math_rules{false};
+   bool m_require_alu_extended{false};
 };
 
 bool
@@ -359,15 +361,14 @@ AssamblerVisitor::emit_alu_op(const AluInstr& ai)
    if (dst)
       sfn_log << SfnLog::assembly << "  Current dst register is " << *dst << "\n";
 
+   /*
    auto cf_op = ai.cf_type();
 
    unsigned type = 0;
    switch (cf_op) {
    case cf_alu:
-      type = CF_OP_ALU;
-      break;
    case cf_alu_push_before:
-      type = CF_OP_ALU_PUSH_BEFORE;
+      type = CF_OP_ALU;
       break;
    case cf_alu_pop_after:
       type = CF_OP_ALU_POP_AFTER;
@@ -390,11 +391,11 @@ AssamblerVisitor::emit_alu_op(const AluInstr& ai)
    default:
       assert(0 && "cf_alu_undefined should have been replaced");
    }
-
+*/
    if (alu.last)
       m_nliterals_in_group.clear();
 
-   m_result = !r600_bytecode_add_alu_type(m_bc, &alu, type);
+   m_result = !r600_bytecode_add_alu(m_bc, &alu);
 
    if (unlikely(ai.opcode() == op1_mova_int)) {
       if (m_bc->gfx_level < CAYMAN || alu.dst.sel == 0) {
@@ -849,7 +850,9 @@ AssamblerVisitor::visit(const Block& block)
    if (block.empty())
       return;
 
-   if (block.has_instr_flag(Instr::force_cf)) {
+   if (block.cf_start())
+      block.cf_start()->accept(*this);
+   else if (block.has_instr_flag(Instr::force_cf)) {
       m_bc->force_add_cf = 1;
       m_bc->ar_loaded = 0;
       m_last_addr = nullptr;
@@ -857,6 +860,7 @@ AssamblerVisitor::visit(const Block& block)
    sfn_log << SfnLog::assembly << "Translate block  size: " << block.size()
            << " new_cf:" << m_bc->force_add_cf << "\n";
 
+   m_require_alu_extended = block.kcache_needs_extended();
    for (const auto& i : block) {
       sfn_log << SfnLog::assembly << "Translate " << *i << " ";
       i->accept(*this);
@@ -865,51 +869,17 @@ AssamblerVisitor::visit(const Block& block)
       if (!m_result)
          break;
    }
+   m_require_alu_extended = false;
 }
 
 void
 AssamblerVisitor::visit(const IfInstr& instr)
 {
-   int elems = m_callstack.push(FC_PUSH_VPM);
-   bool needs_workaround = false;
-
-   if (m_bc->gfx_level == CAYMAN && m_bc->stack.loop > 1)
-      needs_workaround = true;
-
-   if (m_bc->gfx_level == EVERGREEN && m_bc->family != CHIP_HEMLOCK &&
-       m_bc->family != CHIP_CYPRESS && m_bc->family != CHIP_JUNIPER) {
-      unsigned dmod1 = (elems - 1) % m_bc->stack.entry_size;
-      unsigned dmod2 = (elems) % m_bc->stack.entry_size;
-
-      if (elems && (!dmod1 || !dmod2))
-         needs_workaround = true;
-   }
 
    auto pred = instr.predicate();
    auto [addr, dummy0, dummy1] = pred->indirect_addr();
-   {
-   }
    assert(!dummy1);
-   if (addr) {
-      if (!m_last_addr || !m_bc->ar_loaded || !m_last_addr->equal_to(*addr)) {
-         m_bc->ar_reg = addr->sel();
-         m_bc->ar_chan = addr->chan();
-         m_last_addr = addr;
-         m_bc->ar_loaded = 0;
-
-         r600_load_ar(m_bc, true);
-      }
-   }
-
-   if (needs_workaround) {
-      r600_bytecode_add_cfinst(m_bc, CF_OP_PUSH);
-      m_bc->cf_last->cf_addr = m_bc->cf_last->id + 2;
-      r600_bytecode_add_cfinst(m_bc, CF_OP_ALU);
-      pred->set_cf_type(cf_alu);
-   }
-
-   clear_states(sf_tex | sf_vtx);
-   pred->accept(*this);
+   assert(!addr);
 
    r600_bytecode_add_cfinst(m_bc, CF_OP_JUMP);
    clear_states(sf_all);
@@ -920,6 +890,8 @@ AssamblerVisitor::visit(const IfInstr& instr)
 void
 AssamblerVisitor::visit(const ControlFlowInstr& instr)
 {
+   sfn_log << SfnLog::assembly << "Translate " << instr << " ";
+
    clear_states(sf_all);
    switch (instr.cf_type()) {
    case ControlFlowInstr::cf_else:
@@ -954,6 +926,21 @@ AssamblerVisitor::visit(const ControlFlowInstr& instr)
          m_result = false;
       }
    } break;
+   case ControlFlowInstr::cf_alu:
+      r600_bytecode_add_cfinst(m_bc, CF_OP_ALU);
+      break;
+   case ControlFlowInstr::cf_alu_push_before:
+      emit_alu_push_before();
+      break;
+   case ControlFlowInstr::cf_gds:
+      r600_bytecode_add_cfinst(m_bc, CF_OP_GDS);
+      break;
+   case ControlFlowInstr::cf_tex:
+      r600_bytecode_add_cfinst(m_bc, CF_OP_TEX);
+      break;
+   case ControlFlowInstr::cf_vtx:
+      r600_bytecode_add_cfinst(m_bc, CF_OP_VTX);
+      break;
    default:
       UNREACHABLE("Unknown CF instruction type");
    }
@@ -1092,6 +1079,36 @@ AssamblerVisitor::emit_else()
    r600_bytecode_add_cfinst(m_bc, CF_OP_ELSE);
    m_bc->cf_last->pop_count = 1;
    m_result &= m_jump_tracker.add_mid(m_bc->cf_last, jt_if);
+}
+
+void
+AssamblerVisitor::emit_alu_push_before()
+{
+   int elems = m_callstack.push(FC_PUSH_VPM);
+   bool needs_workaround = false;
+
+   if (m_bc->gfx_level == CAYMAN && m_bc->stack.loop > 1)
+      needs_workaround = true;
+
+   if (m_bc->gfx_level == EVERGREEN && m_bc->family != CHIP_HEMLOCK &&
+       m_bc->family != CHIP_CYPRESS && m_bc->family != CHIP_JUNIPER) {
+      unsigned dmod1 = (elems - 1) % m_bc->stack.entry_size;
+      unsigned dmod2 = (elems) % m_bc->stack.entry_size;
+
+      if (elems && (!dmod1 || !dmod2))
+         needs_workaround = true;
+   }
+
+   if (needs_workaround || m_require_alu_extended) {
+      r600_bytecode_add_cfinst(m_bc, CF_OP_PUSH);
+      m_bc->cf_last->cf_addr = m_bc->cf_last->id + 2;
+      r600_bytecode_add_cfinst(m_bc, CF_OP_ALU);
+      m_bc->cf_last->eg_alu_extended = m_require_alu_extended;
+   } else {
+      r600_bytecode_add_cfinst(m_bc, CF_OP_ALU_PUSH_BEFORE);
+   }
+
+   clear_states(sf_tex | sf_vtx);
 }
 
 void

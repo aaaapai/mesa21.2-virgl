@@ -11,3 +11,11 @@ GL_ATI_meminfo and GL_NVX_gpu_memory_info on r300
 VK_KHR_shader_untyped_pointers on anv and RADV
 VK_KHR_maintenance8 on NVK
 VK_KHR_maintenance9 on NVK
+cl_khr_semaphore on radeonsi and zink
+cl_khr_external_semaphore on radeonsi and zink
+cl_khr_external_semaphore_sync_fd on radeonsi and zink
+GL_NV_shader_atomic_int64 on radeonsi and Panfrost V9+
+VK_KHR_maintenance7 on panvk/v10+
+VK_KHR_maintenance8 on panvk/v10+
+VK_KHR_maintenance9 on panvk
+VK_AMD_buffer_marker on NVK

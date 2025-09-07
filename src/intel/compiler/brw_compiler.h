@@ -219,6 +219,12 @@ enum brw_robustness_flags {
 struct brw_base_prog_key {
    unsigned program_string_id;
 
+   /** Multiview mask
+    *
+    * Used to compute the number of position slots in the VUE
+    */
+   uint32_t view_mask;
+
    enum brw_robustness_flags robust_flags:2;
 
    bool uses_inline_push_addr:1;
@@ -232,7 +238,7 @@ struct brw_base_prog_key {
     */
    bool limit_trig_input_range:1;
 
-   unsigned padding:26;
+   uint64_t padding:58;
 };
 
 /**
@@ -294,7 +300,7 @@ struct brw_vs_prog_key {
     */
    bool no_vf_slot_compaction : 1;
 
-   uint32_t padding : 30;
+   uint64_t padding : 62;
 };
 
 /** The program key for Tessellation Control Shaders. */
@@ -313,7 +319,10 @@ struct brw_tcs_prog_key
    /** A bitfield of per-patch outputs written. */
    uint32_t patch_outputs_written;
 
-   uint32_t padding;
+   /** Tesselation VUE layout */
+   bool separate_tess_vue_layout:1;
+
+   uint32_t padding:31;
 };
 
 #define BRW_MAX_TCS_INPUT_VERTICES (32)
@@ -336,7 +345,10 @@ struct brw_tes_prog_key
    /** A bitfield of per-patch inputs read. */
    uint32_t patch_inputs_read;
 
-   uint32_t padding;
+   /** Tesselation VUE layout */
+   bool separate_tess_vue_layout:1;
+
+   uint32_t padding:31;
 };
 
 /** The program key for Geometry Shaders. */
@@ -421,7 +433,7 @@ struct brw_cs_prog_key {
     */
    bool lower_unaligned_dispatch:1;
 
-   uint32_t padding:31;
+   uint64_t padding:63;
 };
 
 struct brw_bs_prog_key {
@@ -432,6 +444,8 @@ struct brw_bs_prog_key {
     * shader.
     */
    uint32_t pipeline_ray_flags;
+
+   uint32_t padding;
 };
 
 /* brw_any_prog_key is any of the keys that map to an API stage */
@@ -1139,7 +1153,8 @@ void brw_compute_vue_map(const struct intel_device_info *devinfo,
 
 void brw_compute_tess_vue_map(struct intel_vue_map *const vue_map,
                               uint64_t slots_valid,
-                              uint32_t is_patch);
+                              uint32_t is_patch,
+                              bool separate_shader);
 
 struct brw_vue_prog_data {
    struct brw_stage_prog_data base;
@@ -1190,11 +1205,23 @@ struct brw_tcs_prog_data
    /** Should the non-SINGLE_PATCH payload provide primitive ID? */
    bool include_primitive_id;
 
+   /** Whether the tessellation domain is unknown at compile time
+    *
+    * Used with VK_EXT_shader_object
+    */
+   bool dynamic_domain;
+
    /** Number vertices in output patch */
    int instances;
 
    /** Track patch count threshold */
    int patch_count_threshold;
+
+   /**
+    * Push constant location of intel_tess_config (dynamic configuration of
+    * the tessellation shaders).
+    */
+   unsigned tess_config_param;
 };
 
 
@@ -1206,6 +1233,12 @@ struct brw_tes_prog_data
    enum intel_tess_output_topology output_topology;
    enum intel_tess_domain domain;
    bool include_primitive_id;
+
+   /**
+    * Push constant location of intel_tess_config (dynamic configuration of
+    * the tessellation shaders).
+    */
+   unsigned tess_config_param;
 };
 
 struct brw_gs_prog_data

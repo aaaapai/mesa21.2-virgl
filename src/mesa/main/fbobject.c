@@ -1967,7 +1967,7 @@ framebuffer_parameteri(struct gl_context *ctx, struct gl_framebuffer *fb,
    case GL_FRAMEBUFFER_PROGRAMMABLE_SAMPLE_LOCATIONS_ARB:
    case GL_FRAMEBUFFER_SAMPLE_LOCATION_PIXEL_GRID_ARB:
       if (fb == ctx->DrawBuffer)
-         ctx->NewDriverState |= ST_NEW_SAMPLE_STATE;
+         ST_SET_STATE(ctx->NewDriverState, ST_NEW_SAMPLE_STATE);
       break;
    default:
       invalidate_framebuffer(fb);
@@ -3338,6 +3338,12 @@ bind_framebuffer(GLenum target, GLuint framebuffer)
    GLboolean bindReadBuf, bindDrawBuf;
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx,
+                  "glBindFramebuffer(%s, %u)\n",
+                  _mesa_enum_to_string(target),
+                  framebuffer);
+
    switch (target) {
    case GL_DRAW_FRAMEBUFFER_EXT:
       bindDrawBuf = GL_TRUE;
@@ -3434,7 +3440,7 @@ _mesa_bind_framebuffers(struct gl_context *ctx,
 
    if (bindDrawBuf) {
       FLUSH_VERTICES(ctx, _NEW_BUFFERS, 0);
-      ctx->NewDriverState |= ST_NEW_SAMPLE_STATE;
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_SAMPLE_STATE);
 
       /* check if old framebuffer had any texture attachments */
       if (oldDrawFb)
@@ -5780,6 +5786,14 @@ _mesa_InvalidateFramebuffer(GLenum target, GLsizei numAttachments,
    struct gl_framebuffer *fb;
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API) {
+      for (unsigned i = 0; i < numAttachments; i++)
+         _mesa_debug(ctx,
+                     "glInvalidateFramebuffer(%s, %s)\n",
+                     _mesa_enum_to_string(target),
+                     _mesa_enum_to_string(attachments[i]));
+   }
+
    fb = get_framebuffer_target(ctx, target);
    if (!fb) {
       _mesa_error(ctx, GL_INVALID_ENUM,
@@ -5971,7 +5985,7 @@ sample_locations(struct gl_context *ctx, struct gl_framebuffer *fb,
    }
 
    if (fb == ctx->DrawBuffer)
-      ctx->NewDriverState |= ST_NEW_SAMPLE_STATE;
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_SAMPLE_STATE);
 }
 
 void GLAPIENTRY
@@ -6046,7 +6060,8 @@ _mesa_EvaluateDepthValuesARB(void)
       return;
    }
 
-   st_validate_state(st_context(ctx), ST_PIPELINE_UPDATE_FB_STATE_MASK);
+   ST_PIPELINE_UPDATE_FB_STATE_MASK(mask);
+   st_validate_state(st_context(ctx), mask);
 
    ctx->pipe->evaluate_depth_buffer(ctx->pipe);
 }

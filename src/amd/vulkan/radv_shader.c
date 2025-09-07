@@ -51,10 +51,8 @@
 static void
 get_nir_options_for_stage(struct radv_physical_device *pdev, mesa_shader_stage stage)
 {
-   const struct radv_instance *instance = radv_physical_device_instance(pdev);
    nir_shader_compiler_options *options = &pdev->nir_options[stage];
-   bool split_fma =
-      (stage <= MESA_SHADER_GEOMETRY || stage == MESA_SHADER_MESH) && instance->debug_flags & RADV_DEBUG_SPLIT_FMA;
+   const bool split_fma = (stage <= MESA_SHADER_GEOMETRY || stage == MESA_SHADER_MESH) && pdev->cache_key.split_fma;
 
    ac_nir_set_options(&pdev->info, pdev->use_llvm, options);
 
@@ -609,7 +607,7 @@ radv_shader_spirv_to_nir(struct radv_device *device, const struct radv_shader_st
             });
 
    NIR_PASS(_, nir, nir_lower_load_const_to_scalar);
-   NIR_PASS(_, nir, nir_opt_shrink_stores, !instance->drirc.disable_shrink_image_store);
+   NIR_PASS(_, nir, nir_opt_shrink_stores, !instance->drirc.debug.disable_shrink_image_store);
    if (nir->info.stage == MESA_SHADER_FRAGMENT && nir->info.fs.uses_discard)
       NIR_PASS(_, nir, nir_lower_discard_if, nir_move_terminate_out_of_loops);
 

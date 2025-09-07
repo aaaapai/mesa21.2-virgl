@@ -362,6 +362,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_core_count_arm:
    case nir_intrinsic_load_core_max_id_arm:
    case nir_intrinsic_load_warp_max_id_arm:
+   case nir_intrinsic_load_tess_config_intel:
       is_divergent = false;
       break;
 
@@ -651,6 +652,12 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
       is_divergent = src_divergent(instr->src[0], state);
       break;
 
+   case nir_intrinsic_load_global_amd:
+      is_divergent = (src_divergent(instr->src[0], state) ||
+                      src_divergent(instr->src[1], state)) &&
+                     !(nir_intrinsic_access(instr) & ACCESS_SMEM_AMD);
+      break;
+
    /* Intrinsics with divergence depending on sources */
    case nir_intrinsic_convert_alu_types:
    case nir_intrinsic_ddx:
@@ -678,7 +685,6 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_quad_vote_all:
    case nir_intrinsic_load_shared2_amd:
    case nir_intrinsic_load_global_constant:
-   case nir_intrinsic_load_global_amd:
    case nir_intrinsic_load_uniform:
    case nir_intrinsic_load_constant:
    case nir_intrinsic_load_sample_pos_from_id:

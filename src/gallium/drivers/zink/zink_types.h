@@ -637,8 +637,6 @@ struct zink_batch_state {
     * batch_find_resource uses this hint to speed up buffers look up.
     */
    int16_t buffer_indices_hashlist[BUFFER_HASHLIST_SIZE];
-   uint16_t hashlist_min;
-   uint16_t hashlist_max;
    struct zink_batch_obj_list real_objs;
    struct zink_batch_obj_list slab_objs;
    struct zink_batch_obj_list sparse_objs;
@@ -647,7 +645,6 @@ struct zink_batch_state {
    struct util_dynarray swapchain_obj; //this doesn't have a zink_bo and must be handled differently
    struct util_dynarray swapchain_obj_unsync; //this doesn't have a zink_bo and must be handled differently
 
-   struct util_dynarray unref_resources;
    struct util_dynarray bindless_releases[2];
 
    struct util_dynarray zombie_samplers;
@@ -1014,6 +1011,7 @@ struct zink_program {
    bool is_compute;
    bool can_precompile;
    bool uses_shobj; //whether shader objects are used; programs CANNOT mix shader objects and shader modules
+   bool precompile_done;
 
    struct zink_program_descriptor_data dd;
 
@@ -1369,6 +1367,10 @@ struct zink_screen {
    struct zink_batch_state *free_batch_states; //unused batch states
    struct zink_batch_state *last_free_batch_state; //for appending
    simple_mtx_t free_batch_states_lock;
+
+   struct zink_batch_state *active_batch_states; //active batch states
+   struct zink_batch_state *last_active_batch_state; //for appending
+   simple_mtx_t active_batch_states_lock;
 
    simple_mtx_t semaphores_lock;
    struct util_dynarray semaphores;

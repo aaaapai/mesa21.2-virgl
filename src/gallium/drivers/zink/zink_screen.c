@@ -689,7 +689,7 @@ zink_init_screen_caps(struct zink_screen *screen)
 
    caps->null_textures = screen->info.rb_image_feats.robustImageAccess;
    /* support OVR_multiview and OVR_multiview2 */
-   caps->multiview = screen->info.feats11.multiview;
+   caps->multiview = screen->info.feats11.multiview * 2;
    caps->texrect = false;
    caps->multi_draw_indirect_partial_stride = false;
    caps->anisotropic_filter = screen->info.feats.features.samplerAnisotropy;
@@ -1471,6 +1471,12 @@ zink_destroy_screen(struct pipe_screen *pscreen)
       screen->copy_context->base.destroy(&screen->copy_context->base);
 
    struct zink_batch_state *bs = screen->free_batch_states;
+   while (bs) {
+      struct zink_batch_state *bs_next = bs->next;
+      zink_batch_state_destroy(screen, bs);
+      bs = bs_next;
+   }
+   bs = screen->active_batch_states;
    while (bs) {
       struct zink_batch_state *bs_next = bs->next;
       zink_batch_state_destroy(screen, bs);
@@ -3608,14 +3614,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
          }
          can_db = false;
       }
-      if (!screen->resizable_bar) {
-         if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
-            if (!screen->driver_name_is_inferred)
-               mesa_loge("Cannot use db descriptor mode without resizable bar");
-            // goto fail;
-         }
-         can_db = false;
-      }
       if (!screen->info.have_EXT_non_seamless_cube_map) {
          if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
             if (!screen->driver_name_is_inferred)
@@ -3673,6 +3671,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    }
 
    simple_mtx_init(&screen->free_batch_states_lock, mtx_plain);
+   simple_mtx_init(&screen->active_batch_states_lock, mtx_plain);
    simple_mtx_init(&screen->dt_lock, mtx_plain);
 
    util_idalloc_mt_init_tc(&screen->buffer_ids);

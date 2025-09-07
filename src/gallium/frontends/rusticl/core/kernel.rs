@@ -23,6 +23,7 @@ use mesa_rust_util::serialize::*;
 use rusticl_opencl_gen::*;
 use spirv::SpirvKernelInfo;
 
+use std::borrow::Borrow;
 use std::cmp;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -38,6 +39,7 @@ use std::slice;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
+use std::sync::OnceLock;
 use std::sync::Weak;
 
 // According to the CL spec we are not allowed to let any cl_kernel object hold any references on
@@ -398,6 +400,23 @@ pub enum KernelDevStateVariant {
     Nir(NirShader),
 }
 
+impl KernelDevStateVariant {
+    fn calculate_compute_state_info(
+        &self,
+        device: &'static Device,
+    ) -> pipe_compute_state_object_info {
+        match self {
+            KernelDevStateVariant::Cso(cso) => cso.get_cso_info(),
+            KernelDevStateVariant::Nir(nir) => {
+                // SAFETY: We never execute the compute state; we simply extract
+                // information and discard the CSO.
+                let cso = unsafe { SharedCSOWrapper::new(device, nir) };
+                cso.get_cso_info()
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NirKernelVariant {
     /// Can be used under any circumstance.
@@ -420,8 +439,9 @@ impl Display for NirKernelVariant {
 pub struct NirKernelBuilds {
     default_build: NirKernelBuild,
     optimized: Option<NirKernelBuild>,
-    /// merged info with worst case values
-    info: pipe_compute_state_object_info,
+
+    /// Compute state info with the worst-case values between available builds.
+    info: OnceLock<pipe_compute_state_object_info>,
 }
 
 impl Index<NirKernelVariant> for NirKernelBuilds {
@@ -437,28 +457,43 @@ impl Index<NirKernelVariant> for NirKernelBuilds {
 
 impl NirKernelBuilds {
     fn new(default_build: NirKernelBuild, optimized: Option<NirKernelBuild>) -> Self {
-        let mut info = default_build.info;
-        if let Some(build) = &optimized {
-            info.max_threads = cmp::min(info.max_threads, build.info.max_threads);
-            info.simd_sizes &= build.info.simd_sizes;
-            info.private_memory = cmp::max(info.private_memory, build.info.private_memory);
-            info.preferred_simd_size =
-                cmp::max(info.preferred_simd_size, build.info.preferred_simd_size);
-        }
-
         Self {
             default_build: default_build,
             optimized: optimized,
-            info: info,
+            info: OnceLock::new(),
         }
+    }
+
+    /// Calculates the worst-case compute state info between the available
+    /// builds and stores the result.
+    fn calculate_compute_state_info(&self, device: &'static Device) {
+        self.info.get_or_init(|| {
+            let mut info = self
+                .default_build
+                .nir_or_cso
+                .calculate_compute_state_info(device);
+
+            if let Some(optimized) = &self.optimized {
+                let optimized_info = optimized.nir_or_cso.calculate_compute_state_info(device);
+
+                // Calculate worst-case values for each parameter.
+                info.max_threads = cmp::min(info.max_threads, optimized_info.max_threads);
+                info.simd_sizes &= optimized_info.simd_sizes;
+                info.private_memory = cmp::max(info.private_memory, optimized_info.private_memory);
+                info.preferred_simd_size =
+                    cmp::max(info.preferred_simd_size, optimized_info.preferred_simd_size);
+            }
+
+            info
+        });
     }
 }
 
 pub struct NirKernelBuild {
     nir_or_cso: KernelDevStateVariant,
-    constant_buffer: Option<PipeResource>,
-    info: pipe_compute_state_object_info,
+    constant_buffer: Option<PipeResourceOwned>,
     shared_size: u64,
+    input_size: u32,
     printf_info: Option<NirPrintfInfo>,
     compiled_args: Vec<CompiledKernelArg>,
 }
@@ -470,31 +505,31 @@ unsafe impl Sync for NirKernelBuild {}
 
 impl NirKernelBuild {
     fn new(dev: &'static Device, mut out: CompilationResult) -> Self {
-        // SAFETY: we only use the cso when dev supports shareable shaders, otherwise we just
-        //         extract some info and throw it away, which is safe.
-        let cso = unsafe { SharedCSOWrapper::new(dev, &out.nir) };
-        let info = cso.get_cso_info();
         let cb = Self::create_nir_constant_buffer(dev, &out.nir);
         let shared_size = out.nir.shared_size() as u64;
         let printf_info = out.nir.take_printf_info();
 
-        let nir_or_cso = if !dev.shareable_shaders() {
-            KernelDevStateVariant::Nir(out.nir)
-        } else {
+        let nir_or_cso = if dev.shareable_shaders() {
+            // SAFETY: The device supports shareable shaders, upholding the
+            // safety requirements of `SharedCSOWrapper`.
+            let cso = unsafe { SharedCSOWrapper::new(dev, &out.nir) };
+
             KernelDevStateVariant::Cso(cso)
+        } else {
+            KernelDevStateVariant::Nir(out.nir)
         };
 
         NirKernelBuild {
             nir_or_cso: nir_or_cso,
             constant_buffer: cb,
-            info: info,
             shared_size: shared_size,
+            input_size: out.input_size,
             printf_info: printf_info,
             compiled_args: out.compiled_args,
         }
     }
 
-    fn create_nir_constant_buffer(dev: &Device, nir: &NirShader) -> Option<PipeResource> {
+    fn create_nir_constant_buffer(dev: &Device, nir: &NirShader) -> Option<PipeResourceOwned> {
         let buf = nir.get_constant_buffer();
         let len = buf.len() as u32;
 
@@ -549,6 +584,7 @@ where
 struct CompilationResult {
     nir: NirShader,
     compiled_args: Vec<CompiledKernelArg>,
+    input_size: u32,
 }
 
 impl CompilationResult {
@@ -559,16 +595,19 @@ impl CompilationResult {
                 .nir_shader_compiler_options(mesa_shader_stage::MESA_SHADER_COMPUTE),
         )?;
         let compiled_args = CompiledKernelArg::deserialize(reader)?;
+        let input_size = unsafe { blob_read_uint32(reader) };
 
         Some(Self {
             nir: nir,
-            compiled_args,
+            compiled_args: compiled_args,
+            input_size: input_size,
         })
     }
 
     fn serialize(&self, blob: &mut blob) {
         self.nir.serialize(blob);
         CompiledKernelArg::serialize(&self.compiled_args, blob);
+        unsafe { blob_write_uint32(blob, self.input_size) };
     }
 }
 
@@ -1009,6 +1048,7 @@ fn compile_nir_variant(
     if nir_options.lower_uniforms_to_ubo {
         nir_pass!(nir, rusticl_lower_inputs);
     }
+    res.input_size = nir.uniform_size();
 
     nir_pass!(nir, nir_lower_convert_alu_types, None);
 
@@ -1070,6 +1110,7 @@ fn compile_nir_remaining(
     let mut default_build = CompilationResult {
         nir: nir,
         compiled_args: compiled_args,
+        input_size: 0,
     };
 
     // check if we even want to compile a variant before cloning the compilation state
@@ -1238,13 +1279,118 @@ fn extract<'a, const S: usize>(buf: &'a mut &[u8]) -> &'a [u8; S] {
     val.try_into().unwrap()
 }
 
+/// Helper class to build an execution environment for a single kernel invocation.
+struct KernelExecBuilder<'a> {
+    dev: &'static Device,
+    input: Vec<u8>,
+    resources: Vec<&'a PipeResource>,
+    resource_offsets: Vec<usize>,
+    workgroup_id_offset_loc: Option<usize>,
+}
+
+impl<'a> KernelExecBuilder<'a> {
+    fn new(dev: &'static Device, input_size: u32, num_globals: usize) -> Self {
+        Self {
+            dev: dev,
+            input: Vec::with_capacity(input_size as usize),
+            resources: Vec::with_capacity(num_globals),
+            resource_offsets: Vec::with_capacity(num_globals),
+            workgroup_id_offset_loc: None,
+        }
+    }
+
+    fn add_global(&mut self, res: &'a PipeResourceOwned, offset: usize) {
+        self.resources.push(res.borrow());
+        self.resource_offsets.push(self.input.len());
+        self.add_pointer(offset as u64);
+    }
+
+    fn add_pointer(&mut self, address: u64) {
+        if self.dev.address_bits() == 64 {
+            let address: u64 = address;
+            self.input.extend_from_slice(&address.to_ne_bytes());
+        } else {
+            let address: u32 = address as u32;
+            self.input.extend_from_slice(&address.to_ne_bytes());
+        }
+    }
+
+    fn add_sysval(&mut self, vals: &[usize; 3]) {
+        if self.dev.address_bits() == 64 {
+            self.input
+                .extend_from_slice(unsafe { as_byte_slice(&vals.map(|v| v as u64)) });
+        } else {
+            self.input
+                .extend_from_slice(unsafe { as_byte_slice(&vals.map(|v| v as u32)) });
+        }
+    }
+
+    fn add_values(&mut self, value: &[u8]) {
+        self.input.extend_from_slice(value);
+    }
+
+    /// Adds padding up to the provided length.
+    fn add_zero_padding(&mut self, until_len: usize) {
+        if self.input.len() < until_len {
+            self.input.resize(until_len, 0);
+        }
+    }
+
+    /// This returns a list of the tracked resources and their pointer into the managed kernel input
+    /// buffer. Before using the input buffer the locations need to be filled with the gpu addresses
+    /// of the resources.
+    fn get_resources_and_globals<'s>(&'s mut self) -> (&'s mut [&'a PipeResource], Vec<*mut u32>) {
+        let globals = self
+            .resource_offsets
+            .iter()
+            .map(|&offset| unsafe { self.input.as_mut_ptr().byte_add(offset) }.cast())
+            .collect();
+
+        (&mut self.resources, globals)
+    }
+
+    fn input(&self) -> &[u8] {
+        &self.input
+    }
+
+    /// Marks the current position in the kernel input buffer as the location of the workgroup id
+    /// offsets for use with `set_workgroup_id_offset`.
+    fn mark_workgroup_id_offset(&mut self) {
+        self.workgroup_id_offset_loc = Some(self.input.len());
+    }
+
+    /// Sets the workgroup id offsets within the kernel input buffer to the provided values.
+    fn set_workgroup_id_offset(&mut self, offset: [usize; 3]) {
+        if let Some(workgroup_id_offset_loc) = self.workgroup_id_offset_loc {
+            if self.dev.address_bits() == 64 {
+                let val = offset.map(|v| v as u64);
+                self.input[workgroup_id_offset_loc..workgroup_id_offset_loc + 24]
+                    .copy_from_slice(unsafe { as_byte_slice(&val) });
+            } else {
+                let val = offset.map(|v| v as u32);
+                self.input[workgroup_id_offset_loc..workgroup_id_offset_loc + 12]
+                    .copy_from_slice(unsafe { as_byte_slice(&val) });
+            }
+        }
+    }
+}
+
 impl Kernel {
     pub fn new(name: String, prog: Arc<Program>, prog_build: &ProgramBuild) -> Arc<Kernel> {
         let kernel_info = Arc::clone(prog_build.kernel_info.get(&name).unwrap());
         let builds = prog_build
             .builds_by_device
             .iter()
-            .filter_map(|(&dev, b)| b.kernels.get(&name).map(|k| (dev, Arc::clone(k))))
+            .filter_map(|(&dev, b)| {
+                b.kernels.get(&name).map(|k| {
+                    // Force initialization of the compute_state_object_info.
+                    // This is delayed to prevent stalling the build queue
+                    // while waiting on external processes.
+                    k.calculate_compute_state_info(dev);
+
+                    (dev, Arc::clone(k))
+                })
+            })
             .collect();
 
         let values = vec![None; kernel_info.args.len()];
@@ -1384,8 +1530,8 @@ impl Kernel {
             };
 
             let nir_kernel_build = &nir_kernel_builds[variant];
-            let mut workgroup_id_offset_loc = None;
-            let mut input = Vec::new();
+            let mut exec_builder =
+                KernelExecBuilder::new(ctx.dev, nir_kernel_build.input_size, buffer_arcs.len() + 2);
             // Set it once so we get the alignment padding right
             let static_local_size: u64 = nir_kernel_build.shared_size;
             let mut variable_local_size: u64 = static_local_size;
@@ -1407,36 +1553,6 @@ impl Kernel {
                 null_ptr = [0u8; 4].as_slice();
                 null_ptr_v3 = [0u8; 12].as_slice();
             };
-
-            let mut resource_info = Vec::new();
-            fn add_pointer(ctx: &QueueContext, input: &mut Vec<u8>, address: u64) {
-                if ctx.dev.address_bits() == 64 {
-                    let address: u64 = address;
-                    input.extend_from_slice(&address.to_ne_bytes());
-                } else {
-                    let address: u32 = address as u32;
-                    input.extend_from_slice(&address.to_ne_bytes());
-                }
-            }
-
-            fn add_global<'a>(
-                ctx: &QueueContext,
-                input: &mut Vec<u8>,
-                resource_info: &mut Vec<(&'a PipeResource, usize)>,
-                res: &'a PipeResource,
-                offset: usize,
-            ) {
-                resource_info.push((res, input.len()));
-                add_pointer(ctx, input, offset as u64);
-            }
-
-            fn add_sysval(ctx: &QueueContext, input: &mut Vec<u8>, vals: &[usize; 3]) {
-                if ctx.dev.address_bits() == 64 {
-                    input.extend_from_slice(unsafe { as_byte_slice(&vals.map(|v| v as u64)) });
-                } else {
-                    input.extend_from_slice(unsafe { as_byte_slice(&vals.map(|v| v as u32)) });
-                }
-            }
 
             let mut printf_buf = None;
             if nir_kernel_build.printf_info.is_some() {
@@ -1465,8 +1581,8 @@ impl Kernel {
                     false
                 };
 
-                if !is_opaque && arg.offset > input.len() {
-                    input.resize(arg.offset, 0);
+                if !is_opaque {
+                    exec_builder.add_zero_padding(arg.offset);
                 }
 
                 match arg.kind {
@@ -1477,11 +1593,11 @@ impl Kernel {
                         };
 
                         match value {
-                            KernelArgValue::Constant(c) => input.extend_from_slice(c),
+                            KernelArgValue::Constant(c) => exec_builder.add_values(c),
                             KernelArgValue::BDA(address) => {
                                 bdas.push(*address);
                                 if !api_arg.dead {
-                                    add_pointer(ctx, &mut input, *address);
+                                    exec_builder.add_pointer(*address);
                                 }
                             }
                             KernelArgValue::Buffer(buffer) => {
@@ -1507,13 +1623,7 @@ impl Kernel {
                                     }
                                 } else {
                                     let res = buffer.get_res_for_access(ctx, rw)?;
-                                    add_global(
-                                        ctx,
-                                        &mut input,
-                                        &mut resource_info,
-                                        res,
-                                        buffer.offset(),
-                                    );
+                                    exec_builder.add_global(res, buffer.offset());
                                 }
                             }
                             &KernelArgValue::SVM(handle) => {
@@ -1523,7 +1633,7 @@ impl Kernel {
                                 }
 
                                 if !api_arg.dead {
-                                    add_pointer(ctx, &mut input, handle as u64);
+                                    exec_builder.add_pointer(handle as u64);
                                 }
                             }
                             KernelArgValue::Image(image) => {
@@ -1555,11 +1665,11 @@ impl Kernel {
                                 if ctx.dev.address_bits() == 64 {
                                     let variable_local_size: [u8; 8] =
                                         variable_local_size.to_ne_bytes();
-                                    input.extend_from_slice(&variable_local_size);
+                                    exec_builder.add_values(&variable_local_size);
                                 } else {
                                     let variable_local_size: [u8; 4] =
                                         (variable_local_size as u32).to_ne_bytes();
-                                    input.extend_from_slice(&variable_local_size);
+                                    exec_builder.add_values(&variable_local_size);
                                 }
                                 variable_local_size += *size as u64;
                             }
@@ -1573,7 +1683,7 @@ impl Kernel {
                                         KernelArgType::MemGlobal | KernelArgType::MemConstant
                                     )
                                 {
-                                    input.extend_from_slice(null_ptr);
+                                    exec_builder.add_values(null_ptr);
                                 }
                             }
                         }
@@ -1581,38 +1691,38 @@ impl Kernel {
                     CompiledKernelArgType::ConstantBuffer => {
                         assert!(nir_kernel_build.constant_buffer.is_some());
                         let res = nir_kernel_build.constant_buffer.as_ref().unwrap();
-                        add_global(ctx, &mut input, &mut resource_info, res, 0);
+                        exec_builder.add_global(res, 0);
                     }
                     CompiledKernelArgType::GlobalWorkOffsets => {
-                        add_sysval(ctx, &mut input, &offsets);
+                        exec_builder.add_sysval(&offsets);
                     }
                     CompiledKernelArgType::WorkGroupOffsets => {
-                        workgroup_id_offset_loc = Some(input.len());
-                        input.extend_from_slice(null_ptr_v3);
+                        exec_builder.mark_workgroup_id_offset();
+                        exec_builder.add_values(null_ptr_v3);
                     }
                     CompiledKernelArgType::GlobalWorkSize => {
-                        add_sysval(ctx, &mut input, &api_grid);
+                        exec_builder.add_sysval(&api_grid);
                     }
                     CompiledKernelArgType::PrintfBuffer => {
                         let res = printf_buf.as_ref().unwrap();
-                        add_global(ctx, &mut input, &mut resource_info, res, 0);
+                        exec_builder.add_global(res, 0);
                     }
                     CompiledKernelArgType::InlineSampler(cl) => {
                         samplers.push(Sampler::cl_to_pipe(cl));
                     }
                     CompiledKernelArgType::FormatArray => {
-                        input.extend_from_slice(unsafe { as_byte_slice(&tex_formats) });
-                        input.extend_from_slice(unsafe { as_byte_slice(&img_formats) });
+                        exec_builder.add_values(unsafe { as_byte_slice(&tex_formats) });
+                        exec_builder.add_values(unsafe { as_byte_slice(&img_formats) });
                     }
                     CompiledKernelArgType::OrderArray => {
-                        input.extend_from_slice(unsafe { as_byte_slice(&tex_orders) });
-                        input.extend_from_slice(unsafe { as_byte_slice(&img_orders) });
+                        exec_builder.add_values(unsafe { as_byte_slice(&tex_orders) });
+                        exec_builder.add_values(unsafe { as_byte_slice(&img_orders) });
                     }
                     CompiledKernelArgType::WorkDim => {
-                        input.extend_from_slice(&[work_dim as u8; 1]);
+                        exec_builder.add_values(&[work_dim as u8; 1]);
                     }
                     CompiledKernelArgType::NumWorkgroups => {
-                        input.extend_from_slice(unsafe {
+                        exec_builder.add_values(unsafe {
                             as_byte_slice(&[grid[0] as u32, grid[1] as u32, grid[2] as u32])
                         });
                     }
@@ -1645,36 +1755,22 @@ impl Kernel {
             // subtract the shader local_size as we only request something on top of that.
             variable_local_size -= static_local_size;
 
-            let mut resources = Vec::with_capacity(resource_info.len());
-            let mut globals: Vec<*mut u32> = Vec::with_capacity(resource_info.len());
-            for (res, offset) in resource_info {
-                resources.push(res);
-                globals.push(unsafe { input.as_mut_ptr().byte_add(offset) }.cast());
-            }
+            let (resources, mut globals) = exec_builder.get_resources_and_globals();
 
             ctx.bind_kernel(&nir_kernel_builds, variant)?;
             ctx.bind_sampler_states(samplers);
             ctx.bind_sampler_views(sviews);
             ctx.bind_shader_images(&iviews);
-            ctx.set_global_binding(resources.as_slice(), &mut globals);
+            ctx.set_global_binding(resources, &mut globals);
 
             for z in 0..grid[2].div_ceil(hw_max_grid[2]) {
                 for y in 0..grid[1].div_ceil(hw_max_grid[1]) {
                     for x in 0..grid[0].div_ceil(hw_max_grid[0]) {
-                        if let Some(workgroup_id_offset_loc) = workgroup_id_offset_loc {
-                            let this_offsets =
-                                [x * hw_max_grid[0], y * hw_max_grid[1], z * hw_max_grid[2]];
+                        let this_offsets =
+                            [x * hw_max_grid[0], y * hw_max_grid[1], z * hw_max_grid[2]];
 
-                            if ctx.dev.address_bits() == 64 {
-                                let val = this_offsets.map(|v| v as u64);
-                                input[workgroup_id_offset_loc..workgroup_id_offset_loc + 24]
-                                    .copy_from_slice(unsafe { as_byte_slice(&val) });
-                            } else {
-                                let val = this_offsets.map(|v| v as u32);
-                                input[workgroup_id_offset_loc..workgroup_id_offset_loc + 12]
-                                    .copy_from_slice(unsafe { as_byte_slice(&val) });
-                            }
-                        }
+                        // Each iteration we need to update the kernel side workgroup id offsets.
+                        exec_builder.set_workgroup_id_offset(this_offsets);
 
                         let this_grid = [
                             cmp::min(hw_max_grid[0], grid[0] - hw_max_grid[0] * x) as u32,
@@ -1682,7 +1778,7 @@ impl Kernel {
                             cmp::min(hw_max_grid[2], grid[2] - hw_max_grid[2] * z) as u32,
                         ];
 
-                        ctx.update_cb0(&input)?;
+                        ctx.update_cb0(exec_builder.input())?;
                         ctx.launch_grid(
                             work_dim,
                             block,
@@ -1811,16 +1907,20 @@ impl Kernel {
         type_name.is_empty().not().then_some(type_name)
     }
 
+    fn compute_state_object_info(&self, dev: &Device) -> &pipe_compute_state_object_info {
+        self.builds.get(dev).unwrap().info.get().unwrap()
+    }
+
     pub fn priv_mem_size(&self, dev: &Device) -> cl_ulong {
-        self.builds.get(dev).unwrap().info.private_memory as cl_ulong
+        self.compute_state_object_info(dev).private_memory as cl_ulong
     }
 
     pub fn max_threads_per_block(&self, dev: &Device) -> usize {
-        self.builds.get(dev).unwrap().info.max_threads as usize
+        self.compute_state_object_info(dev).max_threads as usize
     }
 
     pub fn preferred_simd_size(&self, dev: &Device) -> usize {
-        self.builds.get(dev).unwrap().info.preferred_simd_size as usize
+        self.compute_state_object_info(dev).preferred_simd_size as usize
     }
 
     pub fn local_mem_size(&self, dev: &Device) -> cl_ulong {
@@ -1847,7 +1947,7 @@ impl Kernel {
     }
 
     pub fn subgroup_sizes(&self, dev: &Device) -> impl ExactSizeIterator<Item = usize> + use<> {
-        SetBitIndices::from_msb(self.builds.get(dev).unwrap().info.simd_sizes).map(|bit| 1 << bit)
+        SetBitIndices::from_msb(self.compute_state_object_info(dev).simd_sizes).map(|bit| 1 << bit)
     }
 
     pub fn subgroups_for_block(&self, dev: &Device, block: &[usize]) -> usize {

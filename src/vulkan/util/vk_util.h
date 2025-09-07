@@ -306,15 +306,6 @@ struct vk_pipeline_cache_header {
 #define VK_ENUM_OFFSET(__enum) \
    ((__enum) >= VK_EXT_OFFSET ? ((__enum) % 1000) : (__enum))
 
-#define typed_memcpy(dest, src, count) do { \
-   STATIC_ASSERT(sizeof(*(src)) == sizeof(*(dest))); \
-   uint8_t *d = (uint8_t*)(dest); \
-   const uint8_t *s = (const uint8_t*)(src); \
-   if (d != NULL && s != NULL && (count) > 0) { \
-       memcpy(d, s, (count) * sizeof(*(src))); \
-   } \
-} while (0)
-
 static inline mesa_shader_stage
 vk_to_mesa_shader_stage(VkShaderStageFlagBits vk_stage)
 {
@@ -400,6 +391,8 @@ vk_descriptor_type_is_dynamic(VkDescriptorType type)
       return false;
    }
 }
+
+enum mesa_prim vk_topology_to_mesa(VkPrimitiveTopology topology);
 
 #define VK_PRINT_STR(field, ...) do {                          \
    memset(field, 0, sizeof(field));                            \

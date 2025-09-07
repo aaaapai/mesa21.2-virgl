@@ -31,19 +31,7 @@ radv_get_queue_global_priority(const VkDeviceQueueGlobalPriorityCreateInfo *pObj
    if (!pObj)
       return RADEON_CTX_PRIORITY_MEDIUM;
 
-   switch (pObj->globalPriority) {
-   case VK_QUEUE_GLOBAL_PRIORITY_REALTIME:
-      return RADEON_CTX_PRIORITY_REALTIME;
-   case VK_QUEUE_GLOBAL_PRIORITY_HIGH:
-      return RADEON_CTX_PRIORITY_HIGH;
-   case VK_QUEUE_GLOBAL_PRIORITY_MEDIUM:
-      return RADEON_CTX_PRIORITY_MEDIUM;
-   case VK_QUEUE_GLOBAL_PRIORITY_LOW:
-      return RADEON_CTX_PRIORITY_LOW;
-   default:
-      UNREACHABLE("Illegal global priority value");
-      return RADEON_CTX_PRIORITY_INVALID;
-   }
+   return vk_to_radeon_priority(pObj->globalPriority);
 }
 
 static VkResult
@@ -706,7 +694,7 @@ radv_emit_ge_rings(struct radv_device *device, struct radv_cmd_stream *cs, struc
          /* Mitigate the HiZ GPU hang by increasing a timeout when BOTTOM_OF_PIPE_TS is used as the
           * workaround. This must be emitted when the gfx queue is idle.
           */
-         const uint32_t timeout = pdev->use_gfx12_hiz_his_event_wa ? 0xfff : 0;
+         const uint32_t timeout = pdev->gfx12_hiz_wa == RADV_GFX12_HIZ_WA_PARTIAL ? 0xfff : 0;
 
          radeon_emit(PKT3(PKT3_UPDATE_DB_SUMMARIZER_TIMEOUT, 0, 0));
          radeon_emit(S_EF1_SUMM_CNTL_EVICT_TIMEOUT(timeout));
@@ -1298,7 +1286,7 @@ fail:
       radv_bo_destroy(device, NULL, gds_oa_bo);
    }
 
-   return vk_error(queue, result);
+   return vk_error(device, result);
 }
 
 static VkResult
@@ -2017,8 +2005,12 @@ radv_queue_init(struct radv_device *device, struct radv_queue *queue, int idx,
    const struct radv_physical_device *pdev = radv_device_physical(device);
 
    queue->priority = radv_get_queue_global_priority(global_priority);
-   queue->hw_ctx = device->hw_ctx[queue->priority];
    queue->state.qf = vk_queue_to_radv(pdev, create_info->queueFamilyIndex);
+
+   if (queue->state.qf == RADV_QUEUE_VIDEO_ENC && device->hw_vcn_enc_ctx)
+      queue->hw_ctx = device->hw_vcn_enc_ctx;
+   else
+      queue->hw_ctx = device->hw_ctx[queue->priority];
 
    VkResult result = vk_queue_init(&queue->vk, &device->vk, create_info, idx);
    if (result != VK_SUCCESS)

@@ -1884,10 +1884,6 @@ iris_compile_vs(struct iris_screen *screen,
 
       brw_nir_analyze_ubo_ranges(screen->brw, nir, brw_prog_data->base.base.ubo_ranges);
 
-      brw_compute_vue_map(devinfo,
-                          &brw_prog_data->base.vue_map, nir->info.outputs_written,
-                          key->vue.layout, /* pos_slots */ 1);
-
       struct brw_vs_prog_key brw_key = iris_to_brw_vs_key(screen, key);
 
       struct brw_compile_vs_params params = {
@@ -2323,7 +2319,7 @@ iris_compile_tes(struct iris_screen *screen,
 
       struct intel_vue_map input_vue_map;
       brw_compute_tess_vue_map(&input_vue_map, key->inputs_read,
-                               key->patch_inputs_read);
+                               key->patch_inputs_read, false /* separate */);
 
       struct brw_tes_prog_key brw_key = iris_to_brw_tes_key(screen, key);
 

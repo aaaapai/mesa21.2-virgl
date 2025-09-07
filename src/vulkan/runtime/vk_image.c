@@ -435,13 +435,15 @@ remap_swizzle(VkComponentSwizzle swizzle, VkComponentSwizzle component)
 void
 vk_image_view_init(struct vk_device *device,
                    struct vk_image_view *image_view,
-                   bool driver_internal,
                    const VkImageViewCreateInfo *pCreateInfo)
 {
    vk_object_base_init(device, &image_view->base, VK_OBJECT_TYPE_IMAGE_VIEW);
 
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
    VK_FROM_HANDLE(vk_image, image, pCreateInfo->image);
+
+   const bool driver_internal =
+      (pCreateInfo->flags & VK_IMAGE_VIEW_CREATE_DRIVER_INTERNAL_BIT_MESA) != 0;
 
    image_view->create_flags = pCreateInfo->flags;
    image_view->image = image;
@@ -684,7 +686,6 @@ vk_image_view_finish(struct vk_image_view *image_view)
 
 void *
 vk_image_view_create(struct vk_device *device,
-                     bool driver_internal,
                      const VkImageViewCreateInfo *pCreateInfo,
                      const VkAllocationCallbacks *alloc,
                      size_t size)
@@ -695,7 +696,7 @@ vk_image_view_create(struct vk_device *device,
    if (image_view == NULL)
       return NULL;
 
-   vk_image_view_init(device, image_view, driver_internal, pCreateInfo);
+   vk_image_view_init(device, image_view, pCreateInfo);
 
    return image_view;
 }

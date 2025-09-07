@@ -104,6 +104,11 @@ struct fdl_image_params {
 
    bool is_3d;
    bool is_mutable;
+
+   /* Whether to force extra padding between layers in order to help emulate
+    * standard sparse tiling.
+    */
+   bool sparse;
 };
 
 /**
@@ -156,6 +161,7 @@ struct fdl_layout {
    uint32_t width0, height0, depth0;
    uint32_t mip_levels;
    uint32_t nr_samples;
+   uint32_t mip_tail_first_lod; /* for sparse resources */
    enum pipe_format format;
 
    uint64_t size;       /* Size of the whole image, in bytes. */
@@ -245,6 +251,30 @@ fdl_level_linear(const struct fdl_layout *layout, int level)
 }
 
 static inline uint32_t
+fdl_sparse_miptail_offset(const struct fdl_layout *layout)
+{
+   assert(layout->layer_first);
+
+   if (layout->mip_tail_first_lod == layout->mip_levels)
+      return layout->layer_size + layout->slices[0].offset;
+   else
+      return layout->slices[layout->mip_tail_first_lod].offset;
+}
+
+static inline uint32_t
+fdl_sparse_miptail_size(const struct fdl_layout *layout)
+{
+   assert(layout->layer_first);
+
+   if (layout->mip_tail_first_lod == layout->mip_levels)
+      return 0;
+   else
+      return layout->layer_size -
+         (layout->slices[layout->mip_tail_first_lod].offset -
+         layout->slices[0].offset);
+}
+
+static inline uint32_t
 fdl_tile_mode(const struct fdl_layout *layout, int level)
 {
    if (layout->tile_mode && fdl_level_linear(layout, level))
@@ -278,8 +308,27 @@ fdl_set_pitchalign(struct fdl_layout *layout, unsigned pitchalign)
 
 void fdl_dump_layout(struct fdl_layout *layout);
 
+void fdl_get_sparse_block_size(enum pipe_format format, uint32_t nr_samples,
+                               uint32_t *blockwidth, uint32_t *blockheight);
+
 void fdl6_get_ubwc_blockwidth(const struct fdl_layout *layout,
                               uint32_t *blockwidth, uint32_t *blockheight);
+
+void fdl6_get_ubwc_macrotile_size(const struct fdl_layout *layout,
+                                  uint32_t *macrotile_width,
+                                  uint32_t *macrotile_height);
+
+/* Single-sampled non-mutable R8G8 textures have a special UBWC block layout
+ * that's different from the normal cpp=2 layout. Return true if this layout
+ * is in use.
+ */
+static inline bool
+fdl6_is_r8g8_layout(const struct fdl_layout *layout)
+{
+   return layout->cpp == 2 &&
+          util_format_get_nr_components(layout->format) == 2 &&
+          !layout->is_mutable;
+}
 
 enum fdl_view_type {
    FDL_VIEW_TYPE_1D = 0,
@@ -397,6 +446,11 @@ fdl6_memcpy_tiled_to_linear(uint32_t x_start, uint32_t y_start,
                             unsigned src_miplevel,
                             uint32_t dst_pitch,
                             const struct fdl_ubwc_config *config);
+
+uint32_t fdl6_get_bank_mask(const struct fdl_layout *layout, unsigned miplevel,
+                            const struct fdl_ubwc_config *config);
+
+uint32_t fdl6_get_bank_shift(const struct fdl_ubwc_config *config);
 
 ENDC;
 

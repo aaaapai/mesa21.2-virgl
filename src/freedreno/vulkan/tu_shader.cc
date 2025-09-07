@@ -502,6 +502,7 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *instr,
       return lower_ssbo_ubo_intrinsic(dev, b, instr);
 
    case nir_intrinsic_image_deref_load:
+   case nir_intrinsic_image_deref_sparse_load:
    case nir_intrinsic_image_deref_store:
    case nir_intrinsic_image_deref_atomic:
    case nir_intrinsic_image_deref_atomic_swap:
@@ -1217,6 +1218,29 @@ tu_nir_lower_layered_fdm(nir_shader *shader,
 
    return nir_shader_intrinsics_pass(shader, lower_layered_fdm_instr,
                                      nir_metadata_control_flow, &state);
+}
+
+static bool
+lower_view_to_zero_filter(const nir_instr *instr, const void *cb)
+{
+   return instr->type == nir_instr_type_intrinsic;
+}
+
+static nir_def *
+lower_view_to_zero(nir_builder *b, nir_instr *instr, void *cb)
+{
+   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
+   if (intrin->intrinsic != nir_intrinsic_load_view_index)
+      return NULL;
+
+   return nir_imm_int(b, 0);
+}
+
+static bool
+tu_nir_lower_view_to_zero(nir_shader *shader)
+{
+   return nir_shader_lower_instructions(shader, lower_view_to_zero_filter,
+                                        lower_view_to_zero, NULL);
 }
 
 static void
@@ -2671,6 +2695,9 @@ tu_shader_create(struct tu_device *dev,
       tu_nir_lower_multiview(nir, key->multiview_mask, dev);
    }
 
+   if (!key->multiview_mask)
+      tu_nir_lower_view_to_zero(nir);
+
    if (nir->info.stage == MESA_SHADER_FRAGMENT && key->force_sample_interp) {
       nir->info.fs.uses_sample_shading = true;
       nir_foreach_shader_in_variable(var, nir) {
@@ -3242,7 +3269,7 @@ tu_empty_fs_create(struct tu_device *dev, struct tu_shader **shader,
       return VK_ERROR_OUT_OF_HOST_MEMORY;
 
    (*shader)->fs.has_fdm = fragment_density_map;
-   if (fragment_density_map)
+   if (fragment_density_map && dev->physical_device->info->chip < 7)
       (*shader)->fs.lrz.status = TU_LRZ_FORCE_DISABLE_LRZ;
 
    for (unsigned i = 0; i < MAX_SETS; i++)
