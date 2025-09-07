@@ -979,7 +979,10 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
    unsigned lod_bias_flag = is_gles ? PIPE_CONTEXT_NO_LOD_BIAS : 0;
 
    printf("54\n");
-   pipe = fscreen->screen->context_create(fscreen->screen, NULL, attribs->context_flags);
+   pipe = fscreen->screen->context_create(fscreen->screen, NULL,
+                                          PIPE_CONTEXT_PREFER_THREADED |
+                                          lod_bias_flag |
+                                          attribs->context_flags);
    if (!pipe) {
       printf("55\n");
       *error = ST_CONTEXT_ERROR_NO_MEMORY;
