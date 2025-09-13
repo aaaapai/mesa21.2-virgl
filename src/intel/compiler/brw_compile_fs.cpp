@@ -18,7 +18,7 @@
 
 #include <memory>
 
-static brw_inst *
+static brw_fb_write_inst *
 brw_emit_single_fb_write(brw_shader &s, const brw_builder &bld,
                          brw_reg color0, brw_reg color1,
                          brw_reg src0_alpha,
@@ -32,10 +32,6 @@ brw_emit_single_fb_write(brw_shader &s, const brw_builder &bld,
    sources[FB_WRITE_LOGICAL_SRC_COLOR0]     = color0;
    sources[FB_WRITE_LOGICAL_SRC_COLOR1]     = color1;
    sources[FB_WRITE_LOGICAL_SRC_SRC0_ALPHA] = src0_alpha;
-   sources[FB_WRITE_LOGICAL_SRC_TARGET]     = brw_imm_ud(target);
-   sources[FB_WRITE_LOGICAL_SRC_COMPONENTS] = brw_imm_ud(components);
-   sources[FB_WRITE_LOGICAL_SRC_NULL_RT]    = brw_imm_ud(null_rt);
-   sources[FB_WRITE_LOGICAL_SRC_LAST_RT]    = brw_imm_ud(false);
 
    if (prog_data->uses_omask)
       sources[FB_WRITE_LOGICAL_SRC_OMASK] = s.sample_mask;
@@ -44,8 +40,12 @@ brw_emit_single_fb_write(brw_shader &s, const brw_builder &bld,
    if (s.nir->info.outputs_written & BITFIELD64_BIT(FRAG_RESULT_STENCIL))
       sources[FB_WRITE_LOGICAL_SRC_SRC_STENCIL] = s.frag_stencil;
 
-   brw_inst *write = bld.emit(FS_OPCODE_FB_WRITE_LOGICAL, brw_reg(),
-                             sources, ARRAY_SIZE(sources));
+   brw_fb_write_inst *write = bld.emit(FS_OPCODE_FB_WRITE_LOGICAL, brw_reg(),
+                                       sources, ARRAY_SIZE(sources))->as_fb_write();
+   write->target     = target;
+   write->components = components;
+   write->null_rt    = null_rt;
+   write->last_rt    = false;
 
    if (prog_data->uses_kill) {
       write->predicate = BRW_PREDICATE_NORMAL;
@@ -64,7 +64,7 @@ brw_do_emit_fb_writes(brw_shader &s, int nr_color_regions, bool replicate_alpha)
    const bool double_rt_writes = s.devinfo->ver == 11 &&
       prog_data->coarse_pixel_dispatch == INTEL_SOMETIMES;
 
-   brw_inst *inst = NULL;
+   brw_fb_write_inst *write = NULL;
    for (int target = 0; target < nr_color_regions; target++) {
       /* Skip over outputs that weren't written. */
       if (s.outputs[target].file == BAD_FILE)
@@ -77,18 +77,18 @@ brw_do_emit_fb_writes(brw_shader &s, int nr_color_regions, bool replicate_alpha)
       if (replicate_alpha && target != 0)
          src0_alpha = offset(s.outputs[0], bld, 3);
 
-      inst = brw_emit_single_fb_write(s, abld, s.outputs[target],
-                                      s.dual_src_output, src0_alpha,
-                                      target, 4, false);
+      write = brw_emit_single_fb_write(s, abld, s.outputs[target],
+                                       s.dual_src_output, src0_alpha,
+                                       target, 4, false);
    }
 
-   bool flag_dummy_message = inst && double_rt_writes;
-   if (inst) {
-      inst->src[FB_WRITE_LOGICAL_SRC_LAST_RT] = brw_imm_ud(true);
-      inst->eot = true;
+   bool flag_dummy_message = write && double_rt_writes;
+   if (write) {
+      write->last_rt = true;
+      write->eot = true;
    }
 
-   if (inst == NULL) {
+   if (write == NULL) {
       struct brw_wm_prog_key *key = (brw_wm_prog_key*) s.key;
       /* Disable null_rt if any non color output is written or if
        * alpha_to_coverage can be enabled. Since the alpha_to_coverage bit is
@@ -111,11 +111,11 @@ brw_do_emit_fb_writes(brw_shader &s, int nr_color_regions, bool replicate_alpha)
       const brw_reg tmp = bld.vgrf(BRW_TYPE_UD, 4);
       bld.LOAD_PAYLOAD(tmp, srcs, 4, 0);
 
-      inst = brw_emit_single_fb_write(s, bld, tmp, reg_undef, reg_undef,
+      write = brw_emit_single_fb_write(s, bld, tmp, reg_undef, reg_undef,
                                       0, 4, use_null_rt);
-      inst->src[FB_WRITE_LOGICAL_SRC_LAST_RT] = brw_imm_ud(true);
-      inst->has_no_mask_send_params = flag_dummy_message;
-      inst->eot = true;
+      write->last_rt = true;
+      write->has_no_mask_send_params = flag_dummy_message;
+      write->eot = true;
    }
 }
 
@@ -620,7 +620,7 @@ static void
 brw_emit_repclear_shader(brw_shader &s)
 {
    brw_wm_prog_key *key = (brw_wm_prog_key*) s.key;
-   brw_inst *write = NULL;
+   brw_send_inst *write = NULL;
 
    assert(s.devinfo->ver < 20);
    assert(s.uniforms == 0);
@@ -648,8 +648,7 @@ brw_emit_repclear_shader(brw_shader &s)
       if (i > 0)
          bld.uniform().MOV(component(header, 2), brw_imm_ud(i));
 
-      write = bld.emit(SHADER_OPCODE_SEND);
-      write->resize_sources(SEND_NUM_SRCS);
+      write = bld.SEND();
 
       /* We can use a headerless message for the first render target */
       write->header_size = i == 0 ? 0 : 2;
@@ -667,7 +666,7 @@ brw_emit_repclear_shader(brw_shader &s)
       write->src[SEND_SRC_PAYLOAD1] = i == 0 ? color_output : header;
       write->src[SEND_SRC_PAYLOAD2] = brw_reg();
       write->check_tdr = true;
-      write->send_has_side_effects = true;
+      write->has_side_effects = true;
 
       /* We can use a headerless message for the first render target */
       write->header_size = i == 0 ? 0 : 2;
@@ -1322,11 +1321,10 @@ brw_assign_urb_setup(brw_shader &s)
    /* Offset all the urb_setup[] index by the actual position of the
     * setup regs, now that the location of the constants has been chosen.
     */
-   foreach_block_and_inst(block, brw_inst, inst, s.cfg) {
+   foreach_block_and_inst_safe(block, brw_inst, inst, s.cfg) {
       if (inst->opcode == FS_OPCODE_READ_ATTRIBUTE_PAYLOAD) {
          brw_reg offset = inst->src[0];
-         inst->resize_sources(3);
-         inst->opcode = SHADER_OPCODE_MOV_INDIRECT;
+         inst = brw_transform_inst(s, inst, SHADER_OPCODE_MOV_INDIRECT, 3);
          inst->src[0] = retype(brw_vec8_grf(urb_start, 0), BRW_TYPE_UD);
          inst->src[1] = offset;
          inst->src[2] = brw_imm_ud(REG_SIZE * 2 * 32);
@@ -1578,8 +1576,7 @@ brw_compile_fs(const struct brw_compiler *compiler,
     * data clear shaders.
     */
    const unsigned reqd_dispatch_width = brw_required_dispatch_width(&nir->info);
-   assert(reqd_dispatch_width == SUBGROUP_SIZE_VARYING ||
-          reqd_dispatch_width == SUBGROUP_SIZE_REQUIRE_16);
+   assert(reqd_dispatch_width == 0 || reqd_dispatch_width == 16);
 
    /* Limit identified when first variant is compiled, see
     * brw_shader::limit_dispatch_width().
@@ -1641,7 +1638,7 @@ brw_compile_fs(const struct brw_compiler *compiler,
       }
    }
 
-   if (devinfo->ver >= 30) {
+   if (compiler->optimistic_simd_heuristic) {
       unsigned max_dispatch_width = reqd_dispatch_width ? reqd_dispatch_width : 32;
 
       if (max_polygons >= 2 && !key->coarse_pixel) {
@@ -1752,7 +1749,7 @@ brw_compile_fs(const struct brw_compiler *compiler,
 
    } else {
       if ((!has_spilled && dispatch_width_limit >= 16 && INTEL_SIMD(FS, 16)) ||
-          reqd_dispatch_width == SUBGROUP_SIZE_REQUIRE_16) {
+          reqd_dispatch_width == 16) {
          /* Try a SIMD16 compile */
          brw_shader_params shader_params = base_shader_params;
          shader_params.dispatch_width = 16;
@@ -1785,8 +1782,9 @@ brw_compile_fs(const struct brw_compiler *compiler,
       /* Currently, the compiler only supports SIMD32 on SNB+ */
       if (!has_spilled &&
           dispatch_width_limit >= 32 &&
-          reqd_dispatch_width == SUBGROUP_SIZE_VARYING &&
-          !simd16_failed && INTEL_SIMD(FS, 32)) {
+          reqd_dispatch_width == 0 &&
+          !simd16_failed && INTEL_SIMD(FS, 32) &&
+          !prog_data->base.ray_queries) {
          /* Try a SIMD32 compile */
          brw_shader_params shader_params = base_shader_params;
          shader_params.dispatch_width = 32;
@@ -1819,7 +1817,7 @@ brw_compile_fs(const struct brw_compiler *compiler,
 
       if (devinfo->ver >= 12 && !has_spilled &&
           max_polygons >= 2 && !key->coarse_pixel &&
-          reqd_dispatch_width == SUBGROUP_SIZE_VARYING) {
+          reqd_dispatch_width == 0) {
 
          if (devinfo->ver >= 20 && max_polygons >= 4 &&
              dispatch_width_limit >= 32 &&
@@ -1891,7 +1889,7 @@ brw_compile_fs(const struct brw_compiler *compiler,
    /* When the caller compiles a repclear or fast clear shader, they
     * want SIMD16-only.
     */
-   if (reqd_dispatch_width == SUBGROUP_SIZE_REQUIRE_16)
+   if (reqd_dispatch_width == 16)
       v8.reset();
 
    brw_generator g(compiler, &params->base, &prog_data->base,

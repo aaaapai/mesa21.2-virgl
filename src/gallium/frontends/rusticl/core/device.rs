@@ -501,6 +501,7 @@ impl DeviceBase {
         let exts: Vec<&str> = self.extension_string.split(' ').collect();
         let mut res = CLVersion::Cl3_0;
 
+        #[allow(clippy::collapsible_if)]
         if self.embedded {
             if self.caps.has_images {
                 let supports_array_writes = !FORMATS
@@ -1332,7 +1333,11 @@ impl Device {
     }
 
     pub fn all() -> Vec<Device> {
+        #[cfg(not(test))]
         let mut devs: Vec<_> = load_screens().filter_map(Device::new).collect();
+
+        #[cfg(test)]
+        let mut devs: Vec<Device> = Vec::default();
 
         // Pick a default device. One must be the default one no matter what. And custom devices can
         // only be that one if they are the only devices available.

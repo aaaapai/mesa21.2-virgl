@@ -37,32 +37,52 @@
 #define MAX_VGRF_SIZE(devinfo) ((devinfo)->ver >= 20 ? 40 : 20)
 
 struct bblock_t;
+struct brw_shader;
 
-struct brw_inst : public brw_exec_node {
-private:
-   brw_inst &operator=(const brw_inst &);
+enum ENUM_PACKED brw_inst_kind {
+   BRW_KIND_BASE,
+   BRW_KIND_SEND,
+   BRW_KIND_LOGICAL,
+   BRW_KIND_TEX,
+   BRW_KIND_MEM,
+   BRW_KIND_DPAS,
+   BRW_KIND_LOAD_PAYLOAD,
+   BRW_KIND_URB,
+   BRW_KIND_FB_WRITE,
+};
 
-   void init(enum opcode opcode, uint8_t exec_width, const brw_reg &dst,
-             const brw_reg *src, unsigned sources);
+brw_inst_kind brw_inst_kind_for_opcode(enum opcode opcode);
 
-public:
-   DECLARE_RALLOC_CXX_OPERATORS(brw_inst)
+struct brw_inst : brw_exec_node {
+   brw_inst() = delete;
+   brw_inst(const brw_inst&) = delete;
 
-   brw_inst();
-   brw_inst(enum opcode opcode, uint8_t exec_size);
-   brw_inst(enum opcode opcode, uint8_t exec_size, const brw_reg &dst);
-   brw_inst(enum opcode opcode, uint8_t exec_size, const brw_reg &dst,
-           const brw_reg &src0);
-   brw_inst(enum opcode opcode, uint8_t exec_size, const brw_reg &dst,
-           const brw_reg &src0, const brw_reg &src1);
-   brw_inst(enum opcode opcode, uint8_t exec_size, const brw_reg &dst,
-           const brw_reg &src0, const brw_reg &src1, const brw_reg &src2);
-   brw_inst(enum opcode opcode, uint8_t exec_size, const brw_reg &dst,
-           const brw_reg src[], unsigned sources);
-   brw_inst(const brw_inst &that);
-   ~brw_inst();
+   /* Enable usage of placement new. */
+   static void* operator new(size_t size, void *ptr) { return ptr; }
+   static void operator delete(void *p) {}
 
-   void resize_sources(uint8_t num_sources);
+   /* Prefer macro here instead of templates to get nicer
+    * helper names.
+    */
+#define KIND_HELPERS(HELPER_NAME, TYPE_NAME, ENUM_NAME)         \
+   struct TYPE_NAME *HELPER_NAME() {                            \
+      return kind == ENUM_NAME ? (struct TYPE_NAME *)this       \
+                               : nullptr;                       \
+   }                                                            \
+   const struct TYPE_NAME *HELPER_NAME() const {                \
+      return kind == ENUM_NAME ? (const struct TYPE_NAME *)this \
+                               : nullptr;                       \
+   }
+
+   KIND_HELPERS(as_send, brw_send_inst, BRW_KIND_SEND);
+   KIND_HELPERS(as_tex, brw_tex_inst, BRW_KIND_TEX);
+   KIND_HELPERS(as_mem, brw_mem_inst, BRW_KIND_MEM);
+   KIND_HELPERS(as_dpas, brw_dpas_inst, BRW_KIND_DPAS);
+   KIND_HELPERS(as_load_payload, brw_load_payload_inst, BRW_KIND_LOAD_PAYLOAD);
+   KIND_HELPERS(as_urb, brw_urb_inst, BRW_KIND_URB);
+   KIND_HELPERS(as_fb_write, brw_fb_write_inst, BRW_KIND_FB_WRITE);
+
+#undef KIND_HELPERS
 
    bool is_send() const;
    bool is_payload(unsigned arg) const;
@@ -137,7 +157,8 @@ public:
     */
    bool uses_address_register_implicitly() const;
 
-   uint8_t sources; /**< Number of brw_reg sources. */
+   enum opcode opcode;
+   brw_inst_kind kind;
 
    /**
     * Execution size of the instruction.  This is used by the generator to
@@ -155,61 +176,25 @@ public:
     */
    uint8_t group;
 
-   uint8_t mlen; /**< SEND message length */
-   uint8_t ex_mlen; /**< SENDS extended message length */
-   uint8_t sfid; /**< SFID for SEND instructions */
-   /** The number of hardware registers used for a message header. */
-   uint8_t header_size;
-   uint32_t desc; /**< SEND[S] message descriptor immediate */
-   uint32_t ex_desc; /**< SEND[S] extended message descriptor immediate */
+   uint8_t sources; /**< Number of brw_reg sources. */
 
-   uint32_t offset; /**< spill/unspill offset or texture offset bitfield */
-   unsigned size_written; /**< Data written to the destination register in bytes. */
-
-   enum opcode opcode; /* BRW_OPCODE_* or FS_OPCODE_* */
-   enum brw_conditional_mod conditional_mod; /**< BRW_CONDITIONAL_* */
    enum brw_predicate predicate;
+   enum brw_conditional_mod conditional_mod; /**< BRW_CONDITIONAL_* */
 
-   tgl_swsb sched; /**< Scheduling info. */
+   uint16_t size_written; /**< Data written to the destination register in bytes. */
 
    union {
       struct {
          /* Chooses which flag subregister (f0.0 to f3.1) is used for
           * conditional mod and predication.
           */
-         unsigned flag_subreg:3;
-
-         /**
-          * Systolic depth used by DPAS instruction.
-          */
-         unsigned sdepth:4;
-
-         /**
-          * Repeat count used by DPAS instruction.
-          */
-         unsigned rcount:4;
-
-         unsigned pad:4;
+         uint8_t flag_subreg:3;
 
          bool predicate_inverse:1;
          bool writes_accumulator:1; /**< instruction implicitly writes accumulator */
          bool force_writemask_all:1;
-         bool no_dd_clear:1;
-         bool no_dd_check:1;
          bool saturate:1;
-         bool check_tdr:1; /**< Only valid for SEND; turns it into a SENDC */
-         bool send_has_side_effects:1; /**< Only valid for SHADER_OPCODE_SEND */
-         bool send_is_volatile:1; /**< Only valid for SHADER_OPCODE_SEND */
-         bool send_ex_bso:1; /**< Only for SHADER_OPCODE_SEND, use extended
-                              *   bindless surface offset (26bits instead of
-                              *   20bits)
-                              */
-         /**
-          * Only for SHADER_OPCODE_SEND, @offset field contains an immediate
-          * part of the extended descriptor that must be encoded in the
-          * instruction.
-          */
-         bool send_ex_desc_imm:1;
+
          /**
           * The predication mask applied to this instruction is guaranteed to
           * be uniform and a superset of the execution mask of the present block.
@@ -227,13 +212,18 @@ public:
           * never executed.
           */
          bool has_no_mask_send_params:1;
+
+         uint8_t pad:5;
       };
-      uint32_t bits;
+      uint16_t bits;
    };
+
+   tgl_swsb sched; /**< Scheduling info. */
+
+   bblock_t *block;
 
    brw_reg dst;
    brw_reg *src;
-   brw_reg builtin_src[4];
 
 #ifndef NDEBUG
    /** @{
@@ -242,8 +232,94 @@ public:
    const char *annotation;
    /** @} */
 #endif
+};
 
-   bblock_t *block;
+struct brw_send_inst : brw_inst {
+   uint32_t desc;
+   uint32_t ex_desc;
+   uint32_t offset;
+
+   uint8_t mlen;
+   uint8_t ex_mlen;
+   uint8_t sfid;
+
+   /** The number of hardware registers used for a message header. */
+   uint8_t header_size;
+
+   union {
+      struct {
+         /**
+          * Turns it into a SENDC.
+          */
+         bool check_tdr:1;
+
+         bool has_side_effects:1;
+         bool is_volatile:1;
+
+         /**
+          * Use extended bindless surface offset (26bits instead of 20bits)
+          */
+         bool ex_bso:1;
+
+         /**
+          * Only for SHADER_OPCODE_SEND, @offset field contains an immediate
+          * part of the extended descriptor that must be encoded in the
+          * instruction.
+          */
+         bool ex_desc_imm:1;
+
+         uint8_t pad:3;
+      };
+      uint8_t send_bits;
+   };
+};
+
+struct brw_tex_inst : brw_inst {
+   uint32_t offset;
+   uint8_t coord_components;
+   uint8_t grad_components;
+   bool residency;
+};
+
+struct brw_mem_inst : brw_inst {
+   enum lsc_opcode lsc_op;
+   enum memory_logical_mode mode;
+   enum lsc_addr_surface_type binding_type;
+   enum lsc_data_size data_size;
+
+   uint8_t coord_components;
+   uint8_t components;
+   uint8_t flags;
+
+   /** Required alignment of address in bytes; 0 for natural alignment */
+   uint32_t alignment;
+
+   int32_t address_offset;
+};
+
+struct brw_dpas_inst : brw_inst {
+   /** Systolic depth. */
+   uint8_t sdepth;
+
+   /** Repeat count. */
+   uint8_t rcount;
+};
+
+struct brw_load_payload_inst : brw_inst {
+   /** The number of hardware registers used for a message header. */
+   uint8_t header_size;
+};
+
+struct brw_urb_inst : brw_inst {
+   uint32_t offset;
+   uint8_t components;
+};
+
+struct brw_fb_write_inst : brw_inst {
+   uint8_t components;
+   uint8_t target;
+   bool null_rt;
+   bool last_rt;
 };
 
 /**

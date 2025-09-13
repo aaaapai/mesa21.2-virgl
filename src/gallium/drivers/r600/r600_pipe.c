@@ -53,7 +53,7 @@ static void r600_destroy_context(struct pipe_context *context)
 	if (rctx->append_fence)
 		pipe_resource_reference((struct pipe_resource**)&rctx->append_fence, NULL);
 	for (sh = 0; sh < MESA_SHADER_STAGES; sh++) {
-		rctx->b.b.set_constant_buffer(&rctx->b.b, sh, R600_BUFFER_INFO_CONST_BUFFER, false, NULL);
+		rctx->b.b.set_constant_buffer(&rctx->b.b, sh, R600_BUFFER_INFO_CONST_BUFFER, NULL);
 		free(rctx->driver_consts[sh].constants);
 	}
 
@@ -85,7 +85,7 @@ static void r600_destroy_context(struct pipe_context *context)
 
 	for (sh = 0; sh < MESA_SHADER_STAGES; ++sh)
 		for (i = 0; i < PIPE_MAX_CONSTANT_BUFFERS; ++i)
-			rctx->b.b.set_constant_buffer(context, sh, i, false, NULL);
+			rctx->b.b.set_constant_buffer(context, sh, i, NULL);
 
 	if (rctx->blitter) {
 		util_blitter_destroy(rctx->blitter);
@@ -518,7 +518,7 @@ static void r600_init_screen_caps(struct r600_screen *rscreen)
 	caps->multi_draw_indirect =
 	caps->draw_parameters = family >= CHIP_CEDAR;
 	caps->multi_draw_indirect_params = family >= CHIP_CEDAR &&
-		drm_version >= r600_version_simple(2, 50, 1);
+		drm_version >= r600_version_simple(2, 51, 0);
 
 	caps->buffer_sampler_view_rgba_only = family < CHIP_CEDAR;
 

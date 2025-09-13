@@ -41,6 +41,7 @@
 #include "util/log.h"
 #include "util/macros.h"
 #include "util/ralloc.h"
+#include "util/range_minimum_query.h"
 #include "util/set.h"
 #include "util/u_math.h"
 #include "nir_defines.h"
@@ -3476,6 +3477,17 @@ typedef enum {
     */
    nir_metadata_divergence = 0x40,
 
+   /** Indicates that block dominance lca information is valid
+    *
+    * This includes:
+    *
+    *   - nir_function_impl::dom_lca_info
+    *
+    * A pass can preserve this metadata type if it preserves
+    * nir_metadata_dominance.
+    */
+   nir_metadata_dominance_lca = 0x80,
+
    /** All control flow metadata
     *
     * This includes all metadata preserved by a pass that preserves control flow
@@ -3486,7 +3498,8 @@ typedef enum {
     * This is the most common metadata set to preserve, so it has its own alias.
     */
    nir_metadata_control_flow = nir_metadata_block_index |
-                               nir_metadata_dominance,
+                               nir_metadata_dominance |
+                               nir_metadata_dominance_lca,
 
    /** All metadata
     *
@@ -3523,6 +3536,12 @@ typedef struct nir_function_impl {
 
    /* total number of basic blocks, only valid when block_index_dirty = false */
    unsigned num_blocks;
+
+   /** Information used for LCA queries */
+   struct nir_dom_lca_info {
+      struct range_minimum_query_table table;
+      nir_block **block_from_idx;
+   } dom_lca_info;
 
    /** True if this nir_function_impl uses structured control-flow
     *
@@ -3953,8 +3972,7 @@ void nir_fixup_is_exported(nir_shader *shader);
 
 nir_shader *nir_shader_create(void *mem_ctx,
                               mesa_shader_stage stage,
-                              const nir_shader_compiler_options *options,
-                              shader_info *si);
+                              const nir_shader_compiler_options *options);
 
 /** Adds a variable to the appropriate list in nir_shader */
 void nir_shader_add_variable(nir_shader *shader, nir_variable *var);
@@ -4921,8 +4939,18 @@ bool nir_shader_lower_instructions(nir_shader *shader,
 
 void nir_calc_dominance_impl(nir_function_impl *impl);
 void nir_calc_dominance(nir_shader *shader);
+void nir_calc_dominance_lca_impl(nir_function_impl *impl);
 
+/**
+ * Computes the lowest common ancestor of two blocks in the dominator tree.
+ *
+ * If one of the blocks is null or unreachable, the other block is returned or
+ * NULL if it's unreachable.
+ *
+ * Requires nir_metadata_dominance_lca
+ */
 nir_block *nir_dominance_lca(nir_block *b1, nir_block *b2);
+
 bool nir_block_dominates(nir_block *parent, nir_block *child);
 bool nir_block_is_unreachable(nir_block *block);
 
@@ -5402,9 +5430,6 @@ bool nir_move_vec_src_uses_to_dest(nir_shader *shader, bool skip_const_srcs);
 bool nir_move_output_stores_to_end(nir_shader *nir);
 bool nir_lower_vec_to_regs(nir_shader *shader, nir_instr_writemask_filter_cb cb,
                            const void *_data);
-bool nir_lower_alpha_test(nir_shader *shader, enum compare_func func,
-                          bool alpha_to_one,
-                          const gl_state_index16 *alpha_ref_state_tokens);
 
 bool nir_lower_alpha_to_coverage(nir_shader *shader,
                                  uint8_t nr_samples,
@@ -5489,7 +5514,6 @@ typedef struct nir_lower_subgroups_options {
    uint8_t ballot_bit_size;
    uint8_t ballot_components;
    bool lower_to_scalar : 1;
-   bool lower_fp64 : 1;
    bool lower_vote_trivial : 1;
    bool lower_vote_feq : 1;
    bool lower_vote_ieq : 1;
@@ -5919,9 +5943,6 @@ bool nir_lower_clip_cull_distance_to_vec4s(nir_shader *shader);
 bool nir_lower_clip_cull_distance_array_vars(nir_shader *nir);
 bool nir_lower_clip_disable(nir_shader *shader, unsigned clip_plane_enable);
 
-bool nir_lower_point_size_mov(nir_shader *shader,
-                              const gl_state_index16 *pointsize_state_tokens);
-
 bool nir_lower_frexp(nir_shader *nir);
 
 bool nir_lower_two_sided_color(nir_shader *shader, bool face_sysval);
@@ -5952,19 +5973,6 @@ bool nir_lower_pntc_ytransform(nir_shader *shader,
 bool nir_lower_wrmasks(nir_shader *shader, nir_instr_filter_cb cb, const void *data);
 
 bool nir_lower_fb_read(nir_shader *shader);
-
-typedef struct nir_lower_drawpixels_options {
-   gl_state_index16 texcoord_state_tokens[STATE_LENGTH];
-   gl_state_index16 scale_state_tokens[STATE_LENGTH];
-   gl_state_index16 bias_state_tokens[STATE_LENGTH];
-   unsigned drawpix_sampler;
-   unsigned pixelmap_sampler;
-   bool pixel_maps : 1;
-   bool scale_and_bias : 1;
-} nir_lower_drawpixels_options;
-
-bool nir_lower_drawpixels(nir_shader *shader,
-                          const nir_lower_drawpixels_options *options);
 
 typedef struct nir_lower_bitmap_options {
    unsigned sampler;

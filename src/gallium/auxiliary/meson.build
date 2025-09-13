@@ -385,8 +385,6 @@ if draw_with_llvm
 endif
 
 files_libgalliumvl = files(
-  'vl/vl_bicubic_filter.c',
-  'vl/vl_bicubic_filter.h',
   'vl/vl_codec.c',
   'vl/vl_codec.h',
   'vl/vl_compositor.c',
@@ -406,12 +404,8 @@ files_libgalliumvl = files(
   'vl/vl_deint_filter_cs.h',
   'vl/vl_idct.c',
   'vl/vl_idct.h',
-  'vl/vl_matrix_filter.c',
-  'vl/vl_matrix_filter.h',
   'vl/vl_mc.c',
   'vl/vl_mc.h',
-  'vl/vl_median_filter.c',
-  'vl/vl_median_filter.h',
   'vl/vl_mpeg12_bitstream.c',
   'vl/vl_mpeg12_bitstream.h',
   'vl/vl_mpeg12_decoder.c',
@@ -562,7 +556,7 @@ libgalliumvl = static_library(
 
 # some drivers export their screen creation function globally, so all frontends have to contain the
 # full libgalliumvl. So we'll handle this here globally for everybody.
-if (with_gallium_mediafoundation or with_gallium_va or with_gallium_vdpau or with_dri or with_gallium_radeonsi)
+if (with_gallium_mediafoundation or with_gallium_va or with_dri or with_gallium_radeonsi)
   libgalliumvl_stub = libgalliumvl
 else
   libgalliumvl_stub = _libgalliumvl_stub

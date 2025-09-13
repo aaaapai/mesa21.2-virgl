@@ -68,9 +68,6 @@ struct spirv_to_nir_options {
     */
    uint32_t float_controls_execution_mode;
 
-   /* Initial subgroup size.  This may be overwritten for CL kernels */
-   enum gl_subgroup_size subgroup_size;
-
    /* True if RelaxedPrecision-decorated ALU result values should be performed
     * with 16-bit math.
     */
@@ -152,6 +149,8 @@ struct spirv_to_nir_options {
    /* Shader index provided by VkPipelineShaderStageNodeCreateInfoAMDX */
    uint32_t shader_index;
 
+   /* If GroupNonUniform capability is used, set this api subgroup size. */
+   uint8_t group_non_uniform_subgroup_size;
 };
 
 enum spirv_verify_result {

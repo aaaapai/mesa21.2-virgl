@@ -21,6 +21,7 @@
 #include "drm-uapi/panthor_drm.h"
 
 #include "pan_kmod_backend.h"
+#include "pan_props.h"
 
 /* Maximum kmod BO label length, including NUL-terminator */
 #define PANTHOR_BO_LABEL_MAXLEN 4096
@@ -38,7 +39,7 @@ struct panthor_kmod_va_collect {
    uint64_t va;
 
    /* Size of the VA range to release. */
-   size_t size;
+   uint64_t size;
 };
 
 struct panthor_kmod_vm {
@@ -331,7 +332,7 @@ to_panthor_bo_flags(uint32_t flags)
 
 static struct pan_kmod_bo *
 panthor_kmod_bo_alloc(struct pan_kmod_dev *dev,
-                      struct pan_kmod_vm *exclusive_vm, size_t size,
+                      struct pan_kmod_vm *exclusive_vm, uint64_t size,
                       uint32_t flags)
 {
    /* We don't support allocating on-fault. */
@@ -400,7 +401,7 @@ panthor_kmod_bo_free(struct pan_kmod_bo *bo)
 }
 
 static struct pan_kmod_bo *
-panthor_kmod_bo_import(struct pan_kmod_dev *dev, uint32_t handle, size_t size,
+panthor_kmod_bo_import(struct pan_kmod_dev *dev, uint32_t handle, uint64_t size,
                        uint32_t flags)
 {
    struct panthor_kmod_bo *panthor_bo =
@@ -738,7 +739,7 @@ panthor_kmod_vm_create(struct pan_kmod_dev *dev, uint32_t flags,
       goto err_destroy_sync;
    }
 
-   pan_kmod_vm_init(&panthor_vm->base, dev, req.id, flags);
+   pan_kmod_vm_init(&panthor_vm->base, dev, req.id, flags, PAN_PGSIZE_4K | PAN_PGSIZE_2M);
    return &panthor_vm->base;
 
 err_destroy_sync:
@@ -820,7 +821,7 @@ panthor_kmod_vm_destroy(struct pan_kmod_vm *vm)
 }
 
 static uint64_t
-panthor_kmod_vm_alloc_va(struct panthor_kmod_vm *panthor_vm, size_t size)
+panthor_kmod_vm_alloc_va(struct panthor_kmod_vm *panthor_vm, uint64_t size)
 {
    uint64_t va;
 
@@ -829,7 +830,7 @@ panthor_kmod_vm_alloc_va(struct panthor_kmod_vm *panthor_vm, size_t size)
    simple_mtx_lock(&panthor_vm->auto_va.lock);
    panthor_kmod_vm_collect_freed_vas(panthor_vm);
    va = util_vma_heap_alloc(&panthor_vm->auto_va.heap, size,
-                            size > 0x200000 ? 0x200000 : 0x1000);
+      pan_choose_gpu_va_alignment(&panthor_vm->base, size));
    simple_mtx_unlock(&panthor_vm->auto_va.lock);
 
    return va;
@@ -837,7 +838,7 @@ panthor_kmod_vm_alloc_va(struct panthor_kmod_vm *panthor_vm, size_t size)
 
 static void
 panthor_kmod_vm_free_va(struct panthor_kmod_vm *panthor_vm, uint64_t va,
-                        size_t size)
+                        uint64_t size)
 {
    assert(panthor_vm->base.flags & PAN_KMOD_VM_FLAG_AUTO_VA);
 

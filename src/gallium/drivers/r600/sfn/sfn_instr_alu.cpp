@@ -48,6 +48,34 @@ get_dest_mask(EAluOp opcode, int slots, bool is_cayman_trans)
 }
 
 AluInstr::AluInstr(EAluOp opcode,
+                   int chan,
+                   SrcValues src,
+                   const std::set<AluModifiers>& flags):
+    m_opcode(opcode),
+    m_bank_swizzle(alu_vec_unknown),
+    m_cf_type(cf_alu),
+    m_alu_slots(1),
+    m_fallback_chan(chan)
+{
+   m_src.swap(src);
+
+   if (m_src.size() == 3)
+      m_alu_flags.set(alu_op3);
+
+   for (auto f : flags)
+      m_alu_flags.set(f);
+
+   ASSERT_OR_THROW(m_src.size() ==
+                      static_cast<size_t>(alu_ops.at(opcode).nsrc * m_alu_slots),
+                   "Unexpected number of source values");
+
+   update_uses();
+
+   m_allowed_dest_mask = BITSET_BIT(m_fallback_chan);
+}
+
+
+AluInstr::AluInstr(EAluOp opcode,
                    PRegister dest,
                    SrcValues src,
                    const std::set<AluModifiers>& flags,
@@ -855,7 +883,7 @@ r600_multislot_get_last_opcode_and_slot(EAluOp opcode, int dest_chan)
 }
 
 bool
-AluInstr::split(ValueFactory& vf, AluGroup& group)
+AluInstr::split(AluGroup& group)
 {
    if (m_alu_slots == 1)
       return false;
@@ -882,15 +910,18 @@ AluInstr::split(ValueFactory& vf, AluGroup& group)
       }
    }
 
-   m_dest->del_parent(this);
+   if (m_dest)
+      m_dest->del_parent(this);
 
    auto [last_opcode, start_slot] =
-      r600_multislot_get_last_opcode_and_slot(m_opcode, m_dest->chan());
+      r600_multislot_get_last_opcode_and_slot(m_opcode, dest_chan());
+
+   assert(start_slot + m_alu_slots <= 4);
 
    for (int k = 0; k < m_alu_slots; ++k) {
       int dest_slot = k + start_slot;
 
-      PRegister dst = dest_slot == m_dest->chan() ? m_dest : vf.dummy_dest(dest_slot);
+      PRegister dst = (m_dest && (dest_slot == m_dest->chan())) ? m_dest : nullptr;
 
       SrcValues src;
       int nsrc = alu_ops.at(m_opcode).nsrc;
@@ -900,7 +931,11 @@ AluInstr::split(ValueFactory& vf, AluGroup& group)
 
       auto opcode = k < m_alu_slots -1 ? m_opcode : last_opcode;
 
-      auto instr = new AluInstr(opcode, dst, src, {}, 1);
+      AluInstr *instr;
+      if (dst)
+          instr = new AluInstr(opcode, dst, src, {}, 1);
+      else
+         instr = new AluInstr(opcode, dest_slot, src, {});
       instr->set_blockid(block_id(), index());
       instr->pin_dest_to_chan();
 
@@ -919,15 +954,18 @@ AluInstr::split(ValueFactory& vf, AluGroup& group)
       if (has_alu_flag(alu_dst_clamp))
          instr->set_alu_flag(alu_dst_clamp);
 
-      if (dest_slot == m_dest->chan())
+      if (has_alu_flag(alu_write) && m_dest && (dest_slot == m_dest->chan()))
          instr->set_alu_flag(alu_write);
 
-      m_dest->add_parent(instr);
+      if (m_dest)
+         m_dest->add_parent(instr);
 
       if (!group.add_instruction(instr)) {
          std::cerr << "Unable to schedule '" << *instr << "' into\n" << group << "\n";
          UNREACHABLE("Invalid group instruction");
       }
+
+      instr->set_cf_type(cf_type());
    }
    group.set_blockid(block_id(), index());
 
@@ -1019,6 +1057,18 @@ AluInstr::propagate_death()
          reg->del_use(this);
    }
    return true;
+}
+
+void AluInstr::set_allowed_dest_chan_mask(uint8_t mask)
+{
+   assert(!m_dest && "We override the fallback channel only");
+   m_allowed_dest_mask = mask;
+
+
+   if (!(BITSET_BIT(m_fallback_chan) & m_allowed_dest_mask)) {
+      unsigned m = mask;
+      m_fallback_chan = u_bit_scan(&m);
+   }
 }
 
 bool
@@ -1251,17 +1301,21 @@ AluInstr::from_string(istream& is, ValueFactory& value_factory, AluGroup *group,
 
    PRegister dest = nullptr;
    // construct instruction
+   int chan = -1;
 
    if (deststr != "(null)")
-      dest = value_factory.dest_from_string(deststr);
+      dest = value_factory.dest_from_string(deststr, &chan);
 
    AluInstr *retval = nullptr;
    if (is_lds)
       retval = new AluInstr(op_descr.lds_opcode, sources, flags);
    else {
-      if (op_descr.alu_opcode != op0_nop && op_descr.alu_opcode != op0_group_barrier)
-         retval = new AluInstr(op_descr.alu_opcode, dest, sources, flags, slots);
-      else {
+      if (op_descr.alu_opcode != op0_nop && op_descr.alu_opcode != op0_group_barrier) {
+         if (dest)
+            retval = new AluInstr(op_descr.alu_opcode, dest, sources, flags, slots);
+         else
+            retval = new AluInstr(op_descr.alu_opcode, chan, sources, flags);
+      } else {
          retval = new AluInstr(op_descr.alu_opcode, 0);
          for (auto f : flags)
             retval->set_alu_flag(f);

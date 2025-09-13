@@ -229,7 +229,7 @@ pp_filter_setup_out(struct pp_program *p, struct pipe_resource *out)
 void
 pp_filter_end_pass(struct pp_program *p)
 {
-   pipe_sampler_view_reference(&p->view, NULL);
+   pipe_sampler_view_release_ptr(&p->view);
 }
 
 /**
@@ -290,7 +290,7 @@ pp_filter_misc_state(struct pp_program *p)
 void
 pp_filter_draw(struct pp_program *p)
 {
-   util_draw_vertex_buffer(p->pipe, p->cso, p->vbuf, 0, false,
+   util_draw_vertex_buffer(p->pipe, p->cso, p->vbuf, 0,
                            MESA_PRIM_QUADS, 4, 2);
 }
 

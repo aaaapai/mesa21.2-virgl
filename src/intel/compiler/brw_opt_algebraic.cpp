@@ -86,8 +86,8 @@ brw_imm_for_type(uint64_t value, enum brw_reg_type type)
 /**
  * Converts a MAD to an ADD by folding the multiplicand sources.
  */
-static void
-fold_multiplicands_of_MAD(brw_inst *inst)
+static brw_inst *
+fold_multiplicands_of_MAD(brw_shader &s, brw_inst *inst)
 {
    assert(inst->opcode == BRW_OPCODE_MAD);
    assert (inst->src[1].file == IMM &&
@@ -128,13 +128,13 @@ fold_multiplicands_of_MAD(brw_inst *inst)
       }
    }
 
-   inst->opcode = BRW_OPCODE_ADD;
-   inst->resize_sources(2);
+   return brw_transform_inst(s, inst, BRW_OPCODE_ADD);
 }
 
 bool
-brw_opt_constant_fold_instruction(const intel_device_info *devinfo, brw_inst *inst)
+brw_opt_constant_fold_instruction(brw_shader &s, brw_inst *inst)
 {
+   const intel_device_info *devinfo = s.devinfo;
    brw_reg result;
 
    result.file = BAD_FILE;
@@ -187,10 +187,10 @@ brw_opt_constant_fold_instruction(const intel_device_info *devinfo, brw_inst *in
           !brw_type_is_vector_imm(inst->src[0].type) &&
           !brw_type_is_vector_imm(inst->src[1].type) &&
           !brw_type_is_vector_imm(inst->src[2].type)) {
-         fold_multiplicands_of_MAD(inst);
+         inst = fold_multiplicands_of_MAD(s, inst);
          assert(inst->opcode == BRW_OPCODE_ADD);
 
-         ASSERTED bool folded = brw_opt_constant_fold_instruction(devinfo, inst);
+         ASSERTED bool folded = brw_opt_constant_fold_instruction(s, inst);
          assert(folded);
 
          return true;
@@ -278,9 +278,9 @@ brw_opt_constant_fold_instruction(const intel_device_info *devinfo, brw_inst *in
 
    case SHADER_OPCODE_BROADCAST:
       if (inst->src[0].file == IMM) {
-         inst->opcode = BRW_OPCODE_MOV;
+         inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
+
          inst->force_writemask_all = true;
-         inst->resize_sources(1);
 
          /* The destination of BROADCAST will always be is_scalar, so the
           * allocation will always be REG_SIZE * reg_unit. Adjust the
@@ -315,9 +315,9 @@ brw_opt_constant_fold_instruction(const intel_device_info *devinfo, brw_inst *in
    if (result.file != BAD_FILE) {
       assert(result.file == IMM);
 
-      inst->opcode = BRW_OPCODE_MOV;
+      inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
+
       inst->src[0] = result;
-      inst->resize_sources(1);
       return true;
    }
 
@@ -331,7 +331,7 @@ brw_opt_algebraic(brw_shader &s)
    bool progress = false;
 
    foreach_block_and_inst_safe(block, brw_inst, inst, s.cfg) {
-      if (brw_opt_constant_fold_instruction(devinfo, inst)) {
+      if (brw_opt_constant_fold_instruction(s, inst)) {
          progress = true;
          continue;
       }
@@ -340,8 +340,7 @@ brw_opt_algebraic(brw_shader &s)
       case BRW_OPCODE_ADD:
          if (brw_type_is_int(inst->src[1].type) &&
                     inst->src[1].is_zero()) {
-            inst->opcode = BRW_OPCODE_MOV;
-            inst->resize_sources(1);
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
             progress = true;
          }
 
@@ -372,14 +371,12 @@ brw_opt_algebraic(brw_shader &s)
             assert(src.file != BAD_FILE);
 
             if (uint32_t(sum) == 0) {
-               inst->opcode = BRW_OPCODE_MOV;
+               inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
                inst->src[0] = src;
-               inst->resize_sources(1);
             } else {
-               inst->opcode = BRW_OPCODE_ADD;
+               inst = brw_transform_inst(s, inst, BRW_OPCODE_ADD);
                inst->src[0] = src;
                inst->src[1] = brw_imm_ud(sum);
-               inst->resize_sources(2);
             }
 
             progress = true;
@@ -389,9 +386,8 @@ brw_opt_algebraic(brw_shader &s)
              */
             for (unsigned i = 0; i < 3; i++) {
                if (inst->src[i].is_zero()) {
-                  inst->opcode = BRW_OPCODE_ADD;
                   inst->src[i] = inst->src[2];
-                  inst->resize_sources(2);
+                  inst = brw_transform_inst(s, inst, BRW_OPCODE_ADD);
                   progress = true;
                   break;
                }
@@ -461,12 +457,14 @@ brw_opt_algebraic(brw_shader &s)
                break;
 
             for (unsigned i = 0; i < 2; i++) {
+               bool found = false;
+
                /* a * 1 = a */
                if (inst->src[i].is_one()) {
-                  inst->opcode = BRW_OPCODE_MOV;
+                  found = true;
                } else if (inst->src[i].is_negative_one()) {
                   /* a * -1 = -a */
-                  inst->opcode = BRW_OPCODE_MOV;
+                  found = true;
 
                   /* If the source other than the -1 is immediate, just
                    * toggling the negation flag will not work. Due to the
@@ -477,12 +475,12 @@ brw_opt_algebraic(brw_shader &s)
                   inst->src[1 - i].negate = !inst->src[1 - i].negate;
                }
 
-               if (inst->opcode == BRW_OPCODE_MOV) {
+               if (found) {
                   /* If the literal 1 was src0, put the old src1 in src0. */
                   if (i == 0)
                      inst->src[0] = inst->src[1];
 
-                  inst->resize_sources(1);
+                  inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
                   progress = true;
                   break;
                }
@@ -506,7 +504,7 @@ brw_opt_algebraic(brw_shader &s)
             if (!inst->src[0].negate)
                inst->conditional_mod = brw_negate_cmod(inst->conditional_mod);
 
-            inst->opcode = BRW_OPCODE_MOV;
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
             inst->src[0].negate = false;
             progress = true;
          }
@@ -519,12 +517,11 @@ brw_opt_algebraic(brw_shader &s)
              * or 'OR r0, ~r1, ~r1' should become a NOT instead of a MOV.
              */
             if (inst->src[0].negate) {
-               inst->opcode = BRW_OPCODE_NOT;
+               inst = brw_transform_inst(s, inst, BRW_OPCODE_NOT);
                inst->src[0].negate = false;
             } else {
-               inst->opcode = BRW_OPCODE_MOV;
+               inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
             }
-            inst->resize_sources(1);
             progress = true;
             break;
          }
@@ -551,11 +548,10 @@ brw_opt_algebraic(brw_shader &s)
          if (inst->src[0].equals(inst->src[1]) &&
              (!brw_type_is_float(inst->dst.type) ||
               inst->conditional_mod == BRW_CONDITIONAL_NONE)) {
-            inst->opcode = BRW_OPCODE_MOV;
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
             inst->predicate = BRW_PREDICATE_NONE;
             inst->predicate_inverse = false;
             inst->conditional_mod = BRW_CONDITIONAL_NONE;
-            inst->resize_sources(1);
             progress = true;
          } else if (inst->saturate && inst->src[1].file == IMM) {
             switch (inst->conditional_mod) {
@@ -564,9 +560,8 @@ brw_opt_algebraic(brw_shader &s)
                switch (inst->src[1].type) {
                case BRW_TYPE_F:
                   if (inst->src[1].f >= 1.0f) {
-                     inst->opcode = BRW_OPCODE_MOV;
+                     inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
                      inst->conditional_mod = BRW_CONDITIONAL_NONE;
-                     inst->resize_sources(1);
                      progress = true;
                   }
                   break;
@@ -579,9 +574,8 @@ brw_opt_algebraic(brw_shader &s)
                switch (inst->src[1].type) {
                case BRW_TYPE_F:
                   if (inst->src[1].f <= 0.0f) {
-                     inst->opcode = BRW_OPCODE_MOV;
+                     inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
                      inst->conditional_mod = BRW_CONDITIONAL_NONE;
-                     inst->resize_sources(1);
                      progress = true;
                   }
                   break;
@@ -652,15 +646,13 @@ brw_opt_algebraic(brw_shader &s)
                   break;
                case BRW_CONDITIONAL_G:
                   /* This is a contradtion. -abs(x) cannot be > 0. */
-                  inst->opcode = BRW_OPCODE_MOV;
                   inst->src[0] = inst->src[1];
-                  inst->resize_sources(1);
+                  inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
                   progress = true;
                   break;
                case BRW_CONDITIONAL_LE:
                   /* This is a tautology. -abs(x) must be <= 0. */
-                  inst->opcode = BRW_OPCODE_MOV;
-                  inst->resize_sources(1);
+                  inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
                   progress = true;
                   break;
                case BRW_CONDITIONAL_Z:
@@ -680,7 +672,7 @@ brw_opt_algebraic(brw_shader &s)
              inst->src[2].file == IMM &&
              !brw_type_is_vector_imm(inst->src[1].type) &&
              !brw_type_is_vector_imm(inst->src[2].type)) {
-            fold_multiplicands_of_MAD(inst);
+            fold_multiplicands_of_MAD(s, inst);
 
             /* This could result in (x + 0). For floats, we want to leave this
              * as an ADD so that a subnormal x will get flushed to zero.
@@ -691,19 +683,18 @@ brw_opt_algebraic(brw_shader &s)
          }
 
          if (inst->src[1].is_one()) {
-            inst->opcode = BRW_OPCODE_ADD;
             inst->src[1] = inst->src[2];
-            inst->resize_sources(2);
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_ADD);
             progress = true;
          } else if (inst->src[2].is_one()) {
-            inst->opcode = BRW_OPCODE_ADD;
-            inst->resize_sources(2);
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_ADD);
             progress = true;
          }
          break;
       case SHADER_OPCODE_BROADCAST:
          if (is_uniform(inst->src[0])) {
-            inst->opcode = BRW_OPCODE_MOV;
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
+
             inst->force_writemask_all = true;
 
             /* The destination of BROADCAST will always be is_scalar, so the
@@ -712,10 +703,8 @@ brw_opt_algebraic(brw_shader &s)
              */
             inst->exec_size = 8 * reg_unit(devinfo);
             assert(inst->size_written == inst->dst.component_size(inst->exec_size));
-            inst->resize_sources(1);
             progress = true;
          } else if (inst->src[1].file == IMM) {
-            inst->opcode = BRW_OPCODE_MOV;
             /* It's possible that the selected component will be too large and
              * overflow the register.  This can happen if someone does a
              * readInvocation() from GLSL or SPIR-V and provides an OOB
@@ -730,21 +719,21 @@ brw_opt_algebraic(brw_shader &s)
             inst->force_writemask_all = true;
             inst->exec_size = 8 * reg_unit(devinfo);
             assert(inst->size_written == inst->dst.component_size(inst->exec_size));
-            inst->resize_sources(1);
+
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
+
             progress = true;
          }
          break;
 
       case SHADER_OPCODE_SHUFFLE:
          if (is_uniform(inst->src[0])) {
-            inst->opcode = BRW_OPCODE_MOV;
-            inst->resize_sources(1);
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
             progress = true;
          } else if (inst->src[1].file == IMM) {
             const unsigned comp = inst->src[1].ud & (inst->exec_size - 1);
-            inst->opcode = BRW_OPCODE_MOV;
             inst->src[0] = component(inst->src[0], comp);
-            inst->resize_sources(1);
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
             progress = true;
          }
          break;
@@ -769,8 +758,7 @@ brw_opt_algebraic(brw_shader &s)
    }
 
    if (progress)
-      s.invalidate_analysis(BRW_DEPENDENCY_INSTRUCTION_DATA_FLOW |
-                            BRW_DEPENDENCY_INSTRUCTION_DETAIL);
+      s.invalidate_analysis(BRW_DEPENDENCY_INSTRUCTIONS);
 
    return progress;
 }

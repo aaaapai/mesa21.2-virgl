@@ -46,7 +46,7 @@ struct panvk_subqueue {
 
    struct {
       struct pan_kmod_bo *bo;
-      size_t size;
+      uint64_t size;
       struct {
          uint64_t dev;
          void *host;
@@ -57,7 +57,7 @@ struct panvk_subqueue {
 struct panvk_desc_ringbuf {
    struct panvk_priv_mem syncobj;
    struct pan_kmod_bo *bo;
-   size_t size;
+   uint64_t size;
    struct {
       uint64_t dev;
       void *host;
@@ -89,8 +89,7 @@ VkResult panvk_per_arch(create_gpu_queue)(
    uint32_t queue_idx, struct vk_queue **out_queue);
 void panvk_per_arch(destroy_gpu_queue)(struct vk_queue *vk_queue);
 VkResult panvk_per_arch(gpu_queue_submit)(struct vk_queue *vk_queue,
-                                      struct vk_queue_submit *vk_submit);
-VkResult panvk_per_arch(gpu_queue_check_status)(
-   struct vk_queue *vk_queue);
+                                          struct vk_queue_submit *vk_submit);
+VkResult panvk_per_arch(gpu_queue_check_status)(struct vk_queue *vk_queue);
 
 #endif

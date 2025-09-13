@@ -1109,8 +1109,6 @@ gfx_program_create(struct zink_context *ctx,
    prog->base.removed = true;
    prog->optimal_keys = screen->optimal_keys;
 
-   prog->has_edgeflags = prog->shaders[MESA_SHADER_VERTEX] &&
-                         prog->shaders[MESA_SHADER_VERTEX]->has_edgeflags;
    for (int i = 0; i < ZINK_GFX_SHADER_COUNT; ++i) {
       util_dynarray_init(&prog->shader_cache[i][0][0], prog->base.ralloc_ctx);
       util_dynarray_init(&prog->shader_cache[i][0][1], prog->base.ralloc_ctx);
@@ -1148,6 +1146,8 @@ gfx_program_create(struct zink_context *ctx,
       prog->last_vertex_stage = stages[MESA_SHADER_TESS_EVAL];
    else
       prog->last_vertex_stage = stages[MESA_SHADER_VERTEX];
+   prog->has_edgeflags = prog->shaders[MESA_SHADER_VERTEX] &&
+                         prog->shaders[MESA_SHADER_VERTEX]->has_edgeflags;
 
    for (int i = 0; i < ARRAY_SIZE(prog->pipelines); ++i) {
       _mesa_hash_table_init(&prog->pipelines[i], prog->base.ralloc_ctx, NULL, zink_get_gfx_pipeline_eq_func(screen, prog));
@@ -1532,6 +1532,7 @@ create_compute_program(struct zink_context *ctx, nir_shader *nir)
    if (!comp)
       return NULL;
    simple_mtx_init(&comp->cache_lock, mtx_plain);
+   comp->uses_bindless = nir->info.uses_bindless;
    comp->scratch_size = nir->scratch_size;
    comp->nir = nir;
    comp->num_inlinable_uniforms = nir->info.num_inlinable_uniforms;
@@ -1752,6 +1753,9 @@ zink_get_compute_pipeline(struct zink_screen *screen,
       state->pipeline = comp->base_pipeline;
       return state->pipeline;
    }
+   state->module_hash = comp->curr->hash;
+   state->module = comp->curr->obj.mod;
+   state->final_hash ^= state->module_hash;
    entry = _mesa_hash_table_search_pre_hashed(&comp->pipelines, state->final_hash, state);
 
    if (!entry) {
@@ -1817,6 +1821,8 @@ bind_gfx_stage(struct zink_context *ctx, mesa_shader_stage stage, struct zink_sh
    if (shader) {
       ctx->shader_stages |= BITFIELD_BIT(stage);
       ctx->gfx_hash ^= ctx->gfx_stages[stage]->hash;
+      if (shader->info.uses_bindless)
+         zink_descriptors_init_bindless(ctx);
    } else {
       ctx->gfx_pipeline_state.modules[stage] = VK_NULL_HANDLE;
       if (ctx->curr_program)
@@ -2071,9 +2077,6 @@ zink_create_cs_state(struct pipe_context *pctx,
    else
       nir = (struct nir_shader *)shader->prog;
 
-   if (nir->info.uses_bindless)
-      zink_descriptors_init_bindless(zink_context(pctx));
-
    return create_compute_program(zink_context(pctx), nir);
 }
 
@@ -2089,21 +2092,18 @@ zink_bind_cs_state(struct pipe_context *pctx,
       ctx->shader_has_inlinable_uniforms_mask &= ~(1 << MESA_SHADER_COMPUTE);
 
    if (ctx->curr_compute) {
-      zink_batch_reference_program(ctx, &ctx->curr_compute->base);
       ctx->compute_pipeline_state.final_hash ^= ctx->compute_pipeline_state.module_hash;
       ctx->compute_pipeline_state.module = VK_NULL_HANDLE;
       ctx->compute_pipeline_state.module_hash = 0;
    }
    ctx->compute_pipeline_state.dirty = true;
-   ctx->curr_compute = comp;
    if (comp && comp != ctx->curr_compute) {
-      ctx->compute_pipeline_state.module_hash = ctx->curr_compute->curr->hash;
-      if (util_queue_fence_is_signalled(&comp->base.cache_fence))
-         ctx->compute_pipeline_state.module = ctx->curr_compute->curr->obj.mod;
-      ctx->compute_pipeline_state.final_hash ^= ctx->compute_pipeline_state.module_hash;
       if (ctx->compute_pipeline_state.key.base.nonseamless_cube_mask)
          ctx->compute_dirty = true;
+      if (comp->uses_bindless)
+         zink_descriptors_init_bindless(ctx);
    }
+   ctx->curr_compute = comp;
    zink_select_launch_grid(ctx);
 }
 
@@ -2130,6 +2130,7 @@ static void
 zink_delete_cs_shader_state(struct pipe_context *pctx, void *cso)
 {
    struct zink_compute_program *comp = cso;
+   zink_batch_reference_program(zink_context(pctx), cso);
    zink_compute_program_reference(zink_screen(pctx->screen), &comp, NULL);
 }
 
@@ -2318,8 +2319,6 @@ zink_create_gfx_shader_state(struct pipe_context *pctx, const struct pipe_shader
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT && nir->info.fs.uses_fbfetch_output)
       zink_descriptor_util_init_fbfetch(zink_context(pctx));
-   if (nir->info.uses_bindless)
-      zink_descriptors_init_bindless(zink_context(pctx));
 
    struct zink_shader *zs = zink_shader_create(zink_screen(pctx->screen), nir);
    if (zink_debug & ZINK_DEBUG_NOBGC)

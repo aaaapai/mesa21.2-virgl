@@ -1,5 +1,5 @@
 {
-    "$schema": "https://schema.khronos.org/vulkan/profiles-0.8.2-271.json",
+    "$schema": "https://schema.khronos.org/vulkan/profiles-0.8.2-326.json",
     "capabilities": {
         "vulkan10requirements": {
             "features": {
@@ -409,6 +409,7 @@
                 "VK_EXT_provoking_vertex": 1,
                 "VK_EXT_attachment_feedback_loop_layout": 1,
                 "VK_EXT_attachment_feedback_loop_dynamic_state": 1,
+                "VK_KHR_maintenance5": 1,
                 "VK_KHR_maintenance6": 1,
                 "VK_KHR_maintenance7": 1,
                 "VK_KHR_maintenance8": 1
@@ -451,6 +452,9 @@
                 "VkPhysicalDeviceAttachmentFeedbackLoopDynamicStateFeaturesEXT": {
                     "attachmentFeedbackLoopDynamicState": true
                 },
+                "VkPhysicalDeviceMaintenance5FeaturesKHR": {
+                    "maintenance5": true
+                },
                 "VkPhysicalDeviceMaintenance6FeaturesKHR": {
                     "maintenance6": true
                 },
@@ -463,7 +467,10 @@
             },
             "properties": {
                 "VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT": {
-
+                    "graphicsPipelineLibraryFastLinking": true
+                },
+                "VkPhysicalDeviceMaintenance5PropertiesKHR": {
+                    "polygonModePointSize": true
                 }
             }
         },

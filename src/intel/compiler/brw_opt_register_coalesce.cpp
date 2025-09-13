@@ -48,14 +48,16 @@ static bool
 is_nop_mov(const brw_inst *inst)
 {
    if (inst->opcode == SHADER_OPCODE_LOAD_PAYLOAD) {
-      brw_reg dst = inst->dst;
-      for (int i = 0; i < inst->sources; i++) {
-         if (!dst.equals(inst->src[i])) {
+      const brw_load_payload_inst *lp = inst->as_load_payload();
+
+      brw_reg dst = lp->dst;
+      for (int i = 0; i < lp->sources; i++) {
+         if (!dst.equals(lp->src[i])) {
             return false;
          }
-         dst.offset += (i < inst->header_size ? REG_SIZE :
-                        inst->exec_size * dst.stride *
-                        brw_type_size_bytes(inst->src[i].type));
+         dst.offset += (i < lp->header_size ? REG_SIZE :
+                        lp->exec_size * dst.stride *
+                        brw_type_size_bytes(lp->src[i].type));
       }
       return true;
    } else if (inst->opcode == BRW_OPCODE_MOV) {
@@ -268,12 +270,12 @@ brw_opt_register_coalesce(brw_shader &s)
    int *src_var = new int[live.max_vgrf_size];
    const brw_def_analysis &defs = s.def_analysis.require();
 
-   foreach_block_and_inst(block, brw_inst, inst, s.cfg) {
+   foreach_block_and_inst_safe(block, brw_inst, inst, s.cfg) {
       if (!is_coalesce_candidate(&s, inst))
          continue;
 
       if (is_nop_mov(inst)) {
-         inst->opcode = BRW_OPCODE_NOP;
+         inst = brw_transform_inst(s, inst, BRW_OPCODE_NOP);
          progress = true;
          continue;
       }
@@ -365,7 +367,7 @@ brw_opt_register_coalesce(brw_shader &s)
             continue;
 
          if (mov[i]->conditional_mod == BRW_CONDITIONAL_NONE) {
-            mov[i]->opcode = BRW_OPCODE_NOP;
+            mov[i] = brw_transform_inst(s, mov[i], BRW_OPCODE_NOP);
             mov[i]->dst = reg_undef;
             for (int j = 0; j < mov[i]->sources; j++) {
                mov[i]->src[j] = reg_undef;

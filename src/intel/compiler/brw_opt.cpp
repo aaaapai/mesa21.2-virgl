@@ -234,7 +234,7 @@ brw_optimize(brw_shader &s)
 }
 
 static unsigned
-load_payload_sources_read_for_size(brw_inst *lp, unsigned size_read)
+load_payload_sources_read_for_size(brw_load_payload_inst *lp, unsigned size_read)
 {
    assert(lp->opcode == SHADER_OPCODE_LOAD_PAYLOAD);
    assert(size_read >= lp->header_size * REG_SIZE);
@@ -263,9 +263,12 @@ brw_opt_zero_samples(brw_shader &s)
 {
    bool progress = false;
 
-   foreach_block_and_inst(block, brw_inst, send, s.cfg) {
-      if (send->opcode != SHADER_OPCODE_SEND ||
-          send->sfid != BRW_SFID_SAMPLER)
+   foreach_block_and_inst(block, brw_inst, inst, s.cfg) {
+      if (inst->opcode != SHADER_OPCODE_SEND)
+         continue;
+
+      brw_send_inst *send = inst->as_send();
+      if (send->sfid != BRW_SFID_SAMPLER)
          continue;
 
       /* Wa_14012688258:
@@ -280,10 +283,12 @@ brw_opt_zero_samples(brw_shader &s)
       if (send->ex_mlen > 0)
          continue;
 
-      brw_inst *lp = (brw_inst *) send->prev;
+      brw_inst *prev = (brw_inst *) send->prev;
 
-      if (lp->is_head_sentinel() || lp->opcode != SHADER_OPCODE_LOAD_PAYLOAD)
+      if (prev->is_head_sentinel() || prev->opcode != SHADER_OPCODE_LOAD_PAYLOAD)
          continue;
+
+      brw_load_payload_inst *lp = prev->as_load_payload();
 
       /* How much of the payload are actually read by this SEND. */
       const unsigned params =
@@ -340,17 +345,22 @@ brw_opt_split_sends(brw_shader &s)
 {
    bool progress = false;
 
-   foreach_block_and_inst(block, brw_inst, send, s.cfg) {
-      if (send->opcode != SHADER_OPCODE_SEND ||
-          send->mlen <= reg_unit(s.devinfo) || send->ex_mlen > 0 ||
+   foreach_block_and_inst(block, brw_inst, inst, s.cfg) {
+      if (inst->opcode != SHADER_OPCODE_SEND)
+         continue;
+
+      brw_send_inst *send = inst->as_send();
+      if (send->mlen <= reg_unit(s.devinfo) || send->ex_mlen > 0 ||
           send->src[SEND_SRC_PAYLOAD1].file != VGRF)
          continue;
 
       /* Currently don't split sends that reuse a previously used payload. */
-      brw_inst *lp = (brw_inst *) send->prev;
+      brw_inst *prev = (brw_inst *) send->prev;
 
-      if (lp->is_head_sentinel() || lp->opcode != SHADER_OPCODE_LOAD_PAYLOAD)
+      if (prev->is_head_sentinel() || prev->opcode != SHADER_OPCODE_LOAD_PAYLOAD)
          continue;
+
+      brw_load_payload_inst *lp = prev->as_load_payload();
 
       if (lp->dst.file != send->src[SEND_SRC_PAYLOAD1].file ||
           lp->dst.nr != send->src[SEND_SRC_PAYLOAD1].nr)
@@ -500,9 +510,8 @@ brw_opt_eliminate_find_live_channel(brw_shader &s)
 
       case SHADER_OPCODE_FIND_LIVE_CHANNEL:
          if (depth == 0) {
-            inst->opcode = BRW_OPCODE_MOV;
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_MOV);
 
-            inst->resize_sources(1);
             inst->src[0] = brw_imm_ud(0u);
             inst->force_writemask_all = true;
 
@@ -528,14 +537,15 @@ brw_opt_eliminate_find_live_channel(brw_shader &s)
                 inst->dst.file == bcast->src[1].file &&
                 inst->dst.nr == bcast->src[1].nr &&
                 inst->dst.offset == bcast->src[1].offset) {
-               bcast->opcode = BRW_OPCODE_MOV;
+
+               bcast = brw_transform_inst(s, bcast, BRW_OPCODE_MOV);
+
                if (!is_uniform(bcast->src[0]))
                   bcast->src[0] = component(bcast->src[0], 0);
 
                bcast->force_writemask_all = true;
                bcast->exec_size = 8 * reg_unit(s.devinfo);
                assert(bcast->size_written == bcast->dst.component_size(bcast->exec_size));
-               bcast->resize_sources(1);
             }
          }
          break;
@@ -619,19 +629,21 @@ brw_opt_send_to_send_gather(brw_shader &s)
       if (inst->opcode != SHADER_OPCODE_SEND)
          continue;
 
+      brw_send_inst *send = inst->as_send();
+
       /* For 1-2 registers, send-gather offers no benefits over split-send. */
-      if (inst->mlen + inst->ex_mlen <= 2 * unit)
+      if (send->mlen + send->ex_mlen <= 2 * unit)
          continue;
 
-      assert(inst->mlen % unit == 0);
-      assert(inst->ex_mlen % unit == 0);
+      assert(send->mlen % unit == 0);
+      assert(send->ex_mlen % unit == 0);
 
       struct {
          brw_reg src;
          unsigned phys_len;
       } payload[2] = {
-         { inst->src[SEND_SRC_PAYLOAD1], inst->mlen / unit },
-         { inst->src[SEND_SRC_PAYLOAD2], inst->ex_mlen / unit },
+         { send->src[SEND_SRC_PAYLOAD1], send->mlen / unit },
+         { send->src[SEND_SRC_PAYLOAD2], send->ex_mlen / unit },
       };
 
       const unsigned num_payload_sources = payload[0].phys_len + payload[1].phys_len;
@@ -645,24 +657,25 @@ brw_opt_send_to_send_gather(brw_shader &s)
          continue;
       }
 
-      inst->resize_sources(SEND_GATHER_SRC_PAYLOAD + num_payload_sources);
+      send = brw_transform_inst(s, send, SHADER_OPCODE_SEND_GATHER,
+                                SEND_GATHER_SRC_PAYLOAD + num_payload_sources)->as_send();
+
       /* Sources 0 and 1 remain the same.  Source 2 will be filled
        * after register allocation.
        */
-      inst->src[SEND_GATHER_SRC_SCALAR] = {};
+      send->src[SEND_GATHER_SRC_SCALAR] = {};
 
       int idx = 3;
       for (unsigned p = 0; p < ARRAY_SIZE(payload); p++) {
          for (unsigned i = 0; i < payload[p].phys_len; i++) {
-            inst->src[idx++] = byte_offset(payload[p].src,
+            send->src[idx++] = byte_offset(payload[p].src,
                                            i * reg_unit(devinfo) * REG_SIZE);
          }
       }
-      assert(idx == inst->sources);
+      assert(idx == send->sources);
 
-      inst->opcode = SHADER_OPCODE_SEND_GATHER;
-      inst->mlen = 0;
-      inst->ex_mlen = 0;
+      send->mlen = 0;
+      send->ex_mlen = 0;
 
       progress = true;
    }
@@ -698,10 +711,12 @@ brw_opt_send_gather_to_send(brw_shader &s)
       if (inst->opcode != SHADER_OPCODE_SEND_GATHER)
          continue;
 
-      assert(inst->sources > 2);
-      assert(inst->src[SEND_GATHER_SRC_SCALAR].file == BAD_FILE);
+      brw_send_inst *send = inst->as_send();
 
-      const int num_payload_sources = inst->sources - 3;
+      assert(send->sources > 2);
+      assert(send->src[SEND_GATHER_SRC_SCALAR].file == BAD_FILE);
+
+      const int num_payload_sources = send->sources - 3;
       assert(num_payload_sources > 0);
 
       /* Limited by Src0.Length in the SEND instruction. */
@@ -712,7 +727,7 @@ brw_opt_send_gather_to_send(brw_shader &s)
        * and there's no need to use SEND_GATHER (which would set ARF scalar register
        * adding an extra instruction).
        */
-      const brw_reg *payload = &inst->src[SEND_GATHER_SRC_PAYLOAD];
+      const brw_reg *payload = &send->src[SEND_GATHER_SRC_PAYLOAD];
       brw_reg payload1       = payload[0];
       brw_reg payload2       = {};
       int payload1_len       = 0;
@@ -739,7 +754,7 @@ brw_opt_send_gather_to_send(brw_shader &s)
                break;
          }
       } else {
-         payload2 = brw_null_reg();
+         payload2 = brw_reg();
       }
 
       if (payload1_len + payload2_len != num_payload_sources)
@@ -754,21 +769,21 @@ brw_opt_send_gather_to_send(brw_shader &s)
        *
        * TODO: Pass LSC address length or infer it so valid splits can work.
        */
-      if (payload2_len && (inst->sfid == BRW_SFID_UGM ||
-                           inst->sfid == BRW_SFID_TGM ||
-                           inst->sfid == BRW_SFID_SLM ||
-                           inst->sfid == BRW_SFID_URB)) {
-         enum lsc_opcode lsc_op = lsc_msg_desc_opcode(devinfo, inst->desc);
+      if (payload2_len && (send->sfid == BRW_SFID_UGM ||
+                           send->sfid == BRW_SFID_TGM ||
+                           send->sfid == BRW_SFID_SLM ||
+                           send->sfid == BRW_SFID_URB)) {
+         enum lsc_opcode lsc_op = lsc_msg_desc_opcode(devinfo, send->desc);
          if (lsc_op_num_data_values(lsc_op) > 0)
             continue;
       }
 
-      inst->resize_sources(SEND_NUM_SRCS);
-      inst->opcode  = SHADER_OPCODE_SEND;
-      inst->src[SEND_SRC_PAYLOAD1] = payload1;
-      inst->src[SEND_SRC_PAYLOAD2] = payload2;
-      inst->mlen    = payload1_len * unit;
-      inst->ex_mlen = payload2_len * unit;
+      send = brw_transform_inst(s, send, SHADER_OPCODE_SEND)->as_send();
+
+      send->src[SEND_SRC_PAYLOAD1] = payload1;
+      send->src[SEND_SRC_PAYLOAD2] = payload2;
+      send->mlen    = payload1_len * unit;
+      send->ex_mlen = payload2_len * unit;
 
       progress = true;
    }

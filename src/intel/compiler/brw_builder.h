@@ -284,21 +284,18 @@ public:
    }
 
    /**
-    * Insert an instruction into the program.
-    */
-   brw_inst *
-   emit(const brw_inst &inst) const
-   {
-      return emit(new(shader->mem_ctx) brw_inst(inst));
-   }
-
-   /**
     * Create and insert a nullary control instruction into the program.
     */
    brw_inst *
    emit(enum opcode opcode) const
    {
-      return emit(brw_inst(opcode, dispatch_width()));
+      return emit(opcode, brw_reg(), NULL, 0);
+   }
+
+   brw_inst *
+   emit(enum opcode opcode, unsigned num_srcs) const
+   {
+      return emit(brw_new_inst(*shader, opcode, dispatch_width(), brw_reg(), num_srcs));
    }
 
    /**
@@ -307,7 +304,7 @@ public:
    brw_inst *
    emit(enum opcode opcode, const brw_reg &dst) const
    {
-      return emit(brw_inst(opcode, dispatch_width(), dst));
+      return emit(opcode, dst, NULL, 0);
    }
 
    /**
@@ -316,7 +313,7 @@ public:
    brw_inst *
    emit(enum opcode opcode, const brw_reg &dst, const brw_reg &src0) const
    {
-      return emit(brw_inst(opcode, dispatch_width(), dst, src0));
+      return emit(opcode, dst, &src0, 1);
    }
 
    /**
@@ -326,8 +323,8 @@ public:
    emit(enum opcode opcode, const brw_reg &dst, const brw_reg &src0,
         const brw_reg &src1) const
    {
-      return emit(brw_inst(opcode, dispatch_width(), dst,
-                              src0, src1));
+      const brw_reg srcs[] = { src0, src1 };
+      return emit(opcode, dst, srcs, 2);
    }
 
    /**
@@ -337,22 +334,26 @@ public:
    emit(enum opcode opcode, const brw_reg &dst, const brw_reg &src0,
         const brw_reg &src1, const brw_reg &src2) const
    {
+      brw_inst *inst = brw_new_inst(*shader, opcode, dispatch_width(), dst, 3);
+      inst->src[0] = src0;
+      inst->src[1] = src1;
+      inst->src[2] = src2;
+
       switch (opcode) {
       case BRW_OPCODE_BFE:
       case BRW_OPCODE_BFI2:
       case BRW_OPCODE_MAD:
-      case BRW_OPCODE_LRP: {
-         brw_reg fixed0 = fix_3src_operand(src0);
-         brw_reg fixed1 = fix_3src_operand(src1);
-         brw_reg fixed2 = fix_3src_operand(src2);
-         return emit(brw_inst(opcode, dispatch_width(), dst,
-                              fixed0, fixed1, fixed2));
-      }
+      case BRW_OPCODE_LRP:
+         for (unsigned i = 0; i < 3; i++)
+            inst->src[i] = fix_3src_operand(inst->src[i]);
+         break;
 
       default:
-         return emit(brw_inst(opcode, dispatch_width(), dst,
-                                 src0, src1, src2));
+         /* Nothing to do. */
+         break;
       }
+
+      return emit(inst);
    }
 
    /**
@@ -361,15 +362,18 @@ public:
     */
    brw_inst *
    emit(enum opcode opcode, const brw_reg &dst, const brw_reg srcs[],
-        unsigned n) const
+        unsigned num_srcs) const
    {
       /* Use the emit() methods for specific operand counts to ensure that
        * opcode-specific operand fixups occur.
        */
-      if (n == 3) {
+      if (num_srcs == 3) {
          return emit(opcode, dst, srcs[0], srcs[1], srcs[2]);
       } else {
-         return emit(brw_inst(opcode, dispatch_width(), dst, srcs, n));
+         brw_inst *inst = brw_new_inst(*shader, opcode, dispatch_width(), dst, num_srcs);
+         for (unsigned i = 0; i < num_srcs; i++)
+            inst->src[i] = srcs[i];
+         return emit(inst);
       }
    }
 
@@ -628,6 +632,26 @@ public:
 #undef _ALU1
    /** @} */
 
+   brw_send_inst *
+   SEND() const
+   {
+      return emit(SHADER_OPCODE_SEND, SEND_NUM_SRCS)->as_send();
+   }
+
+   brw_urb_inst *
+   URB_WRITE(const brw_reg srcs[], unsigned num_srcs) const
+   {
+      assert(num_srcs == URB_LOGICAL_NUM_SRCS);
+      return emit(SHADER_OPCODE_URB_WRITE_LOGICAL, reg_undef, srcs, num_srcs)->as_urb();
+   }
+
+   brw_urb_inst *
+   URB_READ(const brw_reg &dst, const brw_reg srcs[], unsigned num_srcs) const
+   {
+      assert(num_srcs == URB_LOGICAL_NUM_SRCS);
+      return emit(SHADER_OPCODE_URB_READ_LOGICAL, dst, srcs, num_srcs)->as_urb();
+   }
+
    brw_inst *
    ADD(const brw_reg &dst, const brw_reg &src0, const brw_reg &src1) const
    {
@@ -741,19 +765,20 @@ public:
    /**
     * Collect a number of registers in a contiguous range of registers.
     */
-   brw_inst *
+   brw_load_payload_inst *
    LOAD_PAYLOAD(const brw_reg &dst, const brw_reg *src,
                 unsigned sources, unsigned header_size) const
    {
-      brw_inst *inst = emit(SHADER_OPCODE_LOAD_PAYLOAD, dst, src, sources);
-      inst->header_size = header_size;
-      inst->size_written = header_size * REG_SIZE;
+      brw_load_payload_inst *lp =
+         emit(SHADER_OPCODE_LOAD_PAYLOAD, dst, src, sources)->as_load_payload();
+      lp->header_size = header_size;
+      lp->size_written = header_size * REG_SIZE;
       for (unsigned i = header_size; i < sources; i++) {
-         inst->size_written += dispatch_width() * brw_type_size_bytes(src[i].type) *
-                               dst.stride;
+         lp->size_written += dispatch_width() * brw_type_size_bytes(src[i].type) *
+                             dst.stride;
       }
 
-      return inst;
+      return lp;
    }
 
    brw_inst *
@@ -781,7 +806,7 @@ public:
       return inst;
    }
 
-   brw_inst *
+   brw_dpas_inst *
    DPAS(const brw_reg &dst, const brw_reg &src0, const brw_reg &src1, const brw_reg &src2,
         unsigned sdepth, unsigned rcount) const
    {
@@ -789,15 +814,15 @@ public:
       assert(sdepth == 8);
       assert(rcount == 1 || rcount == 2 || rcount == 4 || rcount == 8);
 
-      brw_inst *inst = emit(BRW_OPCODE_DPAS, dst, src0, src1, src2);
-      inst->sdepth = sdepth;
-      inst->rcount = rcount;
+      brw_dpas_inst *dpas = emit(BRW_OPCODE_DPAS, dst, src0, src1, src2)->as_dpas();
+      dpas->sdepth = sdepth;
+      dpas->rcount = rcount;
 
       unsigned type_size = brw_type_size_bytes(dst.type);
       assert(type_size == 4 || type_size == 2);
-      inst->size_written = rcount * reg_unit(shader->devinfo) * 8 * type_size;
+      dpas->size_written = rcount * reg_unit(shader->devinfo) * 8 * type_size;
 
-      return inst;
+      return dpas;
    }
 
    void
@@ -1065,3 +1090,11 @@ void
 brw_check_dynamic_msaa_flag(const brw_builder &bld,
                             const struct brw_wm_prog_data *wm_prog_data,
                             enum intel_msaa_flags flag);
+
+inline brw_inst *
+brw_transform_inst(const brw_builder &bld, brw_inst *inst,
+                   enum opcode new_opcode,
+                   unsigned new_num_srcs = UINT_MAX)
+{
+   return brw_transform_inst(*bld.shader, inst, new_opcode, new_num_srcs);
+}

@@ -226,6 +226,12 @@ fd_blitter_blit(struct fd_context *ctx, const struct pipe_blit_info *info)
    /* Initialize the sampler view. */
    default_src_texture(&src_templ, src, info->src.level);
    src_templ.format = info->src.format;
+   if (info->swizzle_enable) {
+      src_templ.swizzle_r = info->swizzle[0];
+      src_templ.swizzle_g = info->swizzle[1];
+      src_templ.swizzle_b = info->swizzle[2];
+      src_templ.swizzle_a = info->swizzle[3];
+   }
    src_view = pipe->create_sampler_view(pipe, src, &src_templ);
 
    /* Note: a2xx does not support fp16: */
@@ -292,7 +298,7 @@ fd_blitter_clear(struct pipe_context *pctx, unsigned buffers,
       .buffer_size = 16,
       .user_buffer = &color->ui,
    };
-   pctx->set_constant_buffer(pctx, MESA_SHADER_FRAGMENT, 0, false, &cb);
+   pctx->set_constant_buffer(pctx, MESA_SHADER_FRAGMENT, 0, &cb);
 
    unsigned rs_idx = pfb->samples > 1 ? 1 : 0;
    if (!ctx->clear_rs_state[rs_idx]) {

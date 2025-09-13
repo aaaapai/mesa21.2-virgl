@@ -226,6 +226,16 @@ public:
    void debug_optimizer(const nir_shader *nir,
                         const char *pass_name,
                         int iteration, int pass_num) const;
+
+   /* Used to allocate instructions, see brw_new_inst() and brw_clone_inst(). */
+   struct {
+      void *mem_ctx;
+      unsigned cap;
+      char *beg;
+      char *end;
+
+      unsigned total_cap;
+   } inst_arena;
 };
 
 void brw_print_instructions(const brw_shader &s, FILE *file = stderr);
@@ -286,6 +296,7 @@ void brw_calculate_cfg(brw_shader &s);
 void brw_optimize(brw_shader &s);
 
 enum brw_instruction_scheduler_mode {
+   BRW_SCHEDULE_PRE_LATENCY,
    BRW_SCHEDULE_PRE,
    BRW_SCHEDULE_PRE_NON_LIFO,
    BRW_SCHEDULE_PRE_LIFO,
@@ -339,7 +350,7 @@ bool brw_opt_cmod_propagation(brw_shader &s);
 bool brw_opt_combine_constants(brw_shader &s);
 bool brw_opt_combine_convergent_txf(brw_shader &s);
 bool brw_opt_compact_virtual_grfs(brw_shader &s);
-bool brw_opt_constant_fold_instruction(const intel_device_info *devinfo, brw_inst *inst);
+bool brw_opt_constant_fold_instruction(brw_shader &s, brw_inst *inst);
 bool brw_opt_copy_propagation(brw_shader &s);
 bool brw_opt_copy_propagation_defs(brw_shader &s);
 bool brw_opt_cse_defs(brw_shader &s);
@@ -369,3 +380,21 @@ brw_reg brw_allocate_vgrf_units(brw_shader &s, unsigned units_of_REGSIZE);
 
 bool brw_insert_load_reg(brw_shader &s);
 bool brw_lower_load_reg(brw_shader &s);
+
+brw_inst *brw_new_inst(brw_shader &s, enum opcode opcode, unsigned exec_size,
+                       const brw_reg &dst, unsigned num_srcs);
+brw_inst *brw_clone_inst(brw_shader &s, const brw_inst *inst);
+
+/* Transform the opcode/num_sources of an instruction.  All the fields in
+ * brw_inst are maintained and any previous sources still visible.  Additional
+ * sources will be uninitialized.
+ *
+ * All instructions can be transformed to an instruction of BASE kind.
+ * All non-BASE instructions can be transformed to an instruction of SEND kind.
+ *
+ * If new_num_srcs is UINT_MAX a default will be picked based on the opcode.
+ * Not all opcodes have a default.
+ */
+brw_inst *brw_transform_inst(brw_shader &s, brw_inst *inst, enum opcode new_opcode,
+                             unsigned new_num_srcs = UINT_MAX);
+

@@ -282,6 +282,8 @@ spec@ext_texture_array@compressed teximage,Fail
 spec@ext_texture_array@compressed teximage pbo,Fail
 spec@ext_texture_array@compressed texsubimage,Fail
 spec@ext_texture_array@compressed texsubimage pbo,Fail
+spec@ext_texture_array@copyteximage 1d_array samples=2,Crash
+spec@ext_texture_array@copyteximage 1d_array samples=4,Crash
 spec@ext_texture_array@copyteximage 1d_array,Fail
 spec@ext_texture_array@fbo-generatemipmap-array,Fail
 spec@ext_texture_array@glsl-fs-shadow1darray-07,Fail
@@ -362,7 +364,6 @@ spec@glsl-1.10@execution@built-in-functions@vs-op-div-ivec4-ivec4,Fail
 spec@glsl-1.10@execution@clipping@clip-plane-transformation clipvert_pos,Fail
 spec@glsl-1.10@execution@clipping@clip-plane-transformation fixed,Fail
 spec@glsl-1.10@execution@clipping@clip-plane-transformation pos_clipvert,Fail
-spec@glsl-1.10@execution@glsl-1.10-built-in-uniform-state,Fail
 spec@glsl-1.10@execution@glsl-fs-convolution-2,Fail
 spec@glsl-1.10@execution@glsl-fs-uniform-array-7,Fail
 spec@glsl-1.10@execution@glsl-vs-large-uniform-array,Fail
@@ -600,8 +601,8 @@ spec@!opengl 1.1@depthstencil-default_fb-readpixels-24_8 samples=4,Fail
 spec@!opengl 1.1@depthstencil-default_fb-readpixels-float-and-ushort samples=2,Fail
 spec@!opengl 1.1@depthstencil-default_fb-readpixels-float-and-ushort samples=4,Fail
 
-spec@ext_texture_array@copyteximage 1d_array samples=2,Fail
-spec@ext_texture_array@copyteximage 1d_array samples=4,Fail
+spec@ext_texture_array@copyteximage 1d_array samples=2,Crash
+spec@ext_texture_array@copyteximage 1d_array samples=4,Crash
 spec@ext_texture_array@copyteximage 2d_array samples=2,Fail
 spec@ext_texture_array@copyteximage 2d_array samples=4,Fail
 

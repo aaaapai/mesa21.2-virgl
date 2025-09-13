@@ -164,21 +164,21 @@ vk_shader_to_nir(struct vk_device *device,
    struct spirv_to_nir_options spirv_options =
       ops->get_spirv_options(device->physical, stage, rs);
 
-   enum gl_subgroup_size subgroup_size = vk_get_subgroup_size(
-      vk_spirv_version(info->pCode, info->codeSize),
-      stage, info->pNext,
-      info->flags & VK_SHADER_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT_EXT,
-      info->flags &VK_SHADER_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT);
-
    nir_shader *nir = vk_spirv_to_nir(device,
                                      info->pCode, info->codeSize,
                                      stage, info->pName,
-                                     subgroup_size,
                                      info->pSpecializationInfo,
                                      &spirv_options, nir_options,
                                      false /* internal */, NULL);
    if (nir == NULL)
       return NULL;
+
+   vk_set_subgroup_size(
+      device, nir,
+      vk_spirv_version(info->pCode, info->codeSize),
+      info->pNext,
+      info->flags & VK_SHADER_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT_EXT,
+      info->flags & VK_SHADER_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT);
 
    if (ops->preprocess_nir != NULL)
       ops->preprocess_nir(device->physical, nir, rs);

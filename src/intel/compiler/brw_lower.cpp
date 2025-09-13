@@ -56,41 +56,43 @@ brw_lower_load_payload(brw_shader &s)
       if (inst->opcode != SHADER_OPCODE_LOAD_PAYLOAD)
          continue;
 
-      assert(inst->dst.file == VGRF);
-      assert(inst->saturate == false);
-      brw_reg dst = inst->dst;
+      brw_load_payload_inst *lp = inst->as_load_payload();
 
-      const brw_builder ibld(inst);
+      assert(lp->dst.file == VGRF);
+      assert(lp->saturate == false);
+      brw_reg dst = lp->dst;
+
+      const brw_builder ibld(lp);
       const brw_builder ubld = ibld.exec_all();
 
-      for (uint8_t i = 0; i < inst->header_size;) {
+      for (uint8_t i = 0; i < lp->header_size;) {
          /* Number of header GRFs to initialize at once with a single MOV
           * instruction.
           */
          const unsigned n =
-            (i + 1 < inst->header_size &&
-             (inst->src[i].file == IMM ||
-              (inst->src[i].is_contiguous() &&
-               inst->src[i + 1].equals(byte_offset(inst->src[i], REG_SIZE))))) ?
+            (i + 1 < lp->header_size &&
+             (lp->src[i].file == IMM ||
+              (lp->src[i].is_contiguous() &&
+               lp->src[i + 1].equals(byte_offset(lp->src[i], REG_SIZE))))) ?
             2 : 1;
 
-         if (inst->src[i].file != BAD_FILE)
+         if (lp->src[i].file != BAD_FILE)
             ubld.group(8 * n, 0).MOV(retype(dst, BRW_TYPE_UD),
-                                     retype(inst->src[i], BRW_TYPE_UD));
+                                     retype(lp->src[i], BRW_TYPE_UD));
 
          dst = byte_offset(dst, n * REG_SIZE);
          i += n;
       }
 
-      for (uint8_t i = inst->header_size; i < inst->sources; i++) {
-         dst.type = inst->src[i].type;
-         if (inst->src[i].file != BAD_FILE) {
-            ibld.MOV(dst, inst->src[i]);
+      for (uint8_t i = lp->header_size; i < lp->sources; i++) {
+         dst.type = lp->src[i].type;
+         if (lp->src[i].file != BAD_FILE) {
+            ibld.MOV(dst, lp->src[i]);
          }
          dst = offset(dst, ibld, 1);
       }
 
-      inst->remove();
+      lp->remove();
       progress = true;
    }
 
@@ -162,10 +164,9 @@ brw_lower_csel(brw_shader &s)
          ibld.CMP(retype(brw_null_reg(), orig_type),
                   inst->src[2], zero, inst->conditional_mod);
 
-         inst->opcode = BRW_OPCODE_SEL;
+         inst = brw_transform_inst(s, inst, BRW_OPCODE_SEL, 2);
          inst->predicate = BRW_PREDICATE_NORMAL;
          inst->conditional_mod = BRW_CONDITIONAL_NONE;
-         inst->resize_sources(2);
          progress = true;
       } else if (new_type != orig_type) {
          inst->src[0].type = new_type;
@@ -364,10 +365,9 @@ lower_derivative(brw_shader &s, brw_inst *inst,
    ubld.emit(SHADER_OPCODE_QUAD_SWIZZLE, tmp0, inst->src[0], brw_imm_ud(swz0));
    ubld.emit(SHADER_OPCODE_QUAD_SWIZZLE, tmp1, inst->src[0], brw_imm_ud(swz1));
 
-   inst->resize_sources(2);
+   inst = brw_transform_inst(s, inst, BRW_OPCODE_ADD);
    inst->src[0] = negate(tmp0);
    inst->src[1] = tmp1;
-   inst->opcode = BRW_OPCODE_ADD;
 
    return true;
 }
@@ -384,7 +384,7 @@ brw_lower_derivatives(brw_shader &s)
    if (s.devinfo->verx10 < 125)
       return false;
 
-   foreach_block_and_inst(block, brw_inst, inst, s.cfg) {
+   foreach_block_and_inst_safe(block, brw_inst, inst, s.cfg) {
       if (inst->opcode == FS_OPCODE_DDX_COARSE)
          progress |= lower_derivative(s, inst,
                                       BRW_SWIZZLE_XXXX, BRW_SWIZZLE_YYYY);
@@ -521,22 +521,27 @@ brw_lower_sends_overlapping_payload(brw_shader &s)
    bool progress = false;
 
    foreach_block_and_inst_safe (block, brw_inst, inst, s.cfg) {
-      if (inst->opcode == SHADER_OPCODE_SEND && inst->ex_mlen > 0 &&
-          regions_overlap(inst->src[SEND_SRC_PAYLOAD1],
-                          inst->mlen * REG_SIZE,
-                          inst->src[SEND_SRC_PAYLOAD2],
-                          inst->ex_mlen * REG_SIZE)) {
-         const unsigned arg = inst->mlen < inst->ex_mlen ?
+      if (inst->opcode != SHADER_OPCODE_SEND)
+         continue;
+
+      brw_send_inst *send = inst->as_send();
+
+      if (send->ex_mlen > 0 &&
+          regions_overlap(send->src[SEND_SRC_PAYLOAD1],
+                          send->mlen * REG_SIZE,
+                          send->src[SEND_SRC_PAYLOAD2],
+                          send->ex_mlen * REG_SIZE)) {
+         const unsigned arg = send->mlen < send->ex_mlen ?
                               SEND_SRC_PAYLOAD1 : SEND_SRC_PAYLOAD2;
-         const unsigned len = MIN2(inst->mlen, inst->ex_mlen);
+         const unsigned len = MIN2(send->mlen, send->ex_mlen);
 
          brw_reg tmp = retype(brw_allocate_vgrf_units(s, len), BRW_TYPE_UD);
 
          /* Sadly, we've lost all notion of channels and bit sizes at this
           * point.  Just WE_all it.
           */
-         const brw_builder ibld = brw_builder(inst).exec_all().group(16, 0);
-         brw_reg copy_src = retype(inst->src[arg], BRW_TYPE_UD);
+         const brw_builder ibld = brw_builder(send).exec_all().group(16, 0);
+         brw_reg copy_src = retype(send->src[arg], BRW_TYPE_UD);
          brw_reg copy_dst = tmp;
          for (unsigned i = 0; i < len; i += 2) {
             if (len == i + 1) {
@@ -548,7 +553,7 @@ brw_lower_sends_overlapping_payload(brw_shader &s)
             copy_src = offset(copy_src, ibld, 1);
             copy_dst = offset(copy_dst, ibld, 1);
          }
-         inst->src[arg] = tmp;
+         send->src[arg] = tmp;
          progress = true;
       }
    }
@@ -615,8 +620,7 @@ brw_lower_bfloat_conversion(brw_shader &s, brw_inst *inst)
        * not work since it doesn't preserve -0.0f!
        */
       assert(inst->src[0].type == BRW_TYPE_F);
-      inst->resize_sources(2);
-      inst->opcode = BRW_OPCODE_ADD;
+      inst = brw_transform_inst(s, inst, BRW_OPCODE_ADD);
       inst->src[1] = brw_imm_f(-0.0f);
       return true;
 
@@ -870,7 +874,7 @@ brw_s0(enum brw_reg_type type, unsigned subnr)
 }
 
 static bool
-brw_lower_send_gather_inst(brw_shader &s, brw_inst *inst)
+brw_lower_send_gather_inst(brw_shader &s, brw_send_inst *inst)
 {
    const intel_device_info *devinfo = s.devinfo;
    assert(devinfo->ver >= 30);
@@ -929,7 +933,7 @@ brw_lower_send_gather(brw_shader &s)
 
    foreach_block_and_inst(block, brw_inst, inst, s.cfg) {
       if (inst->opcode == SHADER_OPCODE_SEND_GATHER)
-         progress |= brw_lower_send_gather_inst(s, inst);
+         progress |= brw_lower_send_gather_inst(s, inst->as_send());
    }
 
    if (progress)

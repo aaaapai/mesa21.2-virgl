@@ -124,6 +124,7 @@
 #include "state.h"
 #include "util/u_debug.h"
 #include "util/disk_cache.h"
+#include "util/log.h"
 #include "util/strtod.h"
 #include "util/u_call_once.h"
 #include "stencil.h"
@@ -749,15 +750,15 @@ _mesa_noop_entrypoint(const char *name)
    GET_CURRENT_CONTEXT(ctx);
    if (ctx) {
       _mesa_error(ctx, GL_INVALID_OPERATION, "%s(invalid call)", name);
+   } else {
+      char s[MAX_LOG_MESSAGE_LENGTH];
+      ASSERTED int len =
+         snprintf(s, MAX_LOG_MESSAGE_LENGTH,
+                  "GL User Error: %s called without a rendering context",
+                  name);
+      assert(len >= 0 && len < MAX_LOG_MESSAGE_LENGTH);
+      mesa_log_if_debug(MESA_LOG_ERROR, s);
    }
-#ifndef NDEBUG
-   else if (getenv("MESA_DEBUG") || getenv("LIBGL_DEBUG")) {
-      fprintf(stderr,
-              "GL User Error: gl%s called without a rendering context\n",
-              name);
-      fflush(stderr);
-   }
-#endif
 }
 
 
@@ -1039,6 +1040,11 @@ _mesa_initialize_context(struct gl_context *ctx,
 
    ctx->FirstTimeCurrent = GL_TRUE;
 
+   simple_mtx_lock(&ctx->Shared->Mutex);
+   list_addtail(&ctx->SharedLink, &ctx->Shared->Contexts);
+   simple_mtx_unlock(&ctx->Shared->Mutex);
+   util_dynarray_init(&ctx->ReleaseResources, NULL);
+
    return GL_TRUE;
 
 fail:
@@ -1121,6 +1127,14 @@ _mesa_free_context_data(struct gl_context *ctx, bool destroy_debug_output)
    free(ctx->MarshalExec);
 
    /* Shared context state (display lists, textures, etc) */
+   simple_mtx_lock(&ctx->Shared->Mutex);
+   list_del(&ctx->SharedLink);
+
+   _mesa_clear_releasebufs(ctx);
+   util_dynarray_fini(&ctx->ReleaseResources);
+
+   simple_mtx_unlock(&ctx->Shared->Mutex);
+
    _mesa_reference_shared_state(ctx, &ctx->Shared, NULL);
 
    if (destroy_debug_output)
@@ -1147,6 +1161,15 @@ _mesa_free_context_data(struct gl_context *ctx, bool destroy_debug_output)
    free(ctx->tmp_draws);
 }
 
+void
+_mesa_clear_releasebufs(struct gl_context *ctx)
+{
+   struct pipe_resource **pres = ctx->ReleaseResources.data;
+   unsigned count = util_dynarray_num_elements(&ctx->ReleaseResources, struct pipe_resource*);
+   for (unsigned j = 0; j < count; j++)
+      pipe_resource_release(ctx->pipe, pres[j]);
+   util_dynarray_clear(&ctx->ReleaseResources);
+}
 
 /**
  * Copy attribute groups from one context to another.

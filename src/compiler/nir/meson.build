@@ -80,7 +80,6 @@ with_nir_headers_only = (
   gallium_drivers == ['d3d12'] and
   get_option('gallium-d3d12-graphics').disabled() and
   not [
-    with_gallium_vdpau,
     with_gallium_va,
     with_any_vk,
     with_gallium_st_d3d10umd,
@@ -114,6 +113,7 @@ else
   'nir_deref.h',
   'nir_divergence_analysis.c',
   'nir_dominance.c',
+  'nir_dominance_lca.c',
   'nir_fixup_is_exported.c',
   'nir_format_convert.c',
   'nir_format_convert.h',
@@ -141,7 +141,6 @@ else
   'nir_lower_alu.c',
   'nir_lower_alu_width.c',
   'nir_lower_alpha.c',
-  'nir_lower_alpha_test.c',
   'nir_lower_amul.c',
   'nir_lower_array_deref_of_vec.c',
   'nir_lower_atomics_to_ssbo.c',
@@ -164,7 +163,6 @@ else
   'nir_lower_variable_initializers.c',
   'nir_lower_discard_if.c',
   'nir_lower_double_ops.c',
-  'nir_lower_drawpixels.c',
   'nir_lower_explicit_io.c',
   'nir_lower_fb_read.c',
   'nir_lower_flatshade.c',
@@ -208,7 +206,6 @@ else
   'nir_lower_phis_to_scalar.c',
   'nir_lower_pntc_ytransform.c',
   'nir_lower_point_size.c',
-  'nir_lower_point_size_mov.c',
   'nir_lower_point_smooth.c',
   'nir_lower_poly_line_smooth.c',
   'nir_lower_printf.c',

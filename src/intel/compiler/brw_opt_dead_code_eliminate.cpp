@@ -60,7 +60,9 @@ can_omit_write(const brw_inst *inst)
       /* We can eliminate the destination write for ordinary instructions,
        * but not most SENDs.
        */
-      if (inst->opcode < NUM_BRW_OPCODES && inst->mlen == 0)
+      const brw_send_inst *send = inst->as_send();
+      if (inst->opcode < NUM_BRW_OPCODES &&
+          (!send || send->mlen == 0))
          return true;
 
       /* It might not be safe for other virtual opcodes. */
@@ -134,7 +136,7 @@ brw_opt_dead_code_eliminate(brw_shader &s)
          if (inst->dst.is_null() && can_eliminate(devinfo, inst, flag_live) &&
              !(inst->opcode == BRW_OPCODE_NOP &&
                brw_exec_list_is_singular(&block->instructions))) {
-            inst->opcode = BRW_OPCODE_NOP;
+            inst = brw_transform_inst(s, inst, BRW_OPCODE_NOP);
             progress = true;
          }
 

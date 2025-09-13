@@ -766,6 +766,9 @@ spec@glsl-1.10@execution@glsl-fs-inline-explosion,Crash
 spec@glsl-1.10@execution@glsl-vs-inline-explosion,Crash
 spec@glsl-1.20@compiler@invalid-vec4-array-to-vec3-array-conversion.vert,Fail
 
+# Bisected to b3133e250e1 ("gallium: add pipe_context::resource_release to eliminate buffer refcounting")
+spec@!opengl 1.1@longprim,Crash
+
 # fails on arm64, passes on armhf
 spec@arb_depth_buffer_float@depthstencil-render-miplevels 1024 s=z24_s8_d=z32f,Fail
 
@@ -1194,9 +1197,6 @@ spec@ext_framebuffer_multisample@unaligned-blit 4 stencil msaa,Fail
 
 # https://gitlab.freedesktop.org/mesa/piglit/-/merge_requests/817
 spec@intel_performance_query@intel_performance_query-issue_2235,Fail
-
-# Bisected to 35ae5dce39c ("mesa: don't pass Infs to the shader via gl_Fog.scale")
-spec@glsl-1.10@execution@glsl-1.10-built-in-uniform-state,Fail
 
 # Couldn't reproduce locally
 spec@oes_packed_depth_stencil@depth_stencil texture gles2,Fail

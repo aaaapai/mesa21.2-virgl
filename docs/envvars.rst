@@ -81,6 +81,10 @@ Core Mesa environment variables
    purposes (e.g. for driconf option matching, logging, artifact storage,
    etc.).
 
+.. envvar:: MESA_LOG_LEVEL
+
+   specifies the maximum log level
+
 .. envvar:: MESA_LOG_FILE
 
    specifies a file name for logging all errors, warnings, etc., rather
@@ -1363,6 +1367,8 @@ RADV driver environment variables
       enable LLVM compiler backend
    ``allbos``
       force all allocated buffers to be referenced in submissions
+   ``bo_history``
+      dump the BO history to /tmp/radv_bo_history.log after each BO operations
    ``checkir``
       validate the LLVM IR before LLVM compiles the shader
    ``dump_trap_handler``
@@ -1613,19 +1619,6 @@ RADV driver environment variables
    ``peak``
       force GPU clocks to their maximum level, this is the default value
 
-.. envvar:: RADV_GFX12_HIZ_WA
-
-   choose the specific HiZ workaround to apply on GFX12 (RDNA4). The possible
-   values are:
-
-   ``disabled``
-     no HiZ workaround is enabled, use at your own risk but optimal for performance
-   ``partial``
-     mitigate the issue partially, potentially risky but performance should be
-     mostly optimal (default value)
-   ``full``
-     mitigate the issue completely, no risk but performance might be decreased
-
 .. envvar:: ACO_DEBUG
 
    a comma-separated list of named flags, which do various things:
@@ -1655,6 +1648,20 @@ RADV driver environment variables
       print information used to calculate some pipeline statistics
    ``liveinfo``
       print liveness and register demand information before scheduling
+
+.. envvar:: radv_gfx12_hiz_wa
+
+   choose the specific HiZ workaround to apply on GFX12 (RDNA4). The possible
+   values are:
+
+   ``disabled``
+     no HiZ workaround is enabled, use at your own risk but optimal for performance
+   ``partial``
+     mitigate the issue partially, potentially risky but performance should be
+     mostly optimal
+   ``full``
+     mitigate the issue completely, no risk but performance might be decreased
+     (default value)
 
 RadeonSI driver environment variables
 -------------------------------------

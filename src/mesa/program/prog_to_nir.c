@@ -819,6 +819,8 @@ prog_to_nir(const struct gl_context *ctx, const struct gl_program *prog)
 
    /* Copy the shader_info from the gl_program */
    c->build.shader->info = prog->info;
+   c->build.shader->info.max_subgroup_size = 128;
+   c->build.shader->info.min_subgroup_size = 1;
 
    s = c->build.shader;
 
@@ -858,12 +860,15 @@ prog_to_nir(const struct gl_context *ctx, const struct gl_program *prog)
 
    /* ARB_vp: */
    if (prog->arb.IsPositionInvariant) {
-      NIR_PASS(_, s, st_nir_lower_position_invariant, prog->Parameters);
+      NIR_PASS(_, s, st_nir_lower_position_invariant, prog->Parameters,
+               ctx->Const.PackedDriverUniformStorage);
    }
 
    /* Add OPTION ARB_fog_exp code */
-   if (prog->arb.Fog)
-      NIR_PASS(_, s, st_nir_lower_fog, prog->arb.Fog, prog->Parameters);
+   if (prog->arb.Fog) {
+      NIR_PASS(_, s, st_nir_lower_fog, prog->arb.Fog, prog->Parameters,
+               ctx->Const.PackedDriverUniformStorage);
+   }
 
 fail:
    if (c->error) {

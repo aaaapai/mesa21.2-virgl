@@ -1,8 +1,8 @@
 // Copyright 2020 Red Hat.
 // SPDX-License-Identifier: MIT
 
-#![allow(clippy::collapsible_if)]
-#![allow(clippy::needless_range_loop)]
+#![cfg_attr(test, allow(dead_code))]
+#![cfg_attr(test, allow(unused_imports))]
 
 mod api;
 pub mod core;

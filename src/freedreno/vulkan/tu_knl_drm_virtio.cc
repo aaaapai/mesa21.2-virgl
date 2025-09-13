@@ -678,6 +678,7 @@ virtio_bo_init(struct tu_device *dev,
                uint64_t client_iova,
                VkMemoryPropertyFlags mem_property,
                enum tu_bo_alloc_flags flags,
+               struct tu_sparse_vma *lazy_vma,
                const char *name)
 {
    MESA_TRACE_FUNC();
@@ -686,7 +687,7 @@ virtio_bo_init(struct tu_device *dev,
          .hdr = MSM_CCMD(GEM_NEW, sizeof(req)),
          .size = size,
    };
-   VkResult result;
+   VkResult result = VK_SUCCESS;
    uint32_t res_id;
    struct tu_bo *bo;
 
@@ -716,10 +717,14 @@ virtio_bo_init(struct tu_device *dev,
 
    assert(!(flags & TU_BO_ALLOC_DMABUF));
 
-   mtx_lock(&dev->vma_mutex);
-   result = virtio_allocate_userspace_iova_locked(dev, 0, size, client_iova,
-                                                  flags, &req.iova);
-   mtx_unlock(&dev->vma_mutex);
+   if (lazy_vma) {
+      req.iova = lazy_vma->msm.iova;
+   } else {
+      mtx_lock(&dev->vma_mutex);
+      result = virtio_allocate_userspace_iova_locked(dev, 0, size, client_iova,
+                                                     flags, &req.iova);
+      mtx_unlock(&dev->vma_mutex);
+   }
 
    if (result != VK_SUCCESS)
       return result;
@@ -804,7 +809,6 @@ virtio_bo_init_dmabuf(struct tu_device *dev,
     * to happen in parallel.
     */
    u_rwlock_wrlock(&dev->dma_bo_lock);
-   mtx_lock(&dev->vma_mutex);
 
    uint32_t handle, res_id;
    uint64_t iova;
@@ -834,8 +838,10 @@ virtio_bo_init_dmabuf(struct tu_device *dev,
 
    bo->res_id = res_id;
 
+   mtx_lock(&dev->vma_mutex);
    result = virtio_allocate_userspace_iova_locked(dev, handle, size, 0,
                                                   TU_BO_ALLOC_DMABUF, &iova);
+   mtx_unlock(&dev->vma_mutex);
    if (result != VK_SUCCESS) {
       vdrm_bo_close(dev->vdev->vdrm, handle);
       goto out_unlock;
@@ -853,7 +859,6 @@ virtio_bo_init_dmabuf(struct tu_device *dev,
    set_iova(dev, bo->res_id, iova);
 
 out_unlock:
-   mtx_unlock(&dev->vma_mutex);
    u_rwlock_wrunlock(&dev->dma_bo_lock);
    return result;
 }
@@ -908,6 +913,45 @@ virtio_bo_finish(struct tu_device *dev, struct tu_bo *bo)
    tu_bo_make_zombie(dev, bo);
 
    u_rwlock_rdunlock(&dev->dma_bo_lock);
+}
+
+static VkResult
+virtio_sparse_vma_init(struct tu_device *dev,
+                       struct vk_object_base *base,
+                       struct tu_sparse_vma *out_vma,
+                       uint64_t *out_iova,
+                       enum tu_sparse_vma_flags flags,
+                       uint64_t size, uint64_t client_iova)
+{
+   VkResult result;
+   enum tu_bo_alloc_flags bo_flags =
+      (flags & TU_SPARSE_VMA_REPLAYABLE) ? TU_BO_ALLOC_REPLAYABLE :
+      (enum tu_bo_alloc_flags)0;
+
+   out_vma->msm.size = size;
+
+   mtx_lock(&dev->vma_mutex);
+   result = virtio_allocate_userspace_iova_locked(dev, 0, size, client_iova,
+                                                  bo_flags, &out_vma->msm.iova);
+   mtx_unlock(&dev->vma_mutex);
+
+   if (result != VK_SUCCESS)
+      return result;
+
+   assert(!(flags & TU_SPARSE_VMA_MAP_ZERO));
+
+   *out_iova = out_vma->msm.iova;
+
+   return result;
+}
+
+static void
+virtio_sparse_vma_finish(struct tu_device *dev,
+                         struct tu_sparse_vma *vma)
+{
+   mtx_lock(&dev->vma_mutex);
+   util_vma_heap_free(&dev->vma, vma->msm.iova, vma->msm.size);
+   mtx_unlock(&dev->vma_mutex);
 }
 
 static VkResult
@@ -1156,6 +1200,8 @@ static const struct tu_knl virtio_knl_funcs = {
       .submit_add_entries = msm_submit_add_entries,
       .queue_submit = virtio_queue_submit,
       .queue_wait_fence = virtio_queue_wait_fence,
+      .sparse_vma_init = virtio_sparse_vma_init,
+      .sparse_vma_finish = virtio_sparse_vma_finish,
 };
 
 VkResult
@@ -1282,6 +1328,7 @@ tu_knl_drm_virtio_load(struct tu_instance *instance,
    device->va_size        = caps.u.msm.va_size;
    device->ubwc_config.highest_bank_bit = caps.u.msm.highest_bank_bit;
    device->has_set_iova   = true;
+   device->has_lazy_bos   = true;
    device->has_preemption = has_preemption;
    device->uche_trap_base = uche_trap_base;
 

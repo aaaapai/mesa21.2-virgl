@@ -309,6 +309,16 @@ pred_from_op(EAluOp pred_op, EAluOp op)
          return op2_prede_int;
       case op2_setne_int:
          return op2_pred_setne_int;
+
+      case op2_setge_64:
+         return op2_pred_setge_64;
+      case op2_setgt_64:
+         return op2_pred_setgt_64;
+      case op2_sete_64:
+         return op2_pred_sete_64;
+      case op1_not_int:
+         return op2_prede_int;
+
       default:
          return op0_nop;
       }
@@ -384,12 +394,19 @@ ReplacePredicate::visit(AluInstr *alu)
        *   R = SOME_OP
        *   IF (COND(R, X))
        */
-      if (reg && !reg->has_flag(Register::ssa))
-         return;
+      if (reg && !reg->has_flag(Register::ssa)) {
+         if (m_pred->block_id() != alu->block_id() || m_pred->index() - 1 != alu->index())
+            return;
+      }
    }
 
+   if (likely(alu->opcode() != op1_not_int)) {
+      m_pred->set_sources(alu->sources());
+   } else {
+      if (!m_pred->replace_src(0, alu->psrc(0), 0, AluInstr::mod_none))
+         return;
+   }
    m_pred->set_op(new_op);
-   m_pred->set_sources(alu->sources());
 
    std::array<AluInstr::SourceMod, 2> mods = { AluInstr::mod_abs, AluInstr::mod_neg };
 
@@ -398,6 +415,11 @@ ReplacePredicate::visit(AluInstr *alu)
          if (alu->has_source_mod(i, m))
             m_pred->set_source_mod(i, m);
       }
+   }
+
+   if (alu->alu_slots() > 1) {
+      m_pred->set_alu_slots(alu->alu_slots());
+      m_pred->set_allowed_dest_chan_mask(5);
    }
 
    success = true;

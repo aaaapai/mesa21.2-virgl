@@ -44,6 +44,12 @@ dEQP-GLES31.functional.shaders.multisample_interpolation.interpolate_at_sample.n
 KHR-GL46.framebuffer_blit.scissor_blit,Fail
 KHR-GL46.direct_state_access.vertex_arrays_vertex_buffers_errors,Fail
 
+KHR-GL46.direct_state_access.framebuffers_blit,Crash
+KHR-GL46.direct_state_access.renderbuffers_storage_multisample,Crash
+KHR-GL46.framebuffer_blit.multisampled_to_singlesampled_blit_depth_config_test,Crash
+KHR-GL46.framebuffer_blit.scissor_blit,Crash
+KHR-GL46.packed_depth_stencil.blit.depth24_stencil8,Crash
+KHR-GL46.packed_depth_stencil.blit.depth32f_stencil8,Crash
 KHR-GL46.shader_image_size.advanced-ms-cs-float,Fail
 KHR-GL46.shader_image_size.advanced-ms-cs-int,Fail
 KHR-GL46.shader_image_size.advanced-ms-cs-uint,Fail
@@ -548,12 +554,3 @@ spec@khr_texture_compression_astc@sliced-3d-miptree-gl srgb-fp,Fail
 spec@khr_texture_compression_astc@sliced-3d-miptree-gl srgb-fp@sRGB decode full precision,Fail
 spec@khr_texture_compression_astc@sliced-3d-miptree-gles srgb-fp,Fail
 spec@khr_texture_compression_astc@sliced-3d-miptree-gles srgb-fp@sRGB decode full precision,Fail
-
-KHR-GL46.transform_feedback_overflow_query_ARB.advanced-single-stream-interleaved-attribs,Fail
-KHR-GL46.transform_feedback_overflow_query_ARB.advanced-single-stream-separate-attribs,Fail
-KHR-GL46.transform_feedback_overflow_query_ARB.basic-single-stream-interleaved-attribs,Fail
-KHR-GL46.transform_feedback_overflow_query_ARB.basic-single-stream-separate-attribs,Fail
-KHR-GL46.transform_feedback_overflow_query_ARB.multiple-streams-multiple-buffers-per-stream,Fail
-KHR-GL46.transform_feedback_overflow_query_ARB.multiple-streams-one-buffer-per-stream,Fail
-spec@arb_transform_feedback_overflow_query@arb_transform_feedback_overflow_query-basic,Fail
-spec@arb_transform_feedback_overflow_query@arb_transform_feedback_overflow_query-basic@arb_transform_feedback_overflow_query-conditional_render_no_overflow,Fail

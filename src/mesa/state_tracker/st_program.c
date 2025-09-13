@@ -713,7 +713,8 @@ lower_ucp(struct st_context *st,
             clipplane_state[i][0] = STATE_CLIP_INTERNAL;
             clipplane_state[i][1] = i;
          }
-         _mesa_add_state_reference(params, clipplane_state[i]);
+         if (!st->allow_st_finalize_nir_twice)
+            _mesa_add_state_reference(params, clipplane_state[i]);
       }
 
       if (nir->info.stage == MESA_SHADER_VERTEX ||
@@ -723,6 +724,25 @@ lower_ucp(struct st_context *st,
       } else if (nir->info.stage == MESA_SHADER_GEOMETRY) {
          NIR_PASS(_, nir, nir_lower_clip_gs, ucp_enables,
                     can_compact, clipplane_state);
+      }
+
+      if (st->allow_st_finalize_nir_twice) {
+         nir_foreach_variable_with_modes(uniform, nir, nir_var_uniform |
+                                         nir_var_image) {
+            if (!uniform->state_slots || !st->allow_st_finalize_nir_twice)
+               continue;
+
+            for (int plane = 0; plane < MAX_CLIP_PLANES; plane++) {
+               char tmp[100];
+               snprintf(tmp, ARRAY_SIZE(tmp), "gl_ClipPlane%dMESA", plane);
+               if (strcmp(uniform->name, tmp) == 0) {
+                  unsigned loc =
+                     _mesa_add_state_reference(params, clipplane_state[plane]);
+                  uniform->data.driver_location = st->ctx->Const.PackedDriverUniformStorage ?
+                     params->Parameters[loc].ValueOffset : loc;
+               }
+            }
+         }
       }
    }
 }
@@ -811,8 +831,10 @@ st_create_common_variant(struct st_context *st,
    if (key->export_point_size) {
       /* if flag is set, shader must export psiz */
       _mesa_add_state_reference(params, point_size_state);
-      NIR_PASS(_, state.ir.nir, nir_lower_point_size_mov,
-                  point_size_state);
+      NIR_PASS(_, state.ir.nir, st_nir_lower_point_size_mov,
+               point_size_state,
+               st->allow_st_finalize_nir_twice ? prog->Parameters : NULL,
+               st->ctx->Const.PackedDriverUniformStorage);
 
       finalize = true;
    }
@@ -1062,7 +1084,8 @@ st_create_fp_variant(struct st_context *st,
 
    if (fp->ati_fs) {
       if (key->fog) {
-         NIR_PASS(_, state.ir.nir, st_nir_lower_fog, key->fog, fp->Parameters);
+         NIR_PASS(_, state.ir.nir, st_nir_lower_fog, key->fog, fp->Parameters,
+                  st->ctx->Const.PackedDriverUniformStorage);
       }
 
       NIR_PASS(_, state.ir.nir, st_nir_lower_atifs_samplers, key->texture_index);
@@ -1080,8 +1103,10 @@ st_create_fp_variant(struct st_context *st,
 
    if (key->lower_alpha_func != COMPARE_FUNC_ALWAYS) {
       _mesa_add_state_reference(params, alpha_ref_state);
-      NIR_PASS(_, state.ir.nir, nir_lower_alpha_test, key->lower_alpha_func,
-                  false, alpha_ref_state);
+      NIR_PASS(_, state.ir.nir, st_nir_lower_alpha_test, key->lower_alpha_func,
+               false, alpha_ref_state,
+               st->allow_st_finalize_nir_twice ? fp->Parameters : NULL,
+               st->ctx->Const.PackedDriverUniformStorage);
       finalize = true;
    }
 
@@ -1154,7 +1179,9 @@ st_create_fp_variant(struct st_context *st,
       memcpy(options.texcoord_state_tokens, texcoord_state,
                sizeof(options.texcoord_state_tokens));
 
-      NIR_PASS(_, state.ir.nir, nir_lower_drawpixels, &options);
+      NIR_PASS(_, state.ir.nir, st_nir_lower_drawpixels, &options,
+               st->allow_st_finalize_nir_twice ? fp->Parameters : NULL,
+               st->ctx->Const.PackedDriverUniformStorage);
       finalize = true;
    }
 

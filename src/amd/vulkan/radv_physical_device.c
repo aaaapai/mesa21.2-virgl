@@ -649,7 +649,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .KHR_video_encode_av1 =
          (radv_video_encode_av1_supported(pdev) && VIDEO_CODEC_AV1ENC && pdev->video_encode_enabled),
       .KHR_video_encode_intra_refresh = pdev->video_encode_enabled,
-      .KHR_video_encode_quantization_map = pdev->video_encode_enabled && pdev->info.vcn_ip_version < VCN_5_0_0,
+      .KHR_video_encode_quantization_map = pdev->video_encode_enabled && radv_video_encode_qp_map_supported(pdev),
       .KHR_video_encode_queue = pdev->video_encode_enabled,
       .KHR_vulkan_memory_model = true,
       .KHR_workgroup_memory_explicit_layout = true,
@@ -754,6 +754,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .EXT_transform_feedback = true,
       .EXT_vertex_attribute_divisor = true,
       .EXT_vertex_input_dynamic_state = !pdev->use_llvm,
+      .EXT_ycbcr_2plane_444_formats = true,
       .EXT_ycbcr_image_arrays = true,
       .EXT_zero_initialize_device_memory = true,
       .AMD_buffer_marker = true,
@@ -1392,6 +1393,9 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
 
       /* VK_KHR_shader_untyped_pointers */
       .shaderUntypedPointers = true,
+
+      /* VK_EXT_ycbcr_2plane_444_formats */
+      .ycbcr2plane444Formats = true,
    };
 }
 
@@ -1942,7 +1946,7 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
       .bufferCaptureReplayDescriptorDataSize = 8,
       .imageCaptureReplayDescriptorDataSize = 8,
       .imageViewCaptureReplayDescriptorDataSize = 1,
-      .samplerCaptureReplayDescriptorDataSize = 1,
+      .samplerCaptureReplayDescriptorDataSize = 4,
       .accelerationStructureCaptureReplayDescriptorDataSize = 1,
       .samplerDescriptorSize = RADV_SAMPLER_DESC_SIZE,
       .combinedImageSamplerDescriptorSize = radv_get_combined_image_sampler_desc_size(pdev),
@@ -2305,21 +2309,22 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
    pdev->use_fmask = pdev->info.gfx_level < GFX11 && !(instance->debug_flags & RADV_DEBUG_NO_FMASK);
 
    pdev->use_hiz = !(instance->debug_flags & RADV_DEBUG_NO_HIZ);
-   if (pdev->info.gfx_level == GFX12 && instance->drirc.debug.disable_hiz_his_gfx12)
-      pdev->use_hiz = false;
 
    if (pdev->info.gfx_level == GFX12) {
-      const char *gfx12_hiz_wa_str = getenv("RADV_GFX12_HIZ_WA");
+      const char *gfx12_hiz_wa_str = instance->drirc.performance.gfx12_hiz_wa;
 
-      pdev->gfx12_hiz_wa = RADV_GFX12_HIZ_WA_PARTIAL; /* Default */
+      pdev->gfx12_hiz_wa = RADV_GFX12_HIZ_WA_FULL; /* Default */
 
-      if (gfx12_hiz_wa_str) {
+      if (strlen(gfx12_hiz_wa_str) > 0) {
          if (!strcmp(gfx12_hiz_wa_str, "disabled")) {
             pdev->gfx12_hiz_wa = RADV_GFX12_HIZ_WA_DISABLED;
          } else if (!strcmp(gfx12_hiz_wa_str, "partial")) {
             pdev->gfx12_hiz_wa = RADV_GFX12_HIZ_WA_PARTIAL;
          } else if (!strcmp(gfx12_hiz_wa_str, "full")) {
             pdev->gfx12_hiz_wa = RADV_GFX12_HIZ_WA_FULL;
+         } else {
+            fprintf(stderr, "radv: Invalid value found for radv_gfx12_hiz_wa. "
+                            "Accepted values are: disabled, partial or full.\n");
          }
       }
    }
@@ -2379,8 +2384,6 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
    radv_physical_device_get_supported_extensions(pdev, &pdev->vk.supported_extensions);
    radv_physical_device_get_features(pdev, &pdev->vk.supported_features);
 
-   radv_get_nir_options(pdev);
-
 #ifndef _WIN32
    if (drm_device) {
       struct stat primary_stat = {0}, render_stat = {0};
@@ -2407,6 +2410,8 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
 #endif
 
    radv_physical_device_init_cache_key(pdev);
+
+   radv_get_nir_options(pdev);
 
    if (radv_device_get_cache_uuid(pdev, pdev->cache_uuid)) {
       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED, "cannot generate UUID");
@@ -2503,14 +2508,15 @@ create_drm_physical_device(struct vk_instance *vk_instance, struct _drmDevice *d
 #ifndef _WIN32
    bool supported_device = false;
 
-   if (!(device->available_nodes & (1 << DRM_NODE_RENDER)) || device->bustype != DRM_BUS_PCI)
+   if (!(device->available_nodes & (1 << DRM_NODE_RENDER)))
       return VK_ERROR_INCOMPATIBLE_DRIVER;
 
 #ifdef HAVE_AMDGPU_VIRTIO
-   supported_device |= device->deviceinfo.pci->vendor_id == VIRTGPU_PCI_VENDOR_ID;
+   supported_device |= device->bustype == DRM_BUS_PCI && device->deviceinfo.pci->vendor_id == VIRTGPU_PCI_VENDOR_ID;
+   supported_device |= device->bustype == DRM_BUS_PLATFORM; /* virtio-mmio */
 #endif
 
-   supported_device |= device->deviceinfo.pci->vendor_id == ATI_VENDOR_ID;
+   supported_device |= device->bustype == DRM_BUS_PCI && device->deviceinfo.pci->vendor_id == ATI_VENDOR_ID;
 
    if (!supported_device)
       return VK_ERROR_INCOMPATIBLE_DRIVER;
@@ -3028,29 +3034,28 @@ struct matrix_prop {
    bool saturate;
 };
 
-static void fill_matrix_prop_khr(struct __vk_outarray *base,
-                                 struct matrix_prop *prop)
+static void
+fill_matrix_prop_khr(struct __vk_outarray *base, struct matrix_prop *prop)
 {
    vk_outarray(VkCooperativeMatrixPropertiesKHR) *out = (void *)base;
 
    vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, out, p)
    {
-      *p = (struct VkCooperativeMatrixPropertiesKHR){
-         .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
-         .MSize = 16,
-         .NSize = 16,
-         .KSize = 16,
-         .AType = prop->a_type,
-         .BType = prop->b_type,
-         .CType = prop->c_type,
-         .ResultType = prop->r_type,
-         .saturatingAccumulation = prop->saturate,
-         .scope = VK_SCOPE_SUBGROUP_KHR};
+      *p = (struct VkCooperativeMatrixPropertiesKHR){.sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+                                                     .MSize = 16,
+                                                     .NSize = 16,
+                                                     .KSize = 16,
+                                                     .AType = prop->a_type,
+                                                     .BType = prop->b_type,
+                                                     .CType = prop->c_type,
+                                                     .ResultType = prop->r_type,
+                                                     .saturatingAccumulation = prop->saturate,
+                                                     .scope = VK_SCOPE_SUBGROUP_KHR};
    }
 }
 
-static void fill_flexible_matrix_prop_nv(struct __vk_outarray *base,
-                                         struct matrix_prop *prop)
+static void
+fill_flexible_matrix_prop_nv(struct __vk_outarray *base, struct matrix_prop *prop)
 {
    vk_outarray(VkCooperativeMatrixFlexibleDimensionsPropertiesNV) *out = (void *)base;
 
@@ -3070,9 +3075,9 @@ static void fill_flexible_matrix_prop_nv(struct __vk_outarray *base,
    }
 }
 
-static void fill_array_sizes_structs(const struct radv_physical_device *pdev,
-                                     struct __vk_outarray *base,
-                                     void (*array_size_cb)(struct __vk_outarray *base, struct matrix_prop *prop))
+static void
+fill_array_sizes_structs(const struct radv_physical_device *pdev, struct __vk_outarray *base,
+                         void (*array_size_cb)(struct __vk_outarray *base, struct matrix_prop *prop))
 {
    /* The Vulkan spec says:
     * If some types are preferred over other types (e.g. for performance),
@@ -3136,8 +3141,9 @@ radv_GetPhysicalDeviceCooperativeMatrixPropertiesKHR(VkPhysicalDevice physicalDe
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
-radv_GetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV(VkPhysicalDevice physicalDevice, uint32_t *pPropertyCount,
-                                                                      VkCooperativeMatrixFlexibleDimensionsPropertiesNV *pProperties)
+radv_GetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV(
+   VkPhysicalDevice physicalDevice, uint32_t *pPropertyCount,
+   VkCooperativeMatrixFlexibleDimensionsPropertiesNV *pProperties)
 {
    VK_FROM_HANDLE(radv_physical_device, pdev, physicalDevice);
    VK_OUTARRAY_MAKE_TYPED(VkCooperativeMatrixFlexibleDimensionsPropertiesNV, out, pProperties, pPropertyCount);

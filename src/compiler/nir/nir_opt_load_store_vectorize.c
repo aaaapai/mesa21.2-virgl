@@ -132,19 +132,37 @@ get_info(nir_intrinsic_op op)
    return NULL;
 }
 
+/* Represents "s * mul" or "u2u64(s + add32) * mul" (if "s" is 32-bit and the
+ * final offset/address is 64-bit).
+ *
+ * Given two terms s1 and s2 with the same "s":
+ * "u2u64(s + s1.add32) - u2u64(s + s2.add32) == (u2u64(s1.add32) - u2u64(s2.add32))"
+ * This is because of the checks in parse_offset() which ensures each addition
+ * only overflows if the other does too.
+ */
+struct offset_term {
+   nir_scalar s;
+   uint64_t mul;
+   uint64_t add32;
+};
+
 /*
  * Information used to compare memory operations.
- * It canonically represents an offset as:
- * `offset_defs[0]*offset_defs_mul[0] + offset_defs[1]*offset_defs_mul[1] + ...`
- * "offset_defs" is sorted in ascenting order by the ssa definition's index.
- * "resource" or "var" may be NULL.
+ *
+ * Given an address/offset as a sum of offset_term objects, this stores the
+ * offset_term::s and offset_term::mul in SoA for faster hashing and comparison.
  */
 struct entry_key {
+   /* These may be NULL. */
    nir_def *resource;
    nir_variable *var;
+
+   /* Sorted in ascending order by the SSA index. */
    unsigned offset_def_count;
    nir_scalar *offset_defs;
    uint64_t *offset_defs_mul;
+
+   uint8_t *offset_def_num_lsbz;
 };
 
 /* Information on a single memory operation. */
@@ -153,10 +171,16 @@ struct entry {
    unsigned index;
 
    struct entry_key *key;
+   /* The constant offset is sign-extended to 64 bits. */
    union {
-      uint64_t offset; /* sign-extended */
+      uint64_t offset;
       int64_t offset_signed;
    };
+   /* Total of each offset_term::add32 multiplied by offset_term::mul. We don't
+    * need to keep each individual one.
+    */
+   uint64_t total_add32;
+
    uint32_t align_mul;
    uint32_t align_offset;
 
@@ -248,15 +272,25 @@ delete_entry_dynarray(struct hash_entry *entry)
    ralloc_free(arr);
 }
 
+static int64_t
+get_offset_diff(struct entry *a, struct entry *b)
+{
+   assert(entry_key_equals(a->key, b->key));
+   int64_t diff = b->offset_signed - a->offset_signed;
+   diff += b->total_add32 - a->total_add32;
+   return diff;
+}
+
 static int
 sort_entries(const void *a_, const void *b_)
 {
    struct entry *a = *(struct entry *const *)a_;
    struct entry *b = *(struct entry *const *)b_;
 
-   if (a->offset_signed > b->offset_signed)
+   int64_t diff = get_offset_diff(b, a);
+   if (diff > 0)
       return 1;
-   else if (a->offset_signed < b->offset_signed)
+   else if (diff < 0)
       return -1;
 
    if (a->index > b->index)
@@ -305,9 +339,12 @@ get_effective_alu_op(nir_scalar scalar)
  * sources is a constant, update "def" to be the non-constant source, fill "c"
  * with the constant and return true. */
 static bool
-parse_alu(nir_scalar *def, nir_op op, uint64_t *c)
+parse_alu(nir_scalar *def, nir_op op, uint64_t *c, bool require_nuw)
 {
    if (!nir_scalar_is_alu(*def) || get_effective_alu_op(*def) != op)
+      return false;
+
+   if (require_nuw && !nir_def_as_alu(def->def)->no_unsigned_wrap)
       return false;
 
    nir_scalar src0 = nir_scalar_chase_alu_src(*def, 0);
@@ -325,45 +362,99 @@ parse_alu(nir_scalar *def, nir_op op, uint64_t *c)
 }
 
 /* Parses an offset expression such as "a * 16 + 4" and "(a * 16 + 4) * 64 + 32". */
-static void
-parse_offset(nir_scalar *base, uint64_t *base_mul, uint64_t *offset)
+static struct offset_term
+parse_offset(nir_scalar base, uint64_t *offset)
 {
-   if (nir_scalar_is_const(*base)) {
-      *offset = nir_scalar_as_uint(*base);
-      base->def = NULL;
-      return;
+   struct offset_term term;
+   if (nir_scalar_is_const(base)) {
+      *offset = nir_scalar_as_uint(base);
+      term.s = nir_get_scalar(NULL, 0);
+      term.mul = 0;
+      return term;
    }
 
    uint64_t mul = 1;
    uint64_t add = 0;
    bool progress = false;
+   bool require_nuw = false;
+   uint64_t uub = u_uintN_max(base.def->bit_size);
    do {
       uint64_t mul2 = 1, add2 = 0;
+      progress = false;
 
-      progress = parse_alu(base, nir_op_imul, &mul2);
-      mul *= mul2;
+      if (parse_alu(&base, nir_op_imul, &mul2, require_nuw)) {
+         progress = true;
+         uub = mul2 ? uub / mul2 : 0;
+         mul *= mul2;
+      }
 
-      mul2 = 0;
-      progress |= parse_alu(base, nir_op_ishl, &mul2);
-      mul <<= mul2;
+      if (parse_alu(&base, nir_op_ishl, &mul2, require_nuw)) {
+         progress = true;
+         uub >>= mul2 & (base.def->bit_size - 1);
+         mul <<= mul2 & (base.def->bit_size - 1);
+      }
 
-      progress |= parse_alu(base, nir_op_iadd, &add2);
-      add += add2 * mul;
+      if (parse_alu(&base, nir_op_iadd, &add2, require_nuw)) {
+         progress = true;
+         uub = u_uintN_max(base.def->bit_size);
+         add += add2 * mul;
+      }
 
-      if (nir_scalar_is_alu(*base) && nir_scalar_alu_op(*base) == nir_op_mov) {
-         *base = nir_scalar_chase_alu_src(*base, 0);
+      if (nir_scalar_is_alu(base) && (nir_scalar_alu_op(base) == nir_op_mov ||
+                                      nir_scalar_alu_op(base) == nir_op_u2u64)) {
+         if (nir_scalar_alu_op(base) == nir_op_u2u64) {
+            require_nuw = true;
+            uub = u_uintN_max(base.def->bit_size);
+         }
+         base = nir_scalar_chase_alu_src(base, 0);
          progress = true;
       }
    } while (progress);
 
-   if (base->def->parent_instr->type == nir_instr_type_intrinsic) {
-      nir_intrinsic_instr *intrin = nir_def_as_intrinsic(base->def);
-      if (intrin->intrinsic == nir_intrinsic_load_vulkan_descriptor)
-         base->def = NULL;
+   nir_scalar base32 = base;
+   uint64_t add32 = 0;
+   if (require_nuw && parse_alu(&base32, nir_op_iadd, &add32, false)) {
+      /* base32 + add32 is in [0,uub].
+       *
+       * The addition overflows if base32 is in:
+       * - (uint_max-add32,uint_max] if add32 <= uub
+       * - (uint_max-add32,uint_max-add32+uub+1] if add32 > uub
+       *
+       * The addition does not overflow if base32 is in:
+       * - [0,uub-add32] if add32 <= uub
+       *
+       * If the overflow and no-overflow intervals of "base32 + add32_0" and
+       * "base32 + add32_1" do not intersect, then:
+       * - one addition overflows if and only if the other does
+       * - and "(u2u64(base32) + add32_0) - (u2u64(base32) + add32_1) == (u2u64(add32_0) - u2u64(add32_1))"
+       *
+       * Instead of checking whether the intervals of two entries intersect,
+       * we just ensure they're all a subset of a shared fixed interval:
+       * - [0,(uint_max+1)/2) for the no-overflow interval
+       * - [(uint_max+1)/2,uint_max] for the overflow interval
+       */
+      uint32_t uint_max = u_uintN_max(base32.def->bit_size);
+      uint32_t ovfl_interval_start = uint_max - add32;
+      uint32_t noovfl_interval_end = add32 <= uub ? uub - add32 : 0;
+      uint32_t mid = ((uint64_t)uint_max + 1) / 2u;
+      if (ovfl_interval_start >= (mid - 1) && noovfl_interval_end < mid) {
+         base = base32;
+      } else {
+         add32 = 0;
+      }
    }
 
-   *base_mul = mul;
+   if (base.def->parent_instr->type == nir_instr_type_intrinsic) {
+      nir_intrinsic_instr *intrin = nir_def_as_intrinsic(base.def);
+      if (intrin->intrinsic == nir_intrinsic_load_vulkan_descriptor)
+         base.def = NULL;
+   }
+
    *offset = add;
+   term.s = base;
+   term.mul = mul;
+   term.add32 = add32;
+   return term;
 }
 
 static unsigned
@@ -375,30 +466,30 @@ type_scalar_size_bytes(const struct glsl_type *type)
 }
 
 static bool
-cmp_scalar(nir_scalar a, nir_scalar b)
+cmp_term(struct offset_term a, struct offset_term b)
 {
-   return a.def == b.def ? a.comp > b.comp : a.def->index > b.def->index;
+   if (a.s.def != b.s.def)
+      return a.s.def->index > b.s.def->index;
+
+   if (a.s.comp != b.s.comp)
+      return a.s.comp > b.s.comp;
+
+   return a.add32 > b.add32;
 }
 
 static unsigned
-add_to_entry_key(nir_scalar *offset_defs, uint64_t *offset_defs_mul,
-                 unsigned offset_def_count, nir_scalar def, uint64_t mul)
+add_to_entry_key(struct offset_term *terms, unsigned count, struct offset_term term)
 {
-   mul = util_mask_sign_extend(mul, def.def->bit_size);
-
-   for (unsigned i = 0; i <= offset_def_count; i++) {
-      if (i == offset_def_count || cmp_scalar(def, offset_defs[i])) {
+   for (unsigned i = 0; i <= count; i++) {
+      if (i == count || cmp_term(term, terms[i])) {
          /* insert before i */
-         memmove(offset_defs + i + 1, offset_defs + i,
-                 (offset_def_count - i) * sizeof(nir_scalar));
-         memmove(offset_defs_mul + i + 1, offset_defs_mul + i,
-                 (offset_def_count - i) * sizeof(uint64_t));
-         offset_defs[i] = def;
-         offset_defs_mul[i] = mul;
+         memmove(terms + i + 1, terms + i,
+                 (count - i) * sizeof(struct offset_term));
+         terms[i] = term;
          return 1;
-      } else if (nir_scalar_equal(def, offset_defs[i])) {
+      } else if (nir_scalar_equal(term.s, terms[i].s) && !terms[i].add32 && !term.add32) {
          /* merge with offset_def at i */
-         offset_defs_mul[i] += mul;
+         terms[i].mul += term.mul;
          return 0;
       }
    }
@@ -406,29 +497,45 @@ add_to_entry_key(nir_scalar *offset_defs, uint64_t *offset_defs_mul,
    return 0;
 }
 
-static struct entry_key *
-create_entry_key_from_deref(void *mem_ctx,
-                            nir_deref_path *path,
-                            uint64_t *offset_base)
+static void
+fill_in_offset_defs(struct vectorize_ctx *ctx, struct entry *entry,
+                    unsigned count, struct offset_term *terms)
+{
+   struct entry_key *key = entry->key;
+   key->offset_def_count = count;
+   key->offset_defs = ralloc_array(entry, nir_scalar, count);
+   key->offset_defs_mul = ralloc_array(entry, uint64_t, count);
+   key->offset_def_num_lsbz = ralloc_array(entry, uint8_t, count);
+   for (unsigned i = 0; i < count; i++) {
+      key->offset_defs[i] = terms[i].s;
+      key->offset_defs_mul[i] = terms[i].mul;
+
+      unsigned lsb_zero = nir_def_num_lsb_zero(ctx->numlsb_ht, terms[i].s);
+      if (terms[i].add32)
+         lsb_zero = MIN2(lsb_zero, ffsll(terms[i].add32) - 1);
+      key->offset_def_num_lsbz[i] = lsb_zero;
+
+      entry->total_add32 += terms[i].add32 * terms[i].mul;
+   }
+}
+
+static void
+create_entry_key_from_deref(struct vectorize_ctx *ctx, struct entry *entry,
+                            nir_deref_path *path)
 {
    unsigned path_len = 0;
    while (path->path[path_len])
       path_len++;
 
-   nir_scalar offset_defs_stack[32];
-   uint64_t offset_defs_mul_stack[32];
-   nir_scalar *offset_defs = offset_defs_stack;
-   uint64_t *offset_defs_mul = offset_defs_mul_stack;
-   if (path_len > 32) {
-      offset_defs = malloc(path_len * sizeof(nir_scalar));
-      offset_defs_mul = malloc(path_len * sizeof(uint64_t));
-   }
-   unsigned offset_def_count = 0;
+   struct offset_term term_stack[32];
+   struct offset_term *terms = term_stack;
+   if (path_len > 32)
+      terms = malloc(path_len * sizeof(struct offset_term));
+   unsigned term_count = 0;
 
-   struct entry_key *key = ralloc(mem_ctx, struct entry_key);
+   struct entry_key *key = ralloc(entry, struct entry_key);
    key->resource = NULL;
    key->var = NULL;
-   *offset_base = 0;
 
    for (unsigned i = 0; i < path_len; i++) {
       nir_deref_instr *parent = i ? path->path[i - 1] : NULL;
@@ -446,23 +553,22 @@ create_entry_key_from_deref(void *mem_ctx,
          nir_def *index = deref->arr.index.ssa;
          uint32_t stride = nir_deref_instr_array_stride(deref);
 
-         nir_scalar base = { .def = index, .comp = 0 };
-         uint64_t offset = 0, base_mul = 1;
-         parse_offset(&base, &base_mul, &offset);
+         uint64_t offset = 0;
+         struct offset_term term = parse_offset(nir_get_scalar(index, 0), &offset);
          offset = util_mask_sign_extend(offset, index->bit_size);
 
-         *offset_base += offset * stride;
-         if (base.def) {
-            offset_def_count += add_to_entry_key(offset_defs, offset_defs_mul,
-                                                 offset_def_count,
-                                                 base, base_mul * stride);
+         entry->offset += offset * stride;
+         if (term.s.def) {
+            term.mul *= stride;
+            term.mul = util_mask_sign_extend(term.mul, index->bit_size);
+            term_count += add_to_entry_key(terms, term_count, term);
          }
          break;
       }
       case nir_deref_type_struct: {
          assert(parent);
          int offset = glsl_get_struct_field_offset(parent->type, deref->strct.index);
-         *offset_base += offset;
+         entry->offset += offset;
          break;
       }
       case nir_deref_type_cast: {
@@ -475,77 +581,66 @@ create_entry_key_from_deref(void *mem_ctx,
       }
    }
 
-   key->offset_def_count = offset_def_count;
-   key->offset_defs = ralloc_array(mem_ctx, nir_scalar, offset_def_count);
-   key->offset_defs_mul = ralloc_array(mem_ctx, uint64_t, offset_def_count);
-   memcpy(key->offset_defs, offset_defs, offset_def_count * sizeof(nir_scalar));
-   memcpy(key->offset_defs_mul, offset_defs_mul, offset_def_count * sizeof(uint64_t));
+   entry->key = key;
+   fill_in_offset_defs(ctx, entry, term_count, terms);
 
-   if (offset_defs != offset_defs_stack)
-      free(offset_defs);
-   if (offset_defs_mul != offset_defs_mul_stack)
-      free(offset_defs_mul);
-
-   return key;
+   if (terms != term_stack)
+      free(terms);
 }
 
 static unsigned
-parse_entry_key_from_offset(struct entry_key *key, unsigned size, unsigned left,
+parse_entry_key_from_offset(struct offset_term *terms, unsigned size, unsigned left,
                             nir_scalar base, uint64_t base_mul, uint64_t *offset)
 {
-   uint64_t new_mul;
    uint64_t new_offset;
-   parse_offset(&base, &new_mul, &new_offset);
+   struct offset_term term = parse_offset(base, &new_offset);
    *offset += new_offset * base_mul;
 
-   if (!base.def)
+   if (!term.s.def)
       return 0;
 
-   base_mul *= new_mul;
+   term.mul *= base_mul;
 
    assert(left >= 1);
 
-   if (left >= 2) {
-      if (nir_scalar_is_alu(base) && nir_scalar_alu_op(base) == nir_op_iadd) {
-         nir_scalar src0 = nir_scalar_chase_alu_src(base, 0);
-         nir_scalar src1 = nir_scalar_chase_alu_src(base, 1);
-         unsigned amount = parse_entry_key_from_offset(key, size, left - 1, src0, base_mul, offset);
-         amount += parse_entry_key_from_offset(key, size + amount, left - amount, src1, base_mul, offset);
+   if (left >= 2 && base.def->bit_size == term.s.def->bit_size) {
+      if (nir_scalar_is_alu(term.s) && nir_scalar_alu_op(term.s) == nir_op_iadd) {
+         nir_scalar src0 = nir_scalar_chase_alu_src(term.s, 0);
+         nir_scalar src1 = nir_scalar_chase_alu_src(term.s, 1);
+         unsigned amount = parse_entry_key_from_offset(terms, size, left - 1, src0, term.mul, offset);
+         amount += parse_entry_key_from_offset(terms, size + amount, left - amount, src1, term.mul, offset);
          return amount;
       }
    }
 
-   return add_to_entry_key(key->offset_defs, key->offset_defs_mul, size, base, base_mul);
+   term.mul = util_mask_sign_extend(term.mul, base.def->bit_size);
+   return add_to_entry_key(terms, size, term);
 }
 
-static struct entry_key *
-create_entry_key_from_offset(void *mem_ctx, nir_def *base, uint64_t base_mul, uint64_t *offset)
+static void
+create_entry_key_from_offset(struct vectorize_ctx *ctx, struct entry *entry,
+                             nir_def *base, uint64_t base_mul)
 {
-   struct entry_key *key = ralloc(mem_ctx, struct entry_key);
+   struct entry_key *key = ralloc(entry, struct entry_key);
    key->resource = NULL;
    key->var = NULL;
    key->offset_defs = NULL;
    key->offset_defs_mul = NULL;
+   key->offset_def_count = 0;
+   entry->key = key;
 
+   struct offset_term terms[32];
    if (base) {
-      nir_scalar offset_defs[32];
-      uint64_t offset_defs_mul[32];
-      key->offset_defs = offset_defs;
-      key->offset_defs_mul = offset_defs_mul;
-
       nir_scalar scalar = { .def = base, .comp = 0 };
-      key->offset_def_count = parse_entry_key_from_offset(key, 0, 32, scalar, base_mul, offset);
-
-      if (key->offset_def_count) {
-         key->offset_defs = ralloc_array(mem_ctx, nir_scalar, key->offset_def_count);
-         key->offset_defs_mul = ralloc_array(mem_ctx, uint64_t, key->offset_def_count);
-         memcpy(key->offset_defs, offset_defs, key->offset_def_count * sizeof(nir_scalar));
-         memcpy(key->offset_defs_mul, offset_defs_mul, key->offset_def_count * sizeof(uint64_t));
-      }
-   } else {
-      key->offset_def_count = 0;
+      uint64_t offset = 0;
+      key->offset_def_count = parse_entry_key_from_offset(terms, 0, 32, scalar, base_mul, &offset);
+      entry->offset += offset;
    }
-   return key;
+
+   if (!key->offset_def_count)
+      return;
+
+   fill_in_offset_defs(ctx, entry, key->offset_def_count, terms);
 }
 
 static nir_variable_mode
@@ -581,7 +676,7 @@ aliasing_modes(nir_variable_mode modes)
 }
 
 static void
-calc_alignment(struct vectorize_ctx *ctx, struct entry *entry)
+calc_alignment(struct entry *entry)
 {
    if (entry->intrin->intrinsic == nir_intrinsic_load_buffer_amd ||
        entry->intrin->intrinsic == nir_intrinsic_store_buffer_amd) {
@@ -595,7 +690,7 @@ calc_alignment(struct vectorize_ctx *ctx, struct entry *entry)
 
    uint32_t align_mul = 31;
    for (unsigned i = 0; i < entry->key->offset_def_count; i++) {
-      unsigned lsb_zero = nir_def_num_lsb_zero(ctx->numlsb_ht, entry->key->offset_defs[i]);
+      unsigned lsb_zero = entry->key->offset_def_num_lsbz[i];
       if (lsb_zero == 64)
          continue;
       uint64_t stride = entry->key->offset_defs_mul[i] << lsb_zero;
@@ -642,16 +737,14 @@ create_entry(void *mem_ctx, struct vectorize_ctx *ctx,
       entry->deref = nir_src_as_deref(intrin->src[entry->info->deref_src]);
       nir_deref_path path;
       nir_deref_path_init(&path, entry->deref, NULL);
-      entry->key = create_entry_key_from_deref(entry, &path, &entry->offset);
+      create_entry_key_from_deref(ctx, entry, &path);
       nir_deref_path_finish(&path);
    } else {
       nir_def *base = entry->info->base_src >= 0 ? intrin->src[entry->info->base_src].ssa : NULL;
-      uint64_t offset = 0;
       unsigned offset_scale = get_offset_scale(entry);
       if (nir_intrinsic_has_base(intrin))
-         offset += nir_intrinsic_base(intrin) * offset_scale;
-      entry->key = create_entry_key_from_offset(entry, base, offset_scale, &offset);
-      entry->offset = offset;
+         entry->offset = nir_intrinsic_base(intrin) * offset_scale;
+      create_entry_key_from_offset(ctx, entry, base, offset_scale);
 
       if (base)
          entry->offset = util_mask_sign_extend(entry->offset, base->bit_size);
@@ -676,7 +769,7 @@ create_entry(void *mem_ctx, struct vectorize_ctx *ctx,
    if (get_variable_mode(entry) & restrict_modes)
       entry->access |= ACCESS_RESTRICT;
 
-   calc_alignment(ctx, entry);
+   calc_alignment(entry);
 
    return entry;
 }
@@ -723,7 +816,7 @@ new_bitsize_acceptable(struct vectorize_ctx *ctx, unsigned new_bit_size,
          return false;
    }
 
-   unsigned high_offset = high->offset_signed - low->offset_signed;
+   unsigned high_offset = get_offset_diff(low, high);
 
    /* This can cause issues when combining store data. */
    if (high_offset % (new_bit_size / 8) != 0)
@@ -739,7 +832,7 @@ new_bitsize_acceptable(struct vectorize_ctx *ctx, unsigned new_bit_size,
 
    unsigned low_size = low->intrin->num_components * get_bit_size(low) / 8;
    /* The hole size can be less than 0 if low and high instructions overlap. */
-   int64_t hole_size = high->offset_signed - (low->offset_signed + low_size);
+   int64_t hole_size = (int64_t)high_offset - low_size;
 
    if (!ctx->options->callback(low->align_mul,
                                low->align_offset,
@@ -797,6 +890,31 @@ subtract_deref(nir_builder *b, nir_deref_instr *deref, int64_t offset)
                                 glsl_scalar_type(GLSL_TYPE_UINT8), 1);
    return nir_build_deref_ptr_as_array(
       b, deref, nir_imm_intN_t(b, -offset, deref->def.bit_size));
+}
+
+static void
+hoist_base_addr(nir_instr *instr, nir_instr *to_hoist)
+{
+   /* Return if this instruction already dominates the first load. */
+   if (to_hoist->block != instr->block || to_hoist->index <= instr->index)
+      return;
+
+   /* Only the offset calculation (consisting of ALU and load_const)
+    * differs between the vectorized loads.
+    */
+   assert(to_hoist->type == nir_instr_type_load_const ||
+          to_hoist->type == nir_instr_type_alu);
+
+   if (to_hoist->type == nir_instr_type_alu) {
+      /* For ALU, recursively hoist the sources. */
+      nir_alu_instr *alu = nir_instr_as_alu(to_hoist);
+      for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++)
+         hoist_base_addr(instr, alu->src[i].src.ssa->parent_instr);
+   }
+
+   nir_instr_move(nir_before_instr(instr), to_hoist);
+   to_hoist->index = instr->index;
+   return;
 }
 
 static void
@@ -865,21 +983,16 @@ vectorize_loads(nir_builder *b, struct vectorize_ctx *ctx,
 
    /* update the offset */
    if (first != low && info->base_src >= 0) {
-      /* let nir_opt_algebraic() remove this addition. this doesn't have much
-       * issues with subtracting 16 from expressions like "(i + 1) * 16" because
-       * nir_opt_algebraic() turns them into "i * 16 + 16" */
       b->cursor = nir_before_instr(first->instr);
 
+      /* Hoist low base addr before first intrinsic. */
+      nir_def *base = low->intrin->src[info->base_src].ssa;
+      hoist_base_addr(first->instr, base->parent_instr);
+      nir_src_rewrite(&first->intrin->src[info->base_src], base);
+
       if (nir_intrinsic_has_offset_shift(first->intrin)) {
-         nir_add_io_offset(b, first->intrin, -(int)(high_start / 8u));
-      } else {
-         /* TODO once all intrinsics that need a scaled offset use
-          * offset_shift, this old path can be removed.
-          */
-         nir_def *new_base = first->intrin->src[info->base_src].ssa;
-         new_base = nir_iadd_imm(
-            b, new_base, -(int)(high_start / 8u / get_offset_scale(first)));
-         nir_src_rewrite(&first->intrin->src[info->base_src], new_base);
+         nir_intrinsic_set_offset_shift(first->intrin,
+                                        nir_intrinsic_offset_shift(low->intrin));
       }
    }
 
@@ -920,12 +1033,13 @@ vectorize_loads(nir_builder *b, struct vectorize_ctx *ctx,
 
       nir_intrinsic_set_range_base(first->intrin, old_low_range_base);
       nir_intrinsic_set_range(first->intrin, range);
-   } else if (nir_intrinsic_has_base(first->intrin) && info->base_src == -1 && info->deref_src == -1) {
+   } else if (nir_intrinsic_has_base(first->intrin) && info->deref_src == -1) {
       nir_intrinsic_set_base(first->intrin, nir_intrinsic_base(low->intrin));
    }
 
    first->key = low->key;
    first->offset = low->offset;
+   first->total_add32 = low->total_add32;
 
    first->align_mul = low->align_mul;
    first->align_offset = low->align_offset;
@@ -1021,6 +1135,7 @@ vectorize_stores(nir_builder *b, struct vectorize_ctx *ctx,
 
    second->key = low->key;
    second->offset = low->offset;
+   second->total_add32 = low->total_add32;
 
    second->align_mul = low->align_mul;
    second->align_offset = low->align_offset;
@@ -1093,7 +1208,7 @@ may_alias_internal(struct entry *a, struct entry *b, uint32_t a_offset, uint32_t
    if (!entry_key_equals(a->key, b->key))
       return true;
 
-   int64_t diff = (b->offset_signed + b_offset) - (a->offset_signed + a_offset);
+   int64_t diff = get_offset_diff(a, b) + b_offset - a_offset;
 
    struct entry *first = diff < 0 ? b : a;
    unsigned size = get_bit_size(first) / 8u * first->num_components;
@@ -1257,7 +1372,7 @@ check_for_robustness(struct vectorize_ctx *ctx, struct entry *low, uint64_t high
     */
    uint64_t stride = 0;
    for (unsigned i = 0; i < low->key->offset_def_count; i++) {
-      unsigned lsb_zero = nir_def_num_lsb_zero(ctx->numlsb_ht, low->key->offset_defs[i]);
+      unsigned lsb_zero = low->key->offset_def_num_lsbz[i];
       if (lsb_zero != 64)
          stride = calc_gcd(low->key->offset_defs_mul[i] << lsb_zero, stride);
    }
@@ -1326,7 +1441,7 @@ try_vectorize(nir_function_impl *impl, struct vectorize_ctx *ctx,
    if (!can_vectorize(ctx, first, second))
       return false;
 
-   uint64_t diff = high->offset_signed - low->offset_signed;
+   uint64_t diff = get_offset_diff(low, high);
    if (check_for_robustness(ctx, low, diff))
       return false;
 
@@ -1400,14 +1515,10 @@ try_vectorize_shared2(struct vectorize_ctx *ctx,
    if (high->align_mul % low_size || high->align_offset % low_size)
       return false;
 
-   uint64_t diff = high->offset_signed - low->offset_signed;
+   uint64_t diff = get_offset_diff(low, high);
    bool st64 = diff % (64 * low_size) == 0;
    unsigned stride = st64 ? 64 * low_size : low_size;
    if (diff % stride || diff > 255 * stride)
-      return false;
-
-   /* try to avoid creating accesses we can't combine additions/offsets into */
-   if (high->offset > 255 * stride || (st64 && high->offset % stride))
       return false;
 
    if (first->is_store) {
@@ -1478,7 +1589,7 @@ vectorize_sorted_entries(struct vectorize_ctx *ctx, nir_function_impl *impl,
          struct entry *first = low->index < high->index ? low : high;
          struct entry *second = low->index < high->index ? high : low;
 
-         uint64_t diff = high->offset_signed - low->offset_signed;
+         uint64_t diff = get_offset_diff(low, high);
          /* Allow overfetching by 28 bytes, which can be rejected by the
           * callback if needed.  Driver callbacks will likely want to
           * restrict this to a smaller value, say 4 bytes (or none).
@@ -1642,6 +1753,8 @@ process_block(nir_function_impl *impl, struct vectorize_ctx *ctx, nir_block *blo
    unsigned next_index = 0;
 
    nir_foreach_instr_safe(instr, block) {
+      instr->index = next_index++;
+
       if (handle_barrier(ctx, &progress, impl, instr))
          continue;
 
@@ -1665,7 +1778,7 @@ process_block(nir_function_impl *impl, struct vectorize_ctx *ctx, nir_block *blo
 
       /* create entry */
       struct entry *entry = create_entry(ctx, ctx, info, intrin);
-      entry->index = next_index++;
+      entry->index = next_index;
 
       list_addtail(&entry->head, &ctx->entries[mode_index]);
 

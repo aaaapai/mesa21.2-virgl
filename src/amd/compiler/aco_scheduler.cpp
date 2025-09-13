@@ -110,6 +110,7 @@ struct MoveState {
 
 struct sched_ctx {
    amd_gfx_level gfx_level;
+   Program* program;
    int16_t occupancy_factor;
    int16_t last_SMEM_stall;
    int last_SMEM_dep_idx;
@@ -461,24 +462,6 @@ MoveState::upwards_skip(UpwardsCursor& cursor)
    cursor.verify_invariants(block);
 }
 
-bool
-is_done_sendmsg(amd_gfx_level gfx_level, const Instruction* instr)
-{
-   if (gfx_level <= GFX10_3 && instr->opcode == aco_opcode::s_sendmsg)
-      return (instr->salu().imm & sendmsg_id_mask) == sendmsg_gs_done;
-   return false;
-}
-
-bool
-is_pos_prim_export(amd_gfx_level gfx_level, const Instruction* instr)
-{
-   /* Because of NO_PC_EXPORT=1, a done=1 position or primitive export can launch PS waves before
-    * the NGG/VS wave finishes if there are no parameter exports.
-    */
-   return instr->opcode == aco_opcode::exp && instr->exp().dest >= V_008DFC_SQ_EXP_POS &&
-          instr->exp().dest <= V_008DFC_SQ_EXP_PRIM && gfx_level >= GFX10;
-}
-
 memory_sync_info
 get_sync_info_with_hack(const Instruction* instr)
 {
@@ -506,6 +489,7 @@ struct memory_event_set {
 };
 
 struct hazard_query {
+   Program* program;
    amd_gfx_level gfx_level;
    bool contains_spill;
    bool contains_sendmsg;
@@ -519,6 +503,7 @@ struct hazard_query {
 void
 init_hazard_query(const sched_ctx& ctx, hazard_query* query)
 {
+   query->program = ctx.program;
    query->gfx_level = ctx.gfx_level;
    query->contains_spill = false;
    query->contains_sendmsg = false;
@@ -530,11 +515,9 @@ init_hazard_query(const sched_ctx& ctx, hazard_query* query)
 }
 
 void
-add_memory_event(amd_gfx_level gfx_level, memory_event_set* set, Instruction* instr,
+add_memory_event(Program* program, memory_event_set* set, Instruction* instr,
                  memory_sync_info* sync)
 {
-   set->has_control_barrier |= is_done_sendmsg(gfx_level, instr);
-   set->has_control_barrier |= is_pos_prim_export(gfx_level, instr);
    if (instr->opcode == aco_opcode::p_barrier) {
       Pseudo_barrier_instruction& bar = instr->barrier();
       if (bar.sync.semantics & semantic_acquire)
@@ -542,12 +525,14 @@ add_memory_event(amd_gfx_level gfx_level, memory_event_set* set, Instruction* in
       if (bar.sync.semantics & semantic_release)
          set->bar_release |= bar.sync.storage;
       set->bar_classes |= bar.sync.storage;
-
-      set->has_control_barrier |= bar.exec_scope > scope_invocation;
    }
 
-   if (!sync->storage)
+   if (!sync->storage) {
+      set->has_control_barrier |=
+         is_atomic_or_control_instr(program, instr, *sync, semantic_acquire | semantic_release) !=
+         0;
       return;
+   }
 
    if (sync->semantics & semantic_acquire)
       set->access_acquire |= sync->storage;
@@ -576,7 +561,7 @@ add_to_hazard_query(hazard_query* query, Instruction* instr)
 
    memory_sync_info sync = get_sync_info_with_hack(instr);
 
-   add_memory_event(query->gfx_level, &query->mem_events, instr, &sync);
+   add_memory_event(query->program, &query->mem_events, instr, &sync);
 
    if (!(sync.semantics & semantic_can_reorder)) {
       unsigned storage = sync.storage;
@@ -662,7 +647,7 @@ perform_hazard_query(hazard_query* query, Instruction* instr, bool upwards)
    memory_event_set instr_set;
    memset(&instr_set, 0, sizeof(instr_set));
    memory_sync_info sync = get_sync_info_with_hack(instr);
-   add_memory_event(query->gfx_level, &instr_set, instr, &sync);
+   add_memory_event(query->program, &instr_set, instr, &sync);
 
    memory_event_set* first = &instr_set;
    memory_event_set* second = &query->mem_events;
@@ -1269,6 +1254,7 @@ schedule_program(Program* program)
 
    sched_ctx ctx;
    ctx.gfx_level = program->gfx_level;
+   ctx.program = program;
    ctx.mv.depends_on.resize(program->peekAllocationId());
    ctx.mv.RAR_dependencies.resize(program->peekAllocationId());
    ctx.mv.RAR_dependencies_clause.resize(program->peekAllocationId());

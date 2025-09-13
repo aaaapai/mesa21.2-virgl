@@ -36,6 +36,8 @@
 #include "util/u_atomic.h"
 #include "api_exec_decl.h"
 
+#include "pipe/p_screen.h"
+
 void
 _mesa_spirv_module_reference(struct gl_spirv_module **dest,
                              struct gl_spirv_module *src)
@@ -264,7 +266,6 @@ _mesa_spirv_to_nir(struct gl_context *ctx,
    struct spirv_to_nir_options spirv_options = {
       .environment = NIR_SPIRV_OPENGL,
       .capabilities = &spirv_caps,
-      .subgroup_size = SUBGROUP_SIZE_UNIFORM,
       .ubo_addr_format = nir_address_format_32bit_index_offset,
       .ssbo_addr_format = nir_address_format_32bit_index_offset,
 
@@ -274,6 +275,7 @@ _mesa_spirv_to_nir(struct gl_context *ctx,
        */
       .shared_addr_format = nir_address_format_32bit_offset,
 
+      .group_non_uniform_subgroup_size = ctx->screen->caps.shader_subgroup_size,
    };
 
    nir_shader *nir =
@@ -297,6 +299,7 @@ _mesa_spirv_to_nir(struct gl_context *ctx,
    nir_validate_shader(nir, "after spirv_to_nir");
 
    nir->info.separate_shader = linked_shader->Program->info.separate_shader;
+   nir->info.api_subgroup_size_draw_uniform = !mesa_shader_stage_uses_workgroup(stage);
 
    /* Convert some sysvals to input varyings. */
    const struct nir_lower_sysvals_to_varyings_options sysvals_to_varyings = {

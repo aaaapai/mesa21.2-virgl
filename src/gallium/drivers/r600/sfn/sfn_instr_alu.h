@@ -46,6 +46,10 @@ public:
    AluInstr(EAluOp opcode);
    AluInstr(EAluOp opcode, int chan);
    AluInstr(EAluOp opcode,
+            int chan,
+            SrcValues src,
+            const std::set<AluModifiers>& flags);
+   AluInstr(EAluOp opcode,
             PRegister dest,
             SrcValues src0,
             const std::set<AluModifiers>& flags,
@@ -147,8 +151,9 @@ public:
    static bool from_nir(nir_alu_instr *alu, Shader& shader);
 
    int alu_slots() const { return m_alu_slots; }
+   void set_alu_slots(unsigned slots) { m_alu_slots = slots; }
 
-   bool split(ValueFactory& vf, AluGroup& dest_group);
+   bool split(AluGroup& dest_group);
 
    bool end_group() const override { return m_alu_flags.test(alu_last_instr); }
 
@@ -176,6 +181,7 @@ public:
 
    uint8_t allowed_src_chan_mask() const override;
    uint8_t allowed_dest_chan_mask() const {return m_allowed_dest_mask;}
+   void set_allowed_dest_chan_mask(uint8_t mask);
 
    void inc_ar_uses() { ++m_num_ar_uses;}
    auto num_ar_uses() const {return m_num_ar_uses;}

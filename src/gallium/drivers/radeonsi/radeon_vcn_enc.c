@@ -90,8 +90,8 @@ static uint32_t radeon_vcn_enc_blocks_in_frame(struct radeon_encoder *enc,
    bool is_h264 = u_reduce_video_profile(enc->base.profile) == PIPE_VIDEO_FORMAT_MPEG4_AVC;
    uint32_t block_length = is_h264 ? PIPE_H264_MB_SIZE : PIPE_H265_ENC_CTB_SIZE;
 
-   *width_in_block  = PIPE_ALIGN_IN_BLOCK_SIZE(enc->base.width,  block_length);
-   *height_in_block = PIPE_ALIGN_IN_BLOCK_SIZE(enc->base.height, block_length);
+   *width_in_block  = DIV_ROUND_UP(enc->base.width,  block_length);
+   *height_in_block = DIV_ROUND_UP(enc->base.height, block_length);
 
    return block_length;
 }
@@ -205,10 +205,10 @@ static void radeon_vcn_enc_get_roi_param(struct radeon_encoder *enc,
             } else
                map->qp_delta = region->qp_value;
 
-            map->x_in_unit = CLAMP((region->x / block_length), 0, width_in_block - 1);
-            map->y_in_unit = CLAMP((region->y / block_length), 0, height_in_block - 1);
-            map->width_in_unit = CLAMP((region->width / block_length), 0, width_in_block);
-            map->height_in_unit = CLAMP((region->height / block_length), 0, width_in_block);
+            map->x_in_unit = MIN2(DIV_ROUND_UP(region->x, block_length), width_in_block - 1);
+            map->y_in_unit = MIN2(DIV_ROUND_UP(region->y, block_length), height_in_block - 1);
+            map->width_in_unit = MIN2(DIV_ROUND_UP(region->width, block_length), width_in_block);
+            map->height_in_unit = MIN2(DIV_ROUND_UP(region->height, block_length), width_in_block);
          }
       }
    }
@@ -391,8 +391,8 @@ static void radeon_vcn_enc_h264_get_slice_ctrl_param(struct radeon_encoder *enc,
    uint32_t num_mbs_total, num_mbs_in_slice;
 
    num_mbs_total =
-      PIPE_ALIGN_IN_BLOCK_SIZE(enc->base.width, PIPE_H264_MB_SIZE) *
-      PIPE_ALIGN_IN_BLOCK_SIZE(enc->base.height, PIPE_H264_MB_SIZE);
+      DIV_ROUND_UP(enc->base.width, PIPE_H264_MB_SIZE) *
+      DIV_ROUND_UP(enc->base.height, PIPE_H264_MB_SIZE);
 
    if (pic->num_slice_descriptors <= 1) {
       num_mbs_in_slice = num_mbs_total;
@@ -749,8 +749,8 @@ static void radeon_vcn_enc_hevc_get_slice_ctrl_param(struct radeon_encoder *enc,
    uint32_t num_ctbs_total, num_ctbs_in_slice;
 
    num_ctbs_total =
-      PIPE_ALIGN_IN_BLOCK_SIZE(pic->seq.pic_width_in_luma_samples, PIPE_H265_ENC_CTB_SIZE) *
-      PIPE_ALIGN_IN_BLOCK_SIZE(pic->seq.pic_height_in_luma_samples, PIPE_H265_ENC_CTB_SIZE);
+      DIV_ROUND_UP(pic->seq.pic_width_in_luma_samples, PIPE_H265_ENC_CTB_SIZE) *
+      DIV_ROUND_UP(pic->seq.pic_height_in_luma_samples, PIPE_H265_ENC_CTB_SIZE);
 
    if (pic->num_slice_descriptors <= 1) {
       num_ctbs_in_slice = num_ctbs_total;

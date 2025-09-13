@@ -113,10 +113,11 @@ st_nir_lookup_parameter_index(struct gl_program *prog, nir_variable *var)
 }
 
 static void
-st_nir_assign_uniform_locations(struct gl_context *ctx,
+st_nir_assign_uniform_locations(struct st_context *st,
                                 struct gl_program *prog,
-                                nir_shader *nir)
+                                nir_shader *nir, bool is_before_variants)
 {
+   struct gl_context *ctx = st->ctx;
    int shaderidx = 0;
    int imageidx = 0;
 
@@ -134,6 +135,9 @@ st_nir_assign_uniform_locations(struct gl_context *ctx,
             imageidx += type_size(uniform->type);
          }
       } else if (uniform->state_slots) {
+         if (st->allow_st_finalize_nir_twice && !is_before_variants)
+            continue;
+
          const gl_state_index16 *const stateTokens = uniform->state_slots[0].tokens;
 
          unsigned comps;
@@ -201,6 +205,26 @@ filter_64_bit_instr(const nir_instr *const_instr, UNUSED const void *data)
       return true;
    nir_foreach_src(instr, src_is_64bit, &lower);
    return lower;
+}
+
+static bool
+filter_double_subgroup(const nir_intrinsic_instr *intr, UNUSED const void *data)
+{
+   switch(intr->intrinsic) {
+   case nir_intrinsic_vote_feq:
+      return intr->src[0].ssa->bit_size == 64;
+   case nir_intrinsic_reduce:
+   case nir_intrinsic_exclusive_scan:
+   case nir_intrinsic_inclusive_scan: {
+      if (intr->src[0].ssa->bit_size != 64)
+         return false;
+      unsigned op = nir_intrinsic_reduction_op(intr);
+      nir_alu_type type = nir_op_infos[op].output_type;
+      return type == nir_type_float;
+   }
+   default:
+      return false;
+   }
 }
 
 /* Second third of converting glsl_to_nir. This creates uniforms, gathers
@@ -273,16 +297,20 @@ st_glsl_to_nir_post_opts(struct st_context *st, struct gl_program *prog,
          /* 64-bit subgroup ops like vote_feq and inclusive_scan are secretly
           * fp64 operations, so lower them first to make the ALU operation
           * appear for nir_lower_doubles to lower after.
+          *
+          * Create GL_KHR_shader_subgroup like uvec4 ballots, drivers have to further
+          * lower that on their own.
           */
          nir_lower_subgroups_options subgroup_opts = {0};
-         subgroup_opts.subgroup_size = nir->options->subgroup_size;
-         subgroup_opts.ballot_bit_size = nir->options->ballot_bit_size;
-         subgroup_opts.ballot_components = nir->options->ballot_components;
-         subgroup_opts.lower_fp64 = true;
+         subgroup_opts.filter = filter_double_subgroup;
+         subgroup_opts.subgroup_size = 0;
+         subgroup_opts.ballot_bit_size = 32;
+         subgroup_opts.ballot_components = 4;
+         subgroup_opts.lower_vote_feq = true;
+         subgroup_opts.lower_reduce = true;
 
-         if (subgroup_opts.ballot_bit_size) {
+         if (nir->options->lower_doubles_options & nir_lower_fp64_full_software)
             NIR_PASS(lowered_64bit_ops, nir, nir_lower_subgroups, &subgroup_opts);
-         }
 
          /* nir_lower_doubles is not prepared for vector ops, so if the backend doesn't
           * request lower_alu_to_scalar until now, lower all 64 bit ops, and try to
@@ -698,7 +726,7 @@ st_finalize_nir(struct st_context *st, struct gl_program *prog,
       NIR_PASS(_, nir, nir_lower_tex, &opts);
    }
 
-   st_nir_assign_uniform_locations(st->ctx, prog, nir);
+   st_nir_assign_uniform_locations(st, prog, nir, is_before_variants);
 
    /* Set num_uniforms in number of attribute slots (vec4s) */
    nir->num_uniforms = DIV_ROUND_UP(prog->Parameters->NumParameterValues, 4);

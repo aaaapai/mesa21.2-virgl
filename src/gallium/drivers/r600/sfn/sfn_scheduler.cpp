@@ -161,6 +161,9 @@ private:
    bool collect_ready_alu_vec(std::list<AluInstr *>& ready,
                               std::list<AluInstr *>& available,
                               AluInstr **predicate);
+   bool collect_ready_alu_multislot(std::list<AluInstr *>& ready,
+                                    std::list<AluInstr *>& available,
+                                    AluInstr **predicate);
 
    bool schedule_tex(Shader::ShaderBlocks& out_blocks);
    bool schedule_vtx(Shader::ShaderBlocks& out_blocks);
@@ -353,7 +356,7 @@ BlockScheduler::schedule_block(Block& in_block,
 
       if (!m_current_block->lds_group_active() &&
           m_current_block->expected_ar_uses() == 0) {
-         if (last_shed != sched_free && free_ready.size() > 8)
+         if (last_shed != sched_free && free_ready.size() >= 4)
             current_shed = sched_free;
          else if (tex_ready.size() > (m_chip_class >= ISA_CC_EVERGREEN ? 15 : 7))
             current_shed = sched_tex;
@@ -365,6 +368,7 @@ BlockScheduler::schedule_block(Block& in_block,
             current_shed = sched_alu;
             break;
          }
+         break;
       case sched_alu:
          if (!schedule_alu(out_blocks, vf)) {
             assert(!m_current_block->lds_group_active());
@@ -964,7 +968,6 @@ BlockScheduler::schedule_alu_multislot_to_group_vec(AluGroup *group, ValueFactor
    while (i != e && util_bitcount(group->free_slot_mask()) > 1) {
 
       auto dest = (*i)->dest();
-      assert(dest);
 
       bool can_merge = false;
       unsigned allowed_dest_chan_mask = (*i)->allowed_dest_chan_mask();
@@ -983,7 +986,10 @@ BlockScheduler::schedule_alu_multislot_to_group_vec(AluGroup *group, ValueFactor
          if (!dest->can_switch_to_chan(new_chan))
             break;
 
-         dest->set_chan(new_chan);
+         if (dest)
+            dest->set_chan(new_chan);
+         else
+            (*i)->set_allowed_dest_chan_mask(BITSET_BIT(new_chan));
       }
 
       if (!can_merge) {
@@ -1002,7 +1008,7 @@ BlockScheduler::schedule_alu_multislot_to_group_vec(AluGroup *group, ValueFactor
          continue;
       }
 
-      if ((*i)->split(vf, *group)) {
+      if ((*i)->split(*group)) {
          success = true;
          auto old_i = i;
          ++i;
@@ -1135,7 +1141,6 @@ BlockScheduler::collect_ready(CollectInstructions& available)
    sfn_log << SfnLog::schedule << "Ready instructions\n";
    bool result = false;
    result |= collect_ready_type(alu_trans_ready, available.alu_trans);
-   result |= collect_ready_type(alu_multi_slot_ready, available.alu_multi_slot);
    result |= collect_ready_type(alu_groups_ready, available.alu_groups);
    result |= collect_ready_type(gds_ready, available.gds_instr);
    result |= collect_ready_type(tex_ready, available.tex);
@@ -1143,13 +1148,34 @@ BlockScheduler::collect_ready(CollectInstructions& available)
    result |= collect_ready_type(free_ready, available.free_instr);
    result |= collect_ready_type(waitacks_ready, available.waitacks);
 
-   if (!result && available.predicate && available.alu_groups.empty() &&
-       available.gds_instr.empty() && available.tex.empty() &&
-       available.fetches.empty() && available.free_instr.empty())
-      result |=
-         collect_ready_alu_vec(alu_vec_ready, available.alu_vec, &available.predicate);
-   else
+   bool may_emit_predicate =
+      !result && available.predicate && available.alu_groups.empty() &&
+      available.alu_trans.empty() && available.gds_instr.empty() &&
+      available.tex.empty() && available.fetches.empty() && available.free_instr.empty();
+
+   if (may_emit_predicate) {
+      if (available.predicate->alu_slots() > 1) {
+         result |= collect_ready_alu_vec(alu_vec_ready, available.alu_vec, nullptr);
+
+         if (!result)
+            result |= collect_ready_alu_multislot(alu_multi_slot_ready,
+                                                  available.alu_multi_slot,
+                                                  &available.predicate);
+      } else {
+         result |= collect_ready_alu_multislot(alu_multi_slot_ready,
+                                               available.alu_multi_slot,
+                                               nullptr);
+         if (!result)
+            result |= collect_ready_alu_vec(alu_vec_ready,
+                                            available.alu_vec,
+                                            &available.predicate);
+      }
+   } else {
       result |= collect_ready_alu_vec(alu_vec_ready, available.alu_vec, nullptr);
+      result |= collect_ready_alu_multislot(alu_multi_slot_ready,
+                                            available.alu_multi_slot,
+                                            nullptr);
+   }
 
    sfn_log << SfnLog::schedule << "\n";
    return result;
@@ -1222,6 +1248,7 @@ BlockScheduler::collect_ready_alu_vec(std::list<AluInstr *>& ready,
 
    if (predicate && *predicate && available.empty() && ready.size() < 16 &&
        (*predicate)->ready()) {
+      assert((*predicate)->alu_slots() == 1);
       ready.push_back(*predicate);
       *predicate = nullptr;
    }
@@ -1235,6 +1262,37 @@ BlockScheduler::collect_ready_alu_vec(std::list<AluInstr *>& ready,
 
    for (auto& i : ready)
       sfn_log << SfnLog::schedule << "V (S):  " << i->priority() << " " << *i << "\n";
+
+   return !ready.empty();
+}
+
+bool
+BlockScheduler::collect_ready_alu_multislot(std::list<AluInstr *>& ready,
+                                            std::list<AluInstr *>& available,
+                                            AluInstr **predicate)
+{
+   auto i = available.begin();
+   auto e = available.end();
+
+   int lookahead = 16;
+   while (i != e && ready.size() < 16 && lookahead-- > 0) {
+      if ((*i)->ready()) {
+         ready.push_back(*i);
+         auto old_i = i;
+         ++i;
+         available.erase(old_i);
+      } else
+         ++i;
+   }
+
+   if (predicate && *predicate && available.empty() && ready.size() < 16 &&
+       (*predicate)->ready()) {
+      ready.push_back(*predicate);
+      *predicate = nullptr;
+   }
+
+   for (auto& i : ready)
+      sfn_log << SfnLog::schedule << "M:  " << *i << "\n";
 
    return !ready.empty();
 }

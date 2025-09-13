@@ -11,29 +11,94 @@
 #include "brw_inst.h"
 #include "brw_isa_info.h"
 
-static void
-initialize_sources(brw_inst *inst, const brw_reg src[], uint8_t num_sources);
-
-void
-brw_inst::init(enum opcode opcode, uint8_t exec_size, const brw_reg &dst,
-              const brw_reg *src, unsigned sources)
+static inline unsigned
+brw_inst_kind_size(brw_inst_kind kind)
 {
-   memset((void*)this, 0, sizeof(*this));
+   STATIC_ASSERT(sizeof(brw_send_inst) >= sizeof(brw_tex_inst));
+   STATIC_ASSERT(sizeof(brw_send_inst) >= sizeof(brw_mem_inst));
+   STATIC_ASSERT(sizeof(brw_send_inst) >= sizeof(brw_dpas_inst));
+   STATIC_ASSERT(sizeof(brw_send_inst) >= sizeof(brw_load_payload_inst));
+   STATIC_ASSERT(sizeof(brw_send_inst) >= sizeof(brw_urb_inst));
+   STATIC_ASSERT(sizeof(brw_send_inst) >= sizeof(brw_fb_write_inst));
 
-   initialize_sources(this, src, sources);
+   /* To allow transforming from other non-BASE kinds to a SEND, make
+    * it so that enough space is always allocated.
+    */
 
-   for (unsigned i = 0; i < sources; i++)
-      this->src[i] = src[i];
+   return kind == BRW_KIND_BASE ? sizeof(brw_inst)
+                                : sizeof(brw_send_inst);
+}
 
-   this->opcode = opcode;
-   this->dst = dst;
-   this->exec_size = exec_size;
+static inline unsigned
+brw_inst_kind_align(brw_inst_kind kind)
+{
+   STATIC_ASSERT(alignof(brw_send_inst) >= alignof(brw_tex_inst));
+   STATIC_ASSERT(alignof(brw_send_inst) >= alignof(brw_mem_inst));
+   STATIC_ASSERT(alignof(brw_send_inst) >= alignof(brw_dpas_inst));
+   STATIC_ASSERT(alignof(brw_send_inst) >= alignof(brw_load_payload_inst));
+   STATIC_ASSERT(alignof(brw_send_inst) >= alignof(brw_urb_inst));
+   STATIC_ASSERT(alignof(brw_send_inst) >= alignof(brw_fb_write_inst));
 
+   /* See brw_inst_kind_size(). */
+
+   return kind == BRW_KIND_BASE ? alignof(brw_inst)
+                                : alignof(brw_send_inst);
+}
+
+static void *
+brw_alloc_size(brw_shader &s, unsigned size, unsigned align)
+{
+   unsigned padding = -(uintptr_t)s.inst_arena.beg & (align - 1);
+
+   /* If doesn't fit, create a larger one. */
+   if (s.inst_arena.end - s.inst_arena.beg - padding < size) {
+      unsigned new_cap = MAX2(s.inst_arena.total_cap / 2, size);
+      s.inst_arena.beg = (char *)ralloc_size(s.inst_arena.mem_ctx, new_cap);
+      s.inst_arena.end = s.inst_arena.beg + new_cap;
+      s.inst_arena.cap = new_cap;
+      s.inst_arena.total_cap += new_cap;
+      padding = 0;
+   }
+
+   void *mem = s.inst_arena.beg + padding;
+   s.inst_arena.beg += padding + size;
+   return mem;
+}
+
+static brw_inst *
+brw_alloc_inst(brw_shader &s, brw_inst_kind kind, unsigned num_srcs)
+{
+   const unsigned inst_size = brw_inst_kind_size(kind);
+   const unsigned inst_align = brw_inst_kind_align(kind);
+
+   assert((inst_size % alignof(brw_reg)) == 0);
+
+   void *mem = brw_alloc_size(s, inst_size + num_srcs * sizeof(brw_reg), inst_align);
+   memset(mem, 0, inst_size);
+
+   brw_inst *inst = (brw_inst *)mem;
+   if (num_srcs)
+      inst->src = (brw_reg *)((char*)mem + inst_size);
+   inst->sources = num_srcs;
+
+   return inst;
+}
+
+brw_inst *
+brw_new_inst(brw_shader &s, enum opcode opcode, unsigned exec_size,
+             const brw_reg &dst, unsigned num_srcs)
+{
+   assert(exec_size != 0);
    assert(dst.file != IMM && dst.file != UNIFORM);
 
-   assert(this->exec_size != 0);
+   brw_inst_kind kind = brw_inst_kind_for_opcode(opcode);
+   brw_inst *inst = brw_alloc_inst(s, kind, num_srcs);
 
-   this->conditional_mod = BRW_CONDITIONAL_NONE;
+   inst->kind = kind;
+   inst->opcode = opcode;
+   inst->dst = dst;
+   inst->exec_size = exec_size;
+   inst->conditional_mod = BRW_CONDITIONAL_NONE;
 
    /* This will be the case for almost all instructions. */
    switch (dst.file) {
@@ -42,130 +107,153 @@ brw_inst::init(enum opcode opcode, uint8_t exec_size, const brw_reg &dst,
    case ARF:
    case FIXED_GRF:
    case ATTR:
-      this->size_written = dst.component_size(exec_size);
+      inst->size_written = dst.component_size(exec_size);
       break;
    case BAD_FILE:
-      this->size_written = 0;
+      inst->size_written = 0;
       break;
    case IMM:
    case UNIFORM:
       UNREACHABLE("Invalid destination register file");
    }
 
-   this->writes_accumulator = false;
+   return inst;
 }
 
-brw_inst::brw_inst()
+brw_inst *
+brw_clone_inst(brw_shader &s, const brw_inst *inst)
 {
-   init(BRW_OPCODE_NOP, 8, dst, NULL, 0);
-}
+   brw_inst *clone = brw_alloc_inst(s, inst->kind, inst->sources);
+   brw_reg *cloned_src = clone->src;
 
-brw_inst::brw_inst(enum opcode opcode, uint8_t exec_size)
-{
-   init(opcode, exec_size, reg_undef, NULL, 0);
-}
+   const unsigned inst_size = brw_inst_kind_size(inst->kind);
+   memcpy((void*)clone, inst, inst_size);
 
-brw_inst::brw_inst(enum opcode opcode, uint8_t exec_size, const brw_reg &dst)
-{
-   init(opcode, exec_size, dst, NULL, 0);
-}
+   brw_exec_node_init(clone);
+   clone->src = cloned_src;
 
-brw_inst::brw_inst(enum opcode opcode, uint8_t exec_size, const brw_reg &dst,
-                 const brw_reg &src0)
-{
-   const brw_reg src[1] = { src0 };
-   init(opcode, exec_size, dst, src, 1);
-}
-
-brw_inst::brw_inst(enum opcode opcode, uint8_t exec_size, const brw_reg &dst,
-                 const brw_reg &src0, const brw_reg &src1)
-{
-   const brw_reg src[2] = { src0, src1 };
-   init(opcode, exec_size, dst, src, 2);
-}
-
-brw_inst::brw_inst(enum opcode opcode, uint8_t exec_size, const brw_reg &dst,
-                 const brw_reg &src0, const brw_reg &src1, const brw_reg &src2)
-{
-   const brw_reg src[3] = { src0, src1, src2 };
-   init(opcode, exec_size, dst, src, 3);
-}
-
-brw_inst::brw_inst(enum opcode opcode, uint8_t exec_width, const brw_reg &dst,
-                 const brw_reg src[], unsigned sources)
-{
-   init(opcode, exec_width, dst, src, sources);
-}
-
-brw_inst::brw_inst(const brw_inst &that)
-{
-   memcpy((void*)this, &that, sizeof(that));
-   brw_exec_node_init(this);
-   initialize_sources(this, that.src, that.sources);
-}
-
-brw_inst::~brw_inst()
-{
-   if (this->src != this->builtin_src)
-      delete[] this->src;
-}
-
-static void
-initialize_sources(brw_inst *inst, const brw_reg src[], uint8_t num_sources)
-{
-   if (num_sources > ARRAY_SIZE(inst->builtin_src))
-      inst->src = new brw_reg[num_sources];
-   else
-      inst->src = inst->builtin_src;
-
-   for (unsigned i = 0; i < num_sources; i++)
-      inst->src[i] = src[i];
-
-   inst->sources = num_sources;
-}
-
-void
-brw_inst::resize_sources(uint8_t num_sources)
-{
-   if (this->sources == num_sources)
-      return;
-
-   brw_reg *old_src = this->src;
-   brw_reg *new_src;
-
-   const unsigned builtin_size = ARRAY_SIZE(this->builtin_src);
-
-   if (old_src == this->builtin_src) {
-      if (num_sources > builtin_size) {
-         new_src = new brw_reg[num_sources];
-         for (unsigned i = 0; i < this->sources; i++)
-            new_src[i] = old_src[i];
-
-      } else {
-         new_src = old_src;
-      }
-   } else {
-      if (num_sources <= builtin_size) {
-         new_src = this->builtin_src;
-         assert(this->sources > num_sources);
-         for (unsigned i = 0; i < num_sources; i++)
-            new_src[i] = old_src[i];
-
-      } else if (num_sources < this->sources) {
-         new_src = old_src;
-
-      } else {
-         new_src = new brw_reg[num_sources];
-         for (unsigned i = 0; i < this->sources; i++)
-            new_src[i] = old_src[i];
-      }
-
-      if (old_src != new_src)
-         delete[] old_src;
+   if (clone->sources) {
+      for (unsigned i = 0; i < clone->sources; i++)
+         clone->src[i] = inst->src[i];
    }
 
-   this->sources = num_sources;
-   this->src = new_src;
+   return clone;
+}
+
+static unsigned
+brw_num_sources_for_opcode(const brw_shader &s, enum opcode opcode)
+{
+   const struct opcode_desc *desc =
+      brw_opcode_desc(&s.compiler->isa, opcode);
+   if (desc)
+      return desc->nsrc;
+   if (opcode == SHADER_OPCODE_SEND)
+      return SEND_NUM_SRCS;
+   return -1;
+}
+
+brw_inst *
+brw_transform_inst(brw_shader &s, brw_inst *inst, enum opcode new_opcode,
+                   unsigned new_num_sources)
+{
+   const brw_inst_kind kind = inst->kind;
+   const brw_inst_kind new_kind = brw_inst_kind_for_opcode(new_opcode);
+
+   const unsigned inst_size = brw_inst_kind_size(kind);
+   const unsigned new_inst_size = brw_inst_kind_size(new_kind);
+   assert(new_inst_size <= inst_size);
+
+   if (new_num_sources == UINT_MAX)
+      new_num_sources = brw_num_sources_for_opcode(s, new_opcode);
+   assert(new_num_sources != UINT_MAX);
+
+   if (new_num_sources > inst->sources) {
+      brw_reg *new_src = (brw_reg *)
+         brw_alloc_size(s, sizeof(brw_reg) * new_num_sources, alignof(brw_reg));
+      for (unsigned i = 0; i < inst->sources; i++)
+         new_src[i] = inst->src[i];
+      inst->src = new_src;
+   }
+
+   if (new_kind != kind)
+      memset(((char *)inst) + sizeof(brw_inst), 0, new_inst_size - sizeof(brw_inst));
+
+   inst->sources = new_num_sources;
+   inst->opcode = new_opcode;
+   inst->kind = new_kind;
+
+   return inst;
+}
+
+brw_inst_kind
+brw_inst_kind_for_opcode(enum opcode opcode)
+{
+   switch (opcode) {
+   case BRW_OPCODE_SEND:
+   case BRW_OPCODE_SENDS:
+   case BRW_OPCODE_SENDC:
+   case BRW_OPCODE_SENDSC:
+   case SHADER_OPCODE_SEND:
+   case SHADER_OPCODE_SEND_GATHER:
+   case SHADER_OPCODE_BARRIER:
+   case SHADER_OPCODE_MEMORY_FENCE:
+   case SHADER_OPCODE_INTERLOCK:
+      return BRW_KIND_SEND;
+
+   case SHADER_OPCODE_TEX_LOGICAL:
+   case SHADER_OPCODE_TXD_LOGICAL:
+   case SHADER_OPCODE_TXF_LOGICAL:
+   case SHADER_OPCODE_TXL_LOGICAL:
+   case SHADER_OPCODE_TXS_LOGICAL:
+   case SHADER_OPCODE_IMAGE_SIZE_LOGICAL:
+   case FS_OPCODE_TXB_LOGICAL:
+   case SHADER_OPCODE_TXF_CMS_W_LOGICAL:
+   case SHADER_OPCODE_TXF_CMS_W_GFX12_LOGICAL:
+   case SHADER_OPCODE_TXF_MCS_LOGICAL:
+   case SHADER_OPCODE_LOD_LOGICAL:
+   case SHADER_OPCODE_TG4_LOGICAL:
+   case SHADER_OPCODE_TG4_OFFSET_LOGICAL:
+   case SHADER_OPCODE_TG4_BIAS_LOGICAL:
+   case SHADER_OPCODE_TG4_EXPLICIT_LOD_LOGICAL:
+   case SHADER_OPCODE_TG4_IMPLICIT_LOD_LOGICAL:
+   case SHADER_OPCODE_TG4_OFFSET_LOD_LOGICAL:
+   case SHADER_OPCODE_TG4_OFFSET_BIAS_LOGICAL:
+   case SHADER_OPCODE_SAMPLEINFO_LOGICAL:
+      return BRW_KIND_TEX;
+
+   case SHADER_OPCODE_MEMORY_LOAD_LOGICAL:
+   case SHADER_OPCODE_MEMORY_STORE_LOGICAL:
+   case SHADER_OPCODE_MEMORY_ATOMIC_LOGICAL:
+      return BRW_KIND_MEM;
+
+   case BRW_OPCODE_DPAS:
+      return BRW_KIND_DPAS;
+
+   case SHADER_OPCODE_LOAD_PAYLOAD:
+      return BRW_KIND_LOAD_PAYLOAD;
+
+   case SHADER_OPCODE_URB_READ_LOGICAL:
+   case SHADER_OPCODE_URB_WRITE_LOGICAL:
+      return BRW_KIND_URB;
+
+   case FS_OPCODE_FB_WRITE_LOGICAL:
+      return BRW_KIND_FB_WRITE;
+
+   case SHADER_OPCODE_GET_BUFFER_SIZE:
+   case FS_OPCODE_FB_READ_LOGICAL:
+   case FS_OPCODE_UNIFORM_PULL_CONSTANT_LOAD:
+   case FS_OPCODE_VARYING_PULL_CONSTANT_LOAD_LOGICAL:
+   case SHADER_OPCODE_BTD_SPAWN_LOGICAL:
+   case SHADER_OPCODE_BTD_RETIRE_LOGICAL:
+   case RT_OPCODE_TRACE_RAY_LOGICAL:
+   case FS_OPCODE_INTERPOLATE_AT_SAMPLE:
+   case FS_OPCODE_INTERPOLATE_AT_SHARED_OFFSET:
+   case FS_OPCODE_INTERPOLATE_AT_PER_SLOT_OFFSET:
+      return BRW_KIND_LOGICAL;
+
+   default:
+      return BRW_KIND_BASE;
+   }
 }
 
 bool
@@ -205,14 +293,6 @@ brw_inst::is_control_source(unsigned arg) const
    case SHADER_OPCODE_SEND:
    case SHADER_OPCODE_SEND_GATHER:
       return arg < SEND_SRC_PAYLOAD1;
-
-   case SHADER_OPCODE_MEMORY_LOAD_LOGICAL:
-   case SHADER_OPCODE_MEMORY_STORE_LOGICAL:
-   case SHADER_OPCODE_MEMORY_ATOMIC_LOGICAL:
-      return arg != MEMORY_LOGICAL_BINDING &&
-             arg != MEMORY_LOGICAL_ADDRESS &&
-             arg != MEMORY_LOGICAL_DATA0 &&
-             arg != MEMORY_LOGICAL_DATA1;
 
    case SHADER_OPCODE_QUAD_SWAP:
    case SHADER_OPCODE_INCLUSIVE_SCAN:
@@ -420,10 +500,9 @@ brw_inst::components_read(unsigned i) const
          return 1;
 
    case FS_OPCODE_FB_WRITE_LOGICAL:
-      assert(src[FB_WRITE_LOGICAL_SRC_COMPONENTS].file == IMM);
       /* First/second FB write color. */
       if (i < 2)
-         return src[FB_WRITE_LOGICAL_SRC_COMPONENTS].ud;
+         return as_fb_write()->components;
       else
          return 1;
 
@@ -445,17 +524,15 @@ brw_inst::components_read(unsigned i) const
    case SHADER_OPCODE_TG4_IMPLICIT_LOD_LOGICAL:
    case SHADER_OPCODE_TG4_OFFSET_LOD_LOGICAL:
    case SHADER_OPCODE_TG4_OFFSET_BIAS_LOGICAL:
-   case SHADER_OPCODE_SAMPLEINFO_LOGICAL:
-      assert(src[TEX_LOGICAL_SRC_COORD_COMPONENTS].file == IMM &&
-             src[TEX_LOGICAL_SRC_GRAD_COMPONENTS].file == IMM &&
-             src[TEX_LOGICAL_SRC_RESIDENCY].file == IMM);
+   case SHADER_OPCODE_SAMPLEINFO_LOGICAL: {
+      const brw_tex_inst *tex = as_tex();
       /* Texture coordinates. */
       if (i == TEX_LOGICAL_SRC_COORDINATE)
-         return src[TEX_LOGICAL_SRC_COORD_COMPONENTS].ud;
+         return tex->coord_components;
       /* Texture derivatives. */
       else if ((i == TEX_LOGICAL_SRC_LOD || i == TEX_LOGICAL_SRC_LOD2) &&
                opcode == SHADER_OPCODE_TXD_LOGICAL)
-         return src[TEX_LOGICAL_SRC_GRAD_COMPONENTS].ud;
+         return tex->grad_components;
       /* Texture offset. */
       else if (i == TEX_LOGICAL_SRC_TG4_OFFSET)
          return 2;
@@ -469,6 +546,7 @@ brw_inst::components_read(unsigned i) const
             return 1;
       } else
          return 1;
+   }
 
    case SHADER_OPCODE_MEMORY_LOAD_LOGICAL:
       if (i == MEMORY_LOGICAL_DATA0)
@@ -478,22 +556,22 @@ brw_inst::components_read(unsigned i) const
       if (i == MEMORY_LOGICAL_DATA1)
          return 0;
       FALLTHROUGH;
-   case SHADER_OPCODE_MEMORY_ATOMIC_LOGICAL:
+   case SHADER_OPCODE_MEMORY_ATOMIC_LOGICAL: {
+      const brw_mem_inst *mem = as_mem();
       if (i == MEMORY_LOGICAL_DATA0 || i == MEMORY_LOGICAL_DATA1)
-         return src[MEMORY_LOGICAL_COMPONENTS].ud;
+         return mem->components;
       else if (i == MEMORY_LOGICAL_ADDRESS)
-         return src[MEMORY_LOGICAL_COORD_COMPONENTS].ud;
+         return mem->coord_components;
       else
          return 1;
+   }
 
    case FS_OPCODE_INTERPOLATE_AT_PER_SLOT_OFFSET:
       return (i == 0 ? 2 : 1);
 
    case SHADER_OPCODE_URB_WRITE_LOGICAL:
-      assert(src[URB_LOGICAL_SRC_COMPONENTS].file == IMM);
-
       if (i == URB_LOGICAL_SRC_DATA)
-         return src[URB_LOGICAL_SRC_COMPONENTS].ud;
+         return as_urb()->components;
       else
          return 1;
 
@@ -511,9 +589,9 @@ brw_inst::size_read(const struct intel_device_info *devinfo, int arg) const
    switch (opcode) {
    case SHADER_OPCODE_SEND:
       if (arg == SEND_SRC_PAYLOAD1) {
-         return mlen * REG_SIZE;
+         return as_send()->mlen * REG_SIZE;
       } else if (arg == SEND_SRC_PAYLOAD2) {
-         return ex_mlen * REG_SIZE;
+         return as_send()->ex_mlen * REG_SIZE;
       }
       break;
 
@@ -531,7 +609,7 @@ brw_inst::size_read(const struct intel_device_info *devinfo, int arg) const
       break;
 
    case SHADER_OPCODE_LOAD_PAYLOAD:
-      if (arg < this->header_size)
+      if (arg < as_load_payload()->header_size)
          return retype(src[arg], BRW_TYPE_UD).component_size(8);
       break;
 
@@ -555,13 +633,14 @@ brw_inst::size_read(const struct intel_device_info *devinfo, int arg) const
        */
       const unsigned reg_unit = this->exec_size / 8;
       const unsigned type_size = brw_type_size_bytes(src[arg].type);
+      const brw_dpas_inst *dpas = as_dpas();
 
       switch (arg) {
       case 0:
          assert(type_size == 4 || type_size == 2);
-         return rcount * reg_unit * 8 * type_size;
+         return dpas->rcount * reg_unit * 8 * type_size;
       case 1:
-         return sdepth * reg_unit * REG_SIZE;
+         return dpas->sdepth * reg_unit * REG_SIZE;
       case 2:
          /* This is simpler than the formula described in the Bspec, but it
           * covers all of the cases that we support. Each inner sdepth
@@ -570,7 +649,7 @@ brw_inst::size_read(const struct intel_device_info *devinfo, int arg) const
           * currently supportable through Vulkan. This is independent of
           * reg_unit.
           */
-         return rcount * sdepth * 4;
+         return dpas->rcount * dpas->sdepth * 4;
       default:
          UNREACHABLE("Invalid source number.");
       }
@@ -672,27 +751,8 @@ brw_inst::flags_written(const intel_device_info *devinfo) const
 bool
 brw_inst::has_sampler_residency() const
 {
-   switch (opcode) {
-   case SHADER_OPCODE_TEX_LOGICAL:
-   case FS_OPCODE_TXB_LOGICAL:
-   case SHADER_OPCODE_TXL_LOGICAL:
-   case SHADER_OPCODE_TXD_LOGICAL:
-   case SHADER_OPCODE_TXF_LOGICAL:
-   case SHADER_OPCODE_TXF_CMS_W_GFX12_LOGICAL:
-   case SHADER_OPCODE_TXF_CMS_W_LOGICAL:
-   case SHADER_OPCODE_TXS_LOGICAL:
-   case SHADER_OPCODE_TG4_OFFSET_LOGICAL:
-   case SHADER_OPCODE_TG4_LOGICAL:
-   case SHADER_OPCODE_TG4_BIAS_LOGICAL:
-   case SHADER_OPCODE_TG4_EXPLICIT_LOD_LOGICAL:
-   case SHADER_OPCODE_TG4_IMPLICIT_LOD_LOGICAL:
-   case SHADER_OPCODE_TG4_OFFSET_LOD_LOGICAL:
-   case SHADER_OPCODE_TG4_OFFSET_BIAS_LOGICAL:
-      assert(src[TEX_LOGICAL_SRC_RESIDENCY].file == IMM);
-      return src[TEX_LOGICAL_SRC_RESIDENCY].ud != 0;
-   default:
-      return false;
-   }
+   const brw_tex_inst *tex = as_tex();
+   return tex && tex->residency;
 }
 
 /* \sa inst_is_raw_move in brw_eu_validate. */
@@ -921,7 +981,7 @@ brw_inst::has_side_effects() const
    switch (opcode) {
    case SHADER_OPCODE_SEND:
    case SHADER_OPCODE_SEND_GATHER:
-      return send_has_side_effects;
+      return as_send()->has_side_effects;
 
    case BRW_OPCODE_SYNC:
    case SHADER_OPCODE_MEMORY_STORE_LOGICAL:
@@ -951,11 +1011,10 @@ brw_inst::is_volatile() const
    case SHADER_OPCODE_LOAD_REG:
       return true;
    case SHADER_OPCODE_MEMORY_STORE_LOGICAL:
-      assert(sources > MEMORY_LOGICAL_FLAGS);
-      return src[MEMORY_LOGICAL_FLAGS].ud & MEMORY_FLAG_VOLATILE_ACCESS;
+      return as_mem()->flags & MEMORY_FLAG_VOLATILE_ACCESS;
    case SHADER_OPCODE_SEND:
    case SHADER_OPCODE_SEND_GATHER:
-      return send_is_volatile;
+      return as_send()->is_volatile;
    default:
       return false;
    }

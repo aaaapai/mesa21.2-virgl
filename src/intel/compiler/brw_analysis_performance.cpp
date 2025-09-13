@@ -24,6 +24,7 @@
 #include "brw_eu.h"
 #include "brw_shader.h"
 #include "brw_cfg.h"
+#include <algorithm>
 
 namespace {
    /**
@@ -64,10 +65,8 @@ namespace {
     * potentially depend on.
     */
    enum intel_eu_dependency_id {
-      /* Register part of the GRF. */
-      EU_DEPENDENCY_ID_GRF0 = 0,
       /* Address register part of the ARF. */
-      EU_DEPENDENCY_ID_ADDR0 = EU_DEPENDENCY_ID_GRF0 + XE3_MAX_GRF,
+      EU_DEPENDENCY_ID_ADDR0 = 0,
       /* Accumulator register part of the ARF. */
       EU_DEPENDENCY_ID_ACCUM0 = EU_DEPENDENCY_ID_ADDR0 + 1,
       /* Flag register part of the ARF. */
@@ -76,15 +75,33 @@ namespace {
       EU_DEPENDENCY_ID_SBID_WR0 = EU_DEPENDENCY_ID_FLAG0 + 16,
       /* SBID token read completion.  Only used on Gfx12+. */
       EU_DEPENDENCY_ID_SBID_RD0 = EU_DEPENDENCY_ID_SBID_WR0 + 32,
-      /* Number of computation dependencies currently tracked. */
-      EU_NUM_DEPENDENCY_IDS = EU_DEPENDENCY_ID_SBID_RD0 + 32
+      /* Register part of the GRF. */
+      EU_DEPENDENCY_ID_GRF0 = EU_DEPENDENCY_ID_SBID_RD0 + 32,
+      EU_DEPENDENCY_ID_INVALID = ~0u
    };
+
+   unsigned
+   num_grf_dependency_ids(const brw_shader *s) {
+      return (!s->grf_used ? s->alloc.count :
+              s->devinfo->ver >= 30 ? XE3_MAX_GRF :
+              s->devinfo->ver >= 20 ? XE2_MAX_GRF :
+              BRW_MAX_GRF);
+   }
 
    /**
     * State of our modeling of the program execution.
     */
    struct state {
-      state() : unit_ready(), dep_ready(), unit_busy(), weight(1.0) {}
+      state(const brw_shader *s) :
+	 unit_ready(), dep_ready(), num_dependency_ids(EU_DEPENDENCY_ID_GRF0 + num_grf_dependency_ids(s)), unit_busy(), weight(1.0)
+      {
+	 dep_ready = new unsigned[num_dependency_ids]();
+      }
+
+      ~state() {
+	 delete[] dep_ready;
+      }
+
       /**
        * Time at which a given unit will be ready to execute the next
        * computation, in clock units.
@@ -94,7 +111,9 @@ namespace {
        * Time at which an instruction dependent on a given dependency ID will
        * be ready to execute, in clock units.
        */
-      unsigned dep_ready[EU_NUM_DEPENDENCY_IDS];
+      unsigned *dep_ready;
+      unsigned num_dependency_ids;
+
       /**
        * Aggregated utilization of a given unit excluding idle cycles,
        * in clock units.
@@ -118,20 +137,25 @@ namespace {
          td(inst->dst.type), sd(DIV_ROUND_UP(inst->size_written, REG_SIZE)),
          tx(get_exec_type(inst)), sx(0), ss(0),
          sc(has_bank_conflict(isa, inst) ? sd : 0),
-         desc(inst->desc), sfid(inst->sfid)
+         desc(0), sfid(0)
       {
-         /* We typically want the maximum source size, except for split send
-          * messages which require the total size.
-          */
-         if (inst->opcode == SHADER_OPCODE_SEND) {
-            ss = DIV_ROUND_UP(inst->size_read(devinfo, 2), REG_SIZE) +
-                 DIV_ROUND_UP(inst->size_read(devinfo, 3), REG_SIZE);
-         } else if (inst->opcode == SHADER_OPCODE_SEND_GATHER) {
-            ss = inst->mlen;
-            /* If haven't lowered yet, count the sources. */
-            if (!ss) {
-               for (int i = 3; i < inst->sources; i++)
-                  ss += DIV_ROUND_UP(inst->size_read(devinfo, i), REG_SIZE);
+         const brw_send_inst *send = inst->as_send();
+         if (send) {
+            desc = send->desc;
+            sfid = send->sfid;
+            /* We typically want the maximum source size, except for split send
+             * messages which require the total size.
+             */
+            if (inst->opcode == SHADER_OPCODE_SEND) {
+               ss = DIV_ROUND_UP(inst->size_read(devinfo, 2), REG_SIZE) +
+                    DIV_ROUND_UP(inst->size_read(devinfo, 3), REG_SIZE);
+            } else if (inst->opcode == SHADER_OPCODE_SEND_GATHER) {
+               ss = send->mlen;
+               /* If haven't lowered yet, count the sources. */
+               if (!ss) {
+                  for (int i = 3; i < inst->sources; i++)
+                     ss += DIV_ROUND_UP(inst->size_read(devinfo, i), REG_SIZE);
+               }
             }
          } else {
             for (unsigned i = 0; i < inst->sources; i++)
@@ -149,7 +173,8 @@ namespace {
              brw_type_size_bytes(inst->src[0].type) == brw_type_size_bytes(inst->src[1].type))
             tx = brw_int_type(8, tx == BRW_TYPE_D);
 
-         rcount = inst->opcode == BRW_OPCODE_DPAS ? inst->rcount : 0;
+         const brw_dpas_inst *dpas = inst->as_dpas();
+         rcount = dpas ? dpas->rcount : 0;
       }
 
       /** ISA encoding information */
@@ -598,10 +623,16 @@ namespace {
                                      30 /* XXX */, 0,
                                      10 /* XXX */, 300 /* XXX */, 0, 0, 0, 0);
             default:
-               return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0,
-                                     0, 450 /* XXX */,
-                                     10 /* XXX */, 300 /* XXX */, 0, 0,
-                                     0, 0);
+               if (devinfo->ver >= 30)
+                  return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0,
+                                        0, 400 /* XXX */,
+                                        10 /* XXX */, 300 /* XXX */, 0, 0,
+                                        0, 0);
+               else
+                  return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0,
+                                        0, 450 /* XXX */,
+                                        10 /* XXX */, 300 /* XXX */, 0, 0,
+                                        0, 0);
             }
          case BRW_SFID_SAMPLER: {
             return calculate_desc(info, EU_UNIT_SAMPLER, 2, 0, 0, 0, 16,
@@ -682,7 +713,7 @@ namespace {
             case LSC_OP_ATOMIC_OR:
             case LSC_OP_ATOMIC_XOR:
                return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
-                                     30 /* XXX */, 400 /* XXX */,
+                                     1300 /* XXX */, 0 /* XXX */,
                                      10 /* XXX */, 100 /* XXX */, 0, 0,
                                      0, 400 /* XXX */);
             default:
@@ -729,7 +760,7 @@ namespace {
    void
    stall_on_dependency(state &st, enum intel_eu_dependency_id id)
    {
-      if (id < ARRAY_SIZE(st.dep_ready))
+      if (id < st.num_dependency_ids)
          st.unit_ready[EU_UNIT_FE] = MAX2(st.unit_ready[EU_UNIT_FE],
                                        st.dep_ready[id]);
    }
@@ -768,7 +799,7 @@ namespace {
    mark_read_dependency(state &st, const perf_desc &perf,
                         enum intel_eu_dependency_id id)
    {
-      if (id < ARRAY_SIZE(st.dep_ready))
+      if (id < st.num_dependency_ids)
          st.dep_ready[id] = st.unit_ready[EU_UNIT_FE] + perf.ls;
    }
 
@@ -784,7 +815,7 @@ namespace {
          st.dep_ready[id] = st.unit_ready[EU_UNIT_FE] + perf.la;
       else if (id >= EU_DEPENDENCY_ID_FLAG0 && id < EU_DEPENDENCY_ID_SBID_WR0)
          st.dep_ready[id] = st.unit_ready[EU_UNIT_FE] + perf.lf;
-      else if (id < ARRAY_SIZE(st.dep_ready))
+      else if (id < st.num_dependency_ids)
          st.dep_ready[id] = st.unit_ready[EU_UNIT_FE] + perf.ld;
    }
 
@@ -796,13 +827,12 @@ namespace {
                      const int delta)
    {
       if (r.file == VGRF) {
-         const unsigned i = r.nr + r.offset / REG_SIZE + delta;
-         assert(i < EU_DEPENDENCY_ID_ADDR0 - EU_DEPENDENCY_ID_GRF0);
+         const unsigned i = r.nr;
          return intel_eu_dependency_id(EU_DEPENDENCY_ID_GRF0 + i);
 
       } else if (r.file == FIXED_GRF) {
          const unsigned i = r.nr + delta;
-         assert(i < EU_DEPENDENCY_ID_ADDR0 - EU_DEPENDENCY_ID_GRF0);
+         assert(i < XE3_MAX_GRF);
          return intel_eu_dependency_id(EU_DEPENDENCY_ID_GRF0 + i);
 
       } else if (r.file == ARF && r.nr >= BRW_ARF_ADDRESS &&
@@ -817,7 +847,7 @@ namespace {
          return intel_eu_dependency_id(EU_DEPENDENCY_ID_ACCUM0 + i);
 
       } else {
-         return EU_NUM_DEPENDENCY_IDS;
+         return EU_DEPENDENCY_ID_INVALID;
       }
    }
 
@@ -839,11 +869,10 @@ namespace {
    tgl_swsb_rd_dependency_id(tgl_swsb swsb)
    {
       if (swsb.mode) {
-         assert(swsb.sbid <
-                EU_NUM_DEPENDENCY_IDS - EU_DEPENDENCY_ID_SBID_RD0);
+         assert(swsb.sbid < EU_DEPENDENCY_ID_GRF0 - EU_DEPENDENCY_ID_SBID_RD0);
          return intel_eu_dependency_id(EU_DEPENDENCY_ID_SBID_RD0 + swsb.sbid);
       } else {
-         return EU_NUM_DEPENDENCY_IDS;
+         return EU_DEPENDENCY_ID_INVALID;
       }
    }
 
@@ -859,7 +888,7 @@ namespace {
                 EU_DEPENDENCY_ID_SBID_RD0 - EU_DEPENDENCY_ID_SBID_WR0);
          return intel_eu_dependency_id(EU_DEPENDENCY_ID_SBID_WR0 + swsb.sbid);
       } else {
-         return EU_NUM_DEPENDENCY_IDS;
+         return EU_DEPENDENCY_ID_INVALID;
       }
    }
 
@@ -913,26 +942,24 @@ namespace {
       }
 
       /* Stall on any write dependencies. */
-      if (!inst->no_dd_check) {
-         if (inst->dst.file != BAD_FILE && !inst->dst.is_null()) {
-            for (unsigned j = 0; j < regs_written(inst); j++)
-               stall_on_dependency(
-                  st, reg_dependency_id(devinfo, inst->dst, j));
-         }
+      if (inst->dst.file != BAD_FILE && !inst->dst.is_null()) {
+         for (unsigned j = 0; j < regs_written(inst); j++)
+            stall_on_dependency(
+               st, reg_dependency_id(devinfo, inst->dst, j));
+      }
 
-         if (inst->writes_accumulator_implicitly(devinfo)) {
-            for (unsigned j = accum_reg_of_channel(devinfo, inst, info.tx, 0);
-                 j <= accum_reg_of_channel(devinfo, inst, info.tx,
-                                           inst->exec_size - 1); j++)
-               stall_on_dependency(
-                  st, reg_dependency_id(devinfo, brw_acc_reg(8), j));
-         }
+      if (inst->writes_accumulator_implicitly(devinfo)) {
+         for (unsigned j = accum_reg_of_channel(devinfo, inst, info.tx, 0);
+              j <= accum_reg_of_channel(devinfo, inst, info.tx,
+                                        inst->exec_size - 1); j++)
+            stall_on_dependency(
+               st, reg_dependency_id(devinfo, brw_acc_reg(8), j));
+      }
 
-         if (const unsigned mask = inst->flags_written(devinfo)) {
-            for (unsigned i = 0; i < sizeof(mask) * CHAR_BIT; i++) {
-               if (mask & (1 << i))
-                  stall_on_dependency(st, flag_dependency_id(i));
-            }
+      if (const unsigned mask = inst->flags_written(devinfo)) {
+         for (unsigned i = 0; i < sizeof(mask) * CHAR_BIT; i++) {
+            if (mask & (1 << i))
+               stall_on_dependency(st, flag_dependency_id(i));
          }
       }
 
@@ -1001,6 +1028,33 @@ namespace {
    }
 
    /**
+    * Calculate the number of threads of this program that can run
+    * concurrently in an EU based on the estimate of register pressure
+    * derived from liveness information (pre-RA) or on the actual
+    * number of GRFs used if available (post-RA).  Platforms prior to
+    * xe3 don't support VRT so we can just return the constant value
+    * from device info.
+    */
+   unsigned
+   calculate_threads_per_eu(const brw_shader *s)
+   {
+      if (s->devinfo->ver >= 30) {
+         unsigned grf_used = s->grf_used;
+
+         if (!grf_used) {
+            const brw_register_pressure &rp = s->regpressure_analysis.require();
+            const unsigned max_regs_live = *std::max_element(rp.regs_live_at_ip,
+               rp.regs_live_at_ip + s->cfg->total_instructions);
+            grf_used = DIV_ROUND_UP(max_regs_live, reg_unit(s->devinfo));
+         }
+
+         return 32 / MAX2(3, ptl_register_blocks(grf_used) + 1);
+      } else {
+         return s->devinfo->num_thread_per_eu;
+      }
+   }
+
+   /**
     * Estimate the performance of the specified shader.
     */
    void
@@ -1034,12 +1088,14 @@ namespace {
        *       EU fusion has been removed on Xe2+ so its divergence behavior is
        *       expected to be closer to pre-Gfx12 platforms.
        */
-      const float discard_weight = (dispatch_width > 16 || s->devinfo->ver != 12 ?
-                                    1.0 : 0.5);
+      const float discard_weight =
+         s->devinfo->ver >= 30 ? (dispatch_width > 16 ? 0.75 : 0.525) :
+         s->devinfo->ver == 12 ? (dispatch_width > 16 ? 1.0 : 0.5) :
+         1.0;
       const float loop_weight = 10;
       unsigned halt_count = 0;
       unsigned elapsed = 0;
-      state st;
+      state st { s };
 
       foreach_block(block, s->cfg) {
          const unsigned elapsed0 = elapsed;
@@ -1066,7 +1122,8 @@ namespace {
       }
 
       p.latency = elapsed;
-      p.throughput = dispatch_width * calculate_thread_throughput(st, elapsed);
+      p.throughput = dispatch_width * calculate_threads_per_eu(s) *
+                     calculate_thread_throughput(st, elapsed);
    }
 }
 

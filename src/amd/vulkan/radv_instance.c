@@ -89,6 +89,7 @@ static const struct debug_control radv_debug_options[] = {{"nofastclears", RADV_
                                                           {"bvh4", RADV_DEBUG_BVH4},
                                                           {"novideo", RADV_DEBUG_NO_VIDEO},
                                                           {"validatevas", RADV_DEBUG_VALIDATE_VAS},
+                                                          {"bo_history", RADV_DEBUG_DUMP_BO_HISTORY},
                                                           {NULL, 0}};
 
 const char *
@@ -164,6 +165,7 @@ static const driOptionDescription radv_dri_options[] = {
       DRI_CONF_RADV_OVERRIDE_UNIFORM_OFFSET_ALIGNMENT(0)
       DRI_CONF_RADV_CLEAR_LDS(false)
       DRI_CONF_RADV_DISABLE_NGG_GS(false)
+      DRI_CONF_RADV_GFX12_HIZ_WA()
    DRI_CONF_SECTION_END
 
    DRI_CONF_SECTION_DEBUG
@@ -197,7 +199,6 @@ static const driOptionDescription radv_dri_options[] = {
       DRI_CONF_RADV_APP_LAYER()
       DRI_CONF_RADV_EMULATE_RT(false)
       DRI_CONF_RADV_ENABLE_FLOAT16_GFX8(false)
-      DRI_CONF_RADV_DISABLE_HIZ_HIS_GFX12(false)
       DRI_CONF_RADV_COOPERATIVE_MATRIX2_NV(false)
    DRI_CONF_SECTION_END
 };
@@ -212,7 +213,6 @@ radv_init_dri_debug_options(struct radv_instance *instance)
    drirc->debug.disable_dcc_mips = driQueryOptionb(&drirc->options, "radv_disable_dcc_mips");
    drirc->debug.disable_dcc_stores = driQueryOptionb(&drirc->options, "radv_disable_dcc_stores");
    drirc->debug.disable_depth_storage = driQueryOptionb(&drirc->options, "radv_disable_depth_storage");
-   drirc->debug.disable_hiz_his_gfx12 = driQueryOptionb(&drirc->options, "radv_disable_hiz_his_gfx12");
    drirc->debug.disable_shrink_image_store = driQueryOptionb(&drirc->options, "radv_disable_shrink_image_store");
    drirc->debug.disable_sinking_load_input_fs = driQueryOptionb(&drirc->options, "radv_disable_sinking_load_input_fs");
    drirc->debug.disable_tc_compat_htile_in_general =
@@ -257,6 +257,7 @@ radv_init_dri_performance_options(struct radv_instance *instance)
    drirc->performance.enable_unified_heap_on_apu = driQueryOptionb(&drirc->options, "radv_enable_unified_heap_on_apu");
    drirc->performance.report_llvm9_version_string =
       driQueryOptionb(&drirc->options, "radv_report_llvm9_version_string");
+   drirc->performance.gfx12_hiz_wa = driQueryOptionstr(&drirc->options, "radv_gfx12_hiz_wa");
 }
 
 static void

@@ -240,19 +240,18 @@ brw_shader::emit_urb_writes(const brw_reg &gs_vertex_count)
          srcs[URB_LOGICAL_SRC_PER_SLOT_OFFSETS] = per_slot_offsets;
          srcs[URB_LOGICAL_SRC_DATA] =
             retype(brw_allocate_vgrf_units(*this, (dispatch_width / 8) * length), BRW_TYPE_F);
-         srcs[URB_LOGICAL_SRC_COMPONENTS] = brw_imm_ud(length);
          abld.LOAD_PAYLOAD(srcs[URB_LOGICAL_SRC_DATA], sources, length, 0);
 
-         brw_inst *inst = abld.emit(SHADER_OPCODE_URB_WRITE_LOGICAL, reg_undef,
-                                   srcs, ARRAY_SIZE(srcs));
+         brw_urb_inst *urb = abld.URB_WRITE(srcs, ARRAY_SIZE(srcs));
+         urb->components = length;
 
          /* For Wa_1805992985 one needs additional write in the end. */
          if (intel_needs_workaround(devinfo, 1805992985) && stage == MESA_SHADER_TESS_EVAL)
-            inst->eot = false;
+            urb->eot = false;
          else
-            inst->eot = slot == last_slot && stage != MESA_SHADER_GEOMETRY;
+            urb->eot = slot == last_slot && stage != MESA_SHADER_GEOMETRY;
 
-         inst->offset = urb_offset;
+         urb->offset = urb_offset;
          urb_offset = starting_urb_offset + slot + 1;
          length = 0;
          flush = false;
@@ -288,12 +287,11 @@ brw_shader::emit_urb_writes(const brw_reg &gs_vertex_count)
       brw_reg srcs[URB_LOGICAL_NUM_SRCS];
       srcs[URB_LOGICAL_SRC_HANDLE] = uniform_urb_handle;
       srcs[URB_LOGICAL_SRC_DATA] = payload;
-      srcs[URB_LOGICAL_SRC_COMPONENTS] = brw_imm_ud(1);
 
-      brw_inst *inst = bld.emit(SHADER_OPCODE_URB_WRITE_LOGICAL, reg_undef,
-                               srcs, ARRAY_SIZE(srcs));
-      inst->eot = true;
-      inst->offset = 1;
+      brw_urb_inst *urb = bld.URB_WRITE(srcs, ARRAY_SIZE(srcs));
+      urb->eot = true;
+      urb->offset = 1;
+      urb->components = 1;
       return;
    }
 
@@ -340,12 +338,11 @@ brw_shader::emit_urb_writes(const brw_reg &gs_vertex_count)
       srcs[URB_LOGICAL_SRC_HANDLE] = uniform_urb_handle;
       srcs[URB_LOGICAL_SRC_CHANNEL_MASK] = uniform_mask;
       srcs[URB_LOGICAL_SRC_DATA] = payload;
-      srcs[URB_LOGICAL_SRC_COMPONENTS] = brw_imm_ud(4);
 
-      brw_inst *inst = bld.exec_all().emit(SHADER_OPCODE_URB_WRITE_LOGICAL,
-                                          reg_undef, srcs, ARRAY_SIZE(srcs));
-      inst->eot = true;
-      inst->offset = 0;
+      brw_urb_inst *urb = bld.exec_all().URB_WRITE(srcs, ARRAY_SIZE(srcs));
+      urb->eot = true;
+      urb->offset = 0;
+      urb->components = 4;
    }
 }
 
@@ -375,15 +372,12 @@ brw_shader::emit_cs_terminate()
    if (devinfo->ver < 11)
       desc |= (1 << 4); /* Do not dereference URB */
 
-   brw_reg srcs[SEND_NUM_SRCS] = {
-      [SEND_SRC_DESC]     = brw_imm_ud(desc),
-      [SEND_SRC_EX_DESC]  = brw_imm_ud(0),
-      [SEND_SRC_PAYLOAD1] = payload,
-      [SEND_SRC_PAYLOAD2] = brw_reg(),
-   };
-
-   brw_inst *send =
-      ubld.emit(SHADER_OPCODE_SEND, reg_undef, srcs, SEND_NUM_SRCS);
+   brw_send_inst *send = ubld.SEND();
+   send->dst = reg_undef;
+   send->src[SEND_SRC_DESC]     = brw_imm_ud(desc);
+   send->src[SEND_SRC_EX_DESC]  = brw_imm_ud(0);
+   send->src[SEND_SRC_PAYLOAD1] = payload;
+   send->src[SEND_SRC_PAYLOAD2] = brw_reg();
 
    /* On Alchemist and later, send an EOT message to the message gateway to
     * terminate a compute shader.  For older GPUs, send to the thread spawner.
@@ -449,17 +443,35 @@ brw_shader::brw_shader(const brw_shader_params *params)
    this->gs.control_data_bits_per_vertex = 0;
    this->gs.control_data_header_size_bits = 0;
 
-
    if (params->per_primitive_offsets) {
       assert(stage == MESA_SHADER_FRAGMENT);
       memcpy(this->fs.per_primitive_offsets, params->per_primitive_offsets,
              sizeof(this->fs.per_primitive_offsets));
+   }
+
+   {
+      unsigned inst_count = 0;
+      if (nir_shader_get_entrypoint(nir)) {
+         nir_foreach_block(block, nir_shader_get_entrypoint(nir)) {
+            nir_foreach_instr(instr, block)
+               inst_count++;
+         }
+      }
+
+      const unsigned estimate = inst_count * (sizeof(brw_inst) + 2 * sizeof(brw_reg));
+
+      inst_arena.mem_ctx = ralloc_context(NULL);
+      inst_arena.cap = estimate;
+      inst_arena.beg = (char *) ralloc_size(mem_ctx, inst_arena.cap);
+      inst_arena.end = inst_arena.beg + inst_arena.cap;
+      inst_arena.total_cap = inst_arena.cap;
    }
 }
 
 brw_shader::~brw_shader()
 {
    delete this->payload_;
+   ralloc_free(inst_arena.mem_ctx);
 }
 
 void
@@ -684,16 +696,14 @@ brw_shader::assign_curb_setup()
             addr = base_addr;
          }
 
-         brw_reg srcs[SEND_NUM_SRCS] = {
-            [SEND_SRC_DESC]     = brw_imm_ud(0),
-            [SEND_SRC_EX_DESC]  = brw_imm_ud(0),
-            [SEND_SRC_PAYLOAD1] = addr,
-            [SEND_SRC_PAYLOAD2] = brw_reg(),
-         };
+         brw_send_inst *send = ubld.SEND();
+         send->dst = retype(brw_vec8_grf(payload().num_regs + i, 0),
+                            BRW_TYPE_UD);
 
-         brw_reg dest = retype(brw_vec8_grf(payload().num_regs + i, 0),
-                              BRW_TYPE_UD);
-         brw_inst *send = ubld.emit(SHADER_OPCODE_SEND, dest, srcs, 4);
+         send->src[SEND_SRC_DESC]     = brw_imm_ud(0);
+         send->src[SEND_SRC_EX_DESC]  = brw_imm_ud(0);
+         send->src[SEND_SRC_PAYLOAD1] = addr;
+         send->src[SEND_SRC_PAYLOAD2] = brw_reg();
 
          send->sfid = BRW_SFID_UGM;
          uint32_t desc = lsc_msg_desc(devinfo, LSC_OP_LOAD,
@@ -712,7 +722,7 @@ brw_shader::assign_curb_setup()
             lsc_msg_dest_len(devinfo, LSC_DATA_SIZE_D32, num_regs * 8) * REG_SIZE;
          assert((payload().num_regs + i + send->size_written / REG_SIZE) <=
                 (payload().num_regs + prog_data->curb_read_length));
-         send->send_is_volatile = true;
+         send->is_volatile = true;
 
          send->src[SEND_SRC_DESC] =
             brw_imm_ud(desc | brw_message_desc(devinfo,
@@ -1058,18 +1068,21 @@ save_instruction_order(const struct cfg_t *cfg)
 }
 
 static void
-restore_instruction_order(struct cfg_t *cfg, brw_inst **inst_arr)
+restore_instruction_order(brw_shader &s, brw_inst **inst_arr)
 {
-   ASSERTED int num_insts = cfg->total_instructions;
+   ASSERTED int num_insts = s.cfg->total_instructions;
 
    int ip = 0;
-   foreach_block (block, cfg) {
+   foreach_block (block, s.cfg) {
       block->instructions.make_empty();
 
       for (unsigned i = 0; i < block->num_instructions; i++)
          block->instructions.push_tail(inst_arr[ip++]);
    }
    assert(ip == num_insts);
+
+   s.invalidate_analysis(BRW_DEPENDENCY_INSTRUCTIONS |
+                         BRW_DEPENDENCY_VARIABLES);
 }
 
 /* Per-thread scratch space is a power-of-two multiple of 1KB. */
@@ -1087,6 +1100,7 @@ brw_allocate_registers(brw_shader &s, bool allow_spilling)
    bool allocated;
 
    static const enum brw_instruction_scheduler_mode pre_modes[] = {
+      BRW_SCHEDULE_PRE_LATENCY,
       BRW_SCHEDULE_PRE,
       BRW_SCHEDULE_PRE_NON_LIFO,
       BRW_SCHEDULE_NONE,
@@ -1094,6 +1108,7 @@ brw_allocate_registers(brw_shader &s, bool allow_spilling)
    };
 
    static const char *scheduler_mode_name[] = {
+      [BRW_SCHEDULE_PRE_LATENCY] = "latency-sensitive",
       [BRW_SCHEDULE_PRE] = "top-down",
       [BRW_SCHEDULE_PRE_NON_LIFO] = "non-lifo",
       [BRW_SCHEDULE_PRE_LIFO] = "lifo",
@@ -1102,7 +1117,9 @@ brw_allocate_registers(brw_shader &s, bool allow_spilling)
    };
 
    uint32_t best_register_pressure = UINT32_MAX;
-   enum brw_instruction_scheduler_mode best_sched = BRW_SCHEDULE_NONE;
+   float best_perf = 0;
+   unsigned best_press_idx = 0;
+   unsigned best_perf_idx = 0;
 
    brw_opt_compact_virtual_grfs(s);
 
@@ -1118,55 +1135,105 @@ brw_allocate_registers(brw_shader &s, bool allow_spilling)
     * prevent dependencies between the different scheduling modes.
     */
    brw_inst **orig_order = save_instruction_order(s.cfg);
-   brw_inst **best_pressure_order = NULL;
+   brw_inst **orders[ARRAY_SIZE(pre_modes)] = {};
 
    void *scheduler_ctx = ralloc_context(NULL);
    brw_instruction_scheduler *sched = brw_prepare_scheduler(s, scheduler_ctx);
 
-   /* Try each scheduling heuristic to see if it can successfully register
-    * allocate without spilling.  They should be ordered by decreasing
-    * performance but increasing likelihood of allocating.
+   /* Try each scheduling heuristic to choose the one one with the
+    * best trade-off between latency and register pressure, which on
+    * xe3+ is dependent on the thread parallelism that can be achieved
+    * at the GRF register requirement of each ordering of the program
+    * (note that the register requirement of the program can only be
+    * estimated at this point prior to register allocation).
     */
    for (unsigned i = 0; i < ARRAY_SIZE(pre_modes); i++) {
       enum brw_instruction_scheduler_mode sched_mode = pre_modes[i];
 
+      /* Only use the PRE heuristic on pre-xe3 platforms during the
+       * first pass, since the trade-off between EU thread count and
+       * GRF use isn't a concern on platforms that don't support VRT.
+       */
+      if (devinfo->ver < 30 && sched_mode != BRW_SCHEDULE_PRE)
+         continue;
+
+      /* These don't appear to provide much benefit on xe3+.
+       */
+      if (devinfo->ver >= 30 && (sched_mode == BRW_SCHEDULE_PRE_LIFO ||
+                                 sched_mode == BRW_SCHEDULE_NONE))
+         continue;
+
       brw_schedule_instructions_pre_ra(s, sched, sched_mode);
       s.shader_stats.scheduler_mode = scheduler_mode_name[sched_mode];
-
       s.debug_optimizer(nir, s.shader_stats.scheduler_mode, 95, i);
+      orders[i] = save_instruction_order(s.cfg);
 
-      if (0) {
-         brw_assign_regs_trivial(s);
-         allocated = true;
-         break;
+      const unsigned press = brw_compute_max_register_pressure(s);
+      if (press < best_register_pressure) {
+         best_register_pressure = press;
+         best_press_idx = i;
       }
 
-      /* We should only spill registers on the last scheduling. */
-      assert(!s.spilled_any_registers);
-
-      allocated = brw_assign_regs(s, false, spill_all);
-      if (allocated)
-         break;
-
-      /* Save the maximum register pressure */
-      uint32_t this_pressure = brw_compute_max_register_pressure(s);
-
-      if (0) {
-         fprintf(stderr, "Scheduler mode \"%s\" spilled, max pressure = %u\n",
-                 scheduler_mode_name[sched_mode], this_pressure);
+      const brw_performance &perf = s.performance_analysis.require();
+      if (perf.throughput > best_perf) {
+         best_perf = perf.throughput;
+         best_perf_idx = i;
       }
 
-      if (this_pressure < best_register_pressure) {
-         best_register_pressure = this_pressure;
-         best_sched = sched_mode;
-         delete[] best_pressure_order;
-         best_pressure_order = save_instruction_order(s.cfg);
+      if (i + 1 < ARRAY_SIZE(pre_modes)) {
+         /* Reset back to the original order before trying the next mode */
+         restore_instruction_order(s, orig_order);
       }
+   }
 
-      /* Reset back to the original order before trying the next mode */
-      restore_instruction_order(s.cfg, orig_order);
+   restore_instruction_order(s, orders[best_perf_idx]);
+   s.shader_stats.scheduler_mode = scheduler_mode_name[pre_modes[best_perf_idx]];
+   allocated = brw_assign_regs(s, false, spill_all);
 
-      s.invalidate_analysis(BRW_DEPENDENCY_INSTRUCTIONS);
+   if (!allocated) {
+      /* Try each scheduling heuristic to see if it can successfully register
+       * allocate without spilling.  They should be ordered by decreasing
+       * performance but increasing likelihood of allocating.
+       */
+      for (unsigned i = 0; i < ARRAY_SIZE(pre_modes); i++) {
+         enum brw_instruction_scheduler_mode sched_mode = pre_modes[i];
+
+         /* The latency-sensitive heuristic is unlikely to be helpful
+          * if we failed to register-allocate.
+          */
+         if (sched_mode == BRW_SCHEDULE_PRE_LATENCY)
+            continue;
+
+         /* Already tried to register-allocate this. */
+         if (i == best_perf_idx)
+            continue;
+
+         if (orders[i]) {
+            /* We already scheduled the program with this mode. */
+            restore_instruction_order(s, orders[i]);
+         } else {
+            restore_instruction_order(s, orig_order);
+            brw_schedule_instructions_pre_ra(s, sched, sched_mode);
+            s.shader_stats.scheduler_mode = scheduler_mode_name[sched_mode];
+            s.debug_optimizer(nir, s.shader_stats.scheduler_mode, 95, i);
+            orders[i] = save_instruction_order(s.cfg);
+
+            const unsigned press = brw_compute_max_register_pressure(s);
+            if (press < best_register_pressure) {
+               best_register_pressure = press;
+               best_press_idx = i;
+            }
+         }
+
+         s.shader_stats.scheduler_mode = scheduler_mode_name[sched_mode];
+
+         /* We should only spill registers on the last scheduling. */
+         assert(!s.spilled_any_registers);
+
+         allocated = brw_assign_regs(s, false, spill_all);
+         if (allocated)
+            break;
+      }
    }
 
    ralloc_free(scheduler_ctx);
@@ -1174,16 +1241,17 @@ brw_allocate_registers(brw_shader &s, bool allow_spilling)
    if (!allocated) {
       if (0) {
          fprintf(stderr, "Spilling - using lowest-pressure mode \"%s\"\n",
-                 scheduler_mode_name[best_sched]);
+                 scheduler_mode_name[pre_modes[best_press_idx]]);
       }
-      restore_instruction_order(s.cfg, best_pressure_order);
-      s.shader_stats.scheduler_mode = scheduler_mode_name[best_sched];
+      restore_instruction_order(s, orders[best_press_idx]);
+      s.shader_stats.scheduler_mode = scheduler_mode_name[pre_modes[best_press_idx]];
 
       allocated = brw_assign_regs(s, allow_spilling, spill_all);
    }
 
    delete[] orig_order;
-   delete[] best_pressure_order;
+   for (unsigned i = 0; i < ARRAY_SIZE(orders); i++)
+      delete[] orders[i];
 
    if (!allocated) {
       s.fail("Failure to register allocate.  Reduce number of "

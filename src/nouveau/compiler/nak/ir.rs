@@ -236,6 +236,19 @@ pub trait HasRegFile {
     }
 }
 
+impl HasRegFile for &[SSAValue] {
+    fn file(&self) -> RegFile {
+        let comps = self.len();
+        let file = self[0].file();
+        for i in 1..comps {
+            if self[i].file() != file {
+                panic!("Illegal mix of RegFiles")
+            }
+        }
+        file
+    }
+}
+
 #[derive(Clone)]
 pub struct RegFileSet {
     bits: u8,
@@ -522,7 +535,7 @@ pub enum CBuf {
     Binding(u8),
 
     #[allow(dead_code)]
-    BindlessSSA(SSARef),
+    BindlessSSA([SSAValue; 2]),
 
     #[allow(dead_code)]
     BindlessUGPR(RegRef),
@@ -532,7 +545,7 @@ impl fmt::Display for CBuf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CBuf::Binding(idx) => write!(f, "c[{:#x}]", idx),
-            CBuf::BindlessSSA(v) => write!(f, "cx[{}]", v),
+            CBuf::BindlessSSA(v) => write!(f, "cx[{{{}, {}}}]", v[0], v[1]),
             CBuf::BindlessUGPR(r) => write!(f, "cx[{}]", r),
         }
     }
@@ -601,7 +614,7 @@ impl SrcRef {
 
     pub fn is_carry(&self) -> bool {
         match self {
-            SrcRef::SSA(ssa) => ssa.file() == Some(RegFile::Carry),
+            SrcRef::SSA(ssa) => ssa.file() == RegFile::Carry,
             SrcRef::Reg(reg) => reg.file() == RegFile::Carry,
             _ => false,
         }
@@ -610,7 +623,7 @@ impl SrcRef {
     #[allow(dead_code)]
     pub fn is_barrier(&self) -> bool {
         match self {
-            SrcRef::SSA(ssa) => ssa.file() == Some(RegFile::Bar),
+            SrcRef::SSA(ssa) => ssa.file() == RegFile::Bar,
             SrcRef::Reg(reg) => reg.file() == RegFile::Bar,
             _ => false,
         }
@@ -670,7 +683,7 @@ impl SrcRef {
             | SrcRef::Reg(_) => &[],
             SrcRef::CBuf(cb) => match &cb.buf {
                 CBuf::Binding(_) | CBuf::BindlessUGPR(_) => &[],
-                CBuf::BindlessSSA(ssa) => ssa.deref(),
+                CBuf::BindlessSSA(ssa) => &ssa[..],
             },
             SrcRef::SSA(ssa) => ssa.deref(),
         }
@@ -686,7 +699,7 @@ impl SrcRef {
             | SrcRef::Reg(_) => &mut [],
             SrcRef::CBuf(cb) => match &mut cb.buf {
                 CBuf::Binding(_) | CBuf::BindlessUGPR(_) => &mut [],
-                CBuf::BindlessSSA(ssa) => ssa.deref_mut(),
+                CBuf::BindlessSSA(ssa) => &mut ssa[..],
             },
             SrcRef::SSA(ssa) => ssa.deref_mut(),
         }
@@ -1107,7 +1120,7 @@ impl Src {
 
     pub fn is_upred_reg(&self) -> bool {
         match &self.src_ref {
-            SrcRef::SSA(ssa) => ssa.file() == Some(RegFile::UPred),
+            SrcRef::SSA(ssa) => ssa.file() == RegFile::UPred,
             SrcRef::Reg(reg) => reg.file() == RegFile::UPred,
             _ => false,
         }
@@ -1302,7 +1315,7 @@ fn all_dsts_uniform(dsts: &[Dst]) -> bool {
         let dst_uniform = match dst {
             Dst::None => continue,
             Dst::Reg(r) => r.is_uniform(),
-            Dst::SSA(r) => r.file().unwrap().is_uniform(),
+            Dst::SSA(r) => r.file().is_uniform(),
         };
         assert!(uniform.is_none() || uniform == Some(dst_uniform));
         uniform = Some(dst_uniform);
@@ -7826,101 +7839,101 @@ impl fmt::Display for OpAnnotate {
 
 #[derive(DisplayOp, DstsAsSlice, SrcsAsSlice, FromVariants)]
 pub enum Op {
-    FAdd(OpFAdd),
-    FFma(OpFFma),
-    FMnMx(OpFMnMx),
-    FMul(OpFMul),
-    Rro(OpRro),
-    MuFu(OpMuFu),
-    FSet(OpFSet),
-    FSetP(OpFSetP),
-    FSwzAdd(OpFSwzAdd),
-    FSwz(OpFSwz),
-    DAdd(OpDAdd),
-    DFma(OpDFma),
-    DMnMx(OpDMnMx),
-    DMul(OpDMul),
-    DSetP(OpDSetP),
-    HAdd2(OpHAdd2),
-    HFma2(OpHFma2),
-    HMul2(OpHMul2),
-    HSet2(OpHSet2),
-    HSetP2(OpHSetP2),
-    Imma(OpImma),
-    Hmma(OpHmma),
-    Ldsm(OpLdsm),
-    HMnMx2(OpHMnMx2),
-    BMsk(OpBMsk),
-    BRev(OpBRev),
-    Bfe(OpBfe),
-    Flo(OpFlo),
-    IAbs(OpIAbs),
-    IAdd2(OpIAdd2),
-    IAdd2X(OpIAdd2X),
-    IAdd3(OpIAdd3),
-    IAdd3X(OpIAdd3X),
-    IDp4(OpIDp4),
-    IMad(OpIMad),
-    IMad64(OpIMad64),
-    IMul(OpIMul),
-    IMnMx(OpIMnMx),
-    ISetP(OpISetP),
-    Lea(OpLea),
-    LeaX(OpLeaX),
-    Lop2(OpLop2),
-    Lop3(OpLop3),
-    PopC(OpPopC),
-    Shf(OpShf),
-    Shl(OpShl),
-    Shr(OpShr),
-    F2F(OpF2F),
-    F2FP(OpF2FP),
-    F2I(OpF2I),
-    I2F(OpI2F),
-    I2I(OpI2I),
-    FRnd(OpFRnd),
-    Mov(OpMov),
-    Prmt(OpPrmt),
-    Sel(OpSel),
-    Shfl(OpShfl),
-    PLop3(OpPLop3),
-    PSetP(OpPSetP),
-    R2UR(OpR2UR),
-    Redux(OpRedux),
-    Tex(OpTex),
-    Tld(OpTld),
-    Tld4(OpTld4),
-    Tmml(OpTmml),
-    Txd(OpTxd),
-    Txq(OpTxq),
-    SuLd(OpSuLd),
-    SuSt(OpSuSt),
-    SuAtom(OpSuAtom),
-    SuClamp(OpSuClamp),
-    SuBfm(OpSuBfm),
-    SuEau(OpSuEau),
-    IMadSp(OpIMadSp),
-    SuLdGa(OpSuLdGa),
-    SuStGa(OpSuStGa),
-    Ld(OpLd),
-    Ldc(OpLdc),
-    LdSharedLock(OpLdSharedLock),
-    St(OpSt),
-    StSCheckUnlock(OpStSCheckUnlock),
-    Atom(OpAtom),
-    AL2P(OpAL2P),
-    ALd(OpALd),
-    ASt(OpASt),
-    Ipa(OpIpa),
-    LdTram(OpLdTram),
-    CCtl(OpCCtl),
-    MemBar(OpMemBar),
-    BClear(OpBClear),
-    BMov(OpBMov),
-    Break(OpBreak),
-    BSSy(OpBSSy),
-    BSync(OpBSync),
-    Bra(OpBra),
+    FAdd(Box<OpFAdd>),
+    FFma(Box<OpFFma>),
+    FMnMx(Box<OpFMnMx>),
+    FMul(Box<OpFMul>),
+    Rro(Box<OpRro>),
+    MuFu(Box<OpMuFu>),
+    FSet(Box<OpFSet>),
+    FSetP(Box<OpFSetP>),
+    FSwzAdd(Box<OpFSwzAdd>),
+    FSwz(Box<OpFSwz>),
+    DAdd(Box<OpDAdd>),
+    DFma(Box<OpDFma>),
+    DMnMx(Box<OpDMnMx>),
+    DMul(Box<OpDMul>),
+    DSetP(Box<OpDSetP>),
+    HAdd2(Box<OpHAdd2>),
+    HFma2(Box<OpHFma2>),
+    HMul2(Box<OpHMul2>),
+    HSet2(Box<OpHSet2>),
+    HSetP2(Box<OpHSetP2>),
+    Imma(Box<OpImma>),
+    Hmma(Box<OpHmma>),
+    Ldsm(Box<OpLdsm>),
+    HMnMx2(Box<OpHMnMx2>),
+    BMsk(Box<OpBMsk>),
+    BRev(Box<OpBRev>),
+    Bfe(Box<OpBfe>),
+    Flo(Box<OpFlo>),
+    IAbs(Box<OpIAbs>),
+    IAdd2(Box<OpIAdd2>),
+    IAdd2X(Box<OpIAdd2X>),
+    IAdd3(Box<OpIAdd3>),
+    IAdd3X(Box<OpIAdd3X>),
+    IDp4(Box<OpIDp4>),
+    IMad(Box<OpIMad>),
+    IMad64(Box<OpIMad64>),
+    IMul(Box<OpIMul>),
+    IMnMx(Box<OpIMnMx>),
+    ISetP(Box<OpISetP>),
+    Lea(Box<OpLea>),
+    LeaX(Box<OpLeaX>),
+    Lop2(Box<OpLop2>),
+    Lop3(Box<OpLop3>),
+    PopC(Box<OpPopC>),
+    Shf(Box<OpShf>),
+    Shl(Box<OpShl>),
+    Shr(Box<OpShr>),
+    F2F(Box<OpF2F>),
+    F2FP(Box<OpF2FP>),
+    F2I(Box<OpF2I>),
+    I2F(Box<OpI2F>),
+    I2I(Box<OpI2I>),
+    FRnd(Box<OpFRnd>),
+    Mov(Box<OpMov>),
+    Prmt(Box<OpPrmt>),
+    Sel(Box<OpSel>),
+    Shfl(Box<OpShfl>),
+    PLop3(Box<OpPLop3>),
+    PSetP(Box<OpPSetP>),
+    R2UR(Box<OpR2UR>),
+    Redux(Box<OpRedux>),
+    Tex(Box<OpTex>),
+    Tld(Box<OpTld>),
+    Tld4(Box<OpTld4>),
+    Tmml(Box<OpTmml>),
+    Txd(Box<OpTxd>),
+    Txq(Box<OpTxq>),
+    SuLd(Box<OpSuLd>),
+    SuSt(Box<OpSuSt>),
+    SuAtom(Box<OpSuAtom>),
+    SuClamp(Box<OpSuClamp>),
+    SuBfm(Box<OpSuBfm>),
+    SuEau(Box<OpSuEau>),
+    IMadSp(Box<OpIMadSp>),
+    SuLdGa(Box<OpSuLdGa>),
+    SuStGa(Box<OpSuStGa>),
+    Ld(Box<OpLd>),
+    Ldc(Box<OpLdc>),
+    LdSharedLock(Box<OpLdSharedLock>),
+    St(Box<OpSt>),
+    StSCheckUnlock(Box<OpStSCheckUnlock>),
+    Atom(Box<OpAtom>),
+    AL2P(Box<OpAL2P>),
+    ALd(Box<OpALd>),
+    ASt(Box<OpASt>),
+    Ipa(Box<OpIpa>),
+    LdTram(Box<OpLdTram>),
+    CCtl(Box<OpCCtl>),
+    MemBar(Box<OpMemBar>),
+    BClear(Box<OpBClear>),
+    BMov(Box<OpBMov>),
+    Break(Box<OpBreak>),
+    BSSy(Box<OpBSSy>),
+    BSync(Box<OpBSync>),
+    Bra(Box<OpBra>),
     SSy(OpSSy),
     Sync(OpSync),
     Brk(OpBrk),
@@ -7928,33 +7941,38 @@ pub enum Op {
     Cont(OpCont),
     PCnt(OpPCnt),
     Exit(OpExit),
-    WarpSync(OpWarpSync),
-    Bar(OpBar),
-    TexDepBar(OpTexDepBar),
-    CS2R(OpCS2R),
-    Isberd(OpIsberd),
-    ViLd(OpViLd),
-    Kill(OpKill),
+    WarpSync(Box<OpWarpSync>),
+    Bar(Box<OpBar>),
+    TexDepBar(Box<OpTexDepBar>),
+    CS2R(Box<OpCS2R>),
+    Isberd(Box<OpIsberd>),
+    ViLd(Box<OpViLd>),
+    Kill(Box<OpKill>),
     Nop(OpNop),
-    PixLd(OpPixLd),
-    S2R(OpS2R),
-    Vote(OpVote),
-    Match(OpMatch),
-    Undef(OpUndef),
-    SrcBar(OpSrcBar),
-    PhiSrcs(OpPhiSrcs),
-    PhiDsts(OpPhiDsts),
-    Copy(OpCopy),
-    Pin(OpPin),
-    Unpin(OpUnpin),
-    Swap(OpSwap),
-    ParCopy(OpParCopy),
-    RegOut(OpRegOut),
-    Out(OpOut),
-    OutFinal(OpOutFinal),
-    Annotate(OpAnnotate),
+    PixLd(Box<OpPixLd>),
+    S2R(Box<OpS2R>),
+    Vote(Box<OpVote>),
+    Match(Box<OpMatch>),
+    Undef(Box<OpUndef>),
+    SrcBar(Box<OpSrcBar>),
+    PhiSrcs(Box<OpPhiSrcs>),
+    PhiDsts(Box<OpPhiDsts>),
+    Copy(Box<OpCopy>),
+    Pin(Box<OpPin>),
+    Unpin(Box<OpUnpin>),
+    Swap(Box<OpSwap>),
+    ParCopy(Box<OpParCopy>),
+    RegOut(Box<OpRegOut>),
+    Out(Box<OpOut>),
+    OutFinal(Box<OpOutFinal>),
+    Annotate(Box<OpAnnotate>),
 }
 impl_display_for_op!(Op);
+
+#[cfg(target_arch = "x86_64")]
+const _: () = {
+    debug_assert!(size_of::<Op>() == 16);
+};
 
 impl Op {
     pub fn is_branch(&self) -> bool {
@@ -8391,16 +8409,12 @@ pub struct Instr {
 }
 
 impl Instr {
-    pub fn new(op: impl Into<Op>) -> Instr {
-        Instr {
+    pub fn new(op: impl Into<Op>) -> Self {
+        Self {
             op: op.into(),
             pred: true.into(),
             deps: InstrDeps::new(),
         }
-    }
-
-    pub fn new_boxed(op: impl Into<Op>) -> Box<Self> {
-        Box::new(Instr::new(op))
     }
 
     pub fn dsts(&self) -> &[Dst] {
@@ -8567,7 +8581,7 @@ impl<T: Into<Op>> From<T> for Instr {
     }
 }
 
-pub type MappedInstrs = SmallVec<Box<Instr>>;
+pub type MappedInstrs = SmallVec<Instr>;
 
 pub struct BasicBlock {
     pub label: Label,
@@ -8578,14 +8592,11 @@ pub struct BasicBlock {
     /// are guaranteed to execute it together
     pub uniform: bool,
 
-    pub instrs: Vec<Box<Instr>>,
+    pub instrs: Vec<Instr>,
 }
 
 impl BasicBlock {
-    pub fn map_instrs(
-        &mut self,
-        mut map: impl FnMut(Box<Instr>) -> MappedInstrs,
-    ) {
+    pub fn map_instrs(&mut self, mut map: impl FnMut(Instr) -> MappedInstrs) {
         let mut instrs = Vec::new();
         for i in self.instrs.drain(..) {
             match map(i) {
@@ -8614,7 +8625,7 @@ impl BasicBlock {
 
     pub fn phi_dsts(&self) -> Option<&OpPhiDsts> {
         self.phi_dsts_ip().map(|ip| match &self.instrs[ip].op {
-            Op::PhiDsts(phi) => phi,
+            Op::PhiDsts(phi) => phi.deref(),
             _ => panic!("Expected to find the phi"),
         })
     }
@@ -8622,7 +8633,7 @@ impl BasicBlock {
     #[allow(dead_code)]
     pub fn phi_dsts_mut(&mut self) -> Option<&mut OpPhiDsts> {
         self.phi_dsts_ip().map(|ip| match &mut self.instrs[ip].op {
-            Op::PhiDsts(phi) => phi,
+            Op::PhiDsts(phi) => phi.deref_mut(),
             _ => panic!("Expected to find the phi"),
         })
     }
@@ -8640,14 +8651,14 @@ impl BasicBlock {
     }
     pub fn phi_srcs(&self) -> Option<&OpPhiSrcs> {
         self.phi_srcs_ip().map(|ip| match &self.instrs[ip].op {
-            Op::PhiSrcs(phi) => phi,
+            Op::PhiSrcs(phi) => phi.deref(),
             _ => panic!("Expected to find the phi"),
         })
     }
 
     pub fn phi_srcs_mut(&mut self) -> Option<&mut OpPhiSrcs> {
         self.phi_srcs_ip().map(|ip| match &mut self.instrs[ip].op {
-            Op::PhiSrcs(phi) => phi,
+            Op::PhiSrcs(phi) => phi.deref_mut(),
             _ => panic!("Expected to find the phi"),
         })
     }
@@ -8707,7 +8718,7 @@ pub struct Function {
 impl Function {
     pub fn map_instrs(
         &mut self,
-        mut map: impl FnMut(Box<Instr>, &mut SSAValueAllocator) -> MappedInstrs,
+        mut map: impl FnMut(Instr, &mut SSAValueAllocator) -> MappedInstrs,
     ) {
         let alloc = &mut self.ssa_alloc;
         for b in &mut self.blocks {
@@ -9215,7 +9226,7 @@ impl Shader<'_> {
 
     pub fn map_instrs(
         &mut self,
-        mut map: impl FnMut(Box<Instr>, &mut SSAValueAllocator) -> MappedInstrs,
+        mut map: impl FnMut(Instr, &mut SSAValueAllocator) -> MappedInstrs,
     ) {
         for f in &mut self.functions {
             f.map_instrs(&mut map);
@@ -9224,7 +9235,7 @@ impl Shader<'_> {
 
     /// Remove all annotations, presumably before encoding the shader.
     pub fn remove_annotations(&mut self) {
-        self.map_instrs(|instr: Box<Instr>, _| -> MappedInstrs {
+        self.map_instrs(|instr: Instr, _| -> MappedInstrs {
             if matches!(instr.op, Op::Annotate(_)) {
                 MappedInstrs::None
             } else {

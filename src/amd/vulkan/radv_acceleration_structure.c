@@ -8,6 +8,7 @@
 #include "radv_cs.h"
 #include "radv_entrypoints.h"
 
+#include "radix_sort/common/vk/barrier.h"
 #include "radix_sort/radix_sort_u64.h"
 
 #include "bvh/build_interface.h"
@@ -469,17 +470,11 @@ radv_encode_as_gfx12(VkCommandBuffer commandBuffer, const struct vk_acceleration
 static VkResult
 radv_init_header_bind_pipeline(VkCommandBuffer commandBuffer, const struct vk_acceleration_structure_build_state *state)
 {
-   VK_FROM_HANDLE(radv_cmd_buffer, cmd_buffer, commandBuffer);
-
    if (!(state->config.encode_key[1] & RADV_ENCODE_KEY_COMPACT))
       return VK_SUCCESS;
 
    /* Wait for encoding to finish. */
-   cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_CS_PARTIAL_FLUSH |
-                                   radv_src_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                         VK_ACCESS_2_SHADER_WRITE_BIT, 0, NULL, NULL) |
-                                   radv_dst_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                         VK_ACCESS_2_SHADER_READ_BIT, 0, NULL, NULL);
+   vk_barrier_compute_w_to_compute_r(commandBuffer);
 
    radv_bvh_build_bind_pipeline(commandBuffer, RADV_META_OBJECT_KEY_BVH_HEADER, header_spv, sizeof(header_spv),
                                 sizeof(struct header_args), 0);
@@ -611,21 +606,21 @@ radv_init_update_scratch(VkCommandBuffer commandBuffer, const struct vk_accelera
 }
 
 static void
-radv_update_bind_pipeline(VkCommandBuffer commandBuffer, const struct vk_acceleration_structure_build_state *state)
+radv_update_bind_pipeline(VkCommandBuffer commandBuffer, const struct vk_acceleration_structure_build_state *state,
+                          bool flushed_cp_after_init_update_scratch, bool flushed_compute_after_init_update_scratch)
 {
    VK_FROM_HANDLE(radv_cmd_buffer, cmd_buffer, commandBuffer);
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
 
    /* Wait for update scratch initialization to finish.. */
-   cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_CS_PARTIAL_FLUSH |
-                                   radv_src_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                         VK_ACCESS_2_SHADER_WRITE_BIT, 0, NULL, NULL) |
-                                   radv_dst_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                         VK_ACCESS_2_SHADER_READ_BIT, 0, NULL, NULL);
+   if (!flushed_compute_after_init_update_scratch)
+      vk_barrier_compute_w_to_compute_r(commandBuffer);
 
-   if (radv_device_physical(device)->info.cp_sdma_ge_use_system_memory_scope)
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_INV_L2;
+   if (!flushed_cp_after_init_update_scratch) {
+      if (radv_device_physical(device)->info.cp_sdma_ge_use_system_memory_scope)
+         cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_INV_L2;
+   }
 
    uint32_t flags = state->config.update_key[0];
 
@@ -944,11 +939,7 @@ radv_CmdCopyMemoryToAccelerationStructureKHR(VkCommandBuffer commandBuffer,
 
    if (radv_use_bvh8(pdev)) {
       /* Wait for the main copy dispatch to finish. */
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_CS_PARTIAL_FLUSH |
-                                      radv_src_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                            VK_ACCESS_2_SHADER_WRITE_BIT, 0, NULL, NULL) |
-                                      radv_dst_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                            VK_ACCESS_2_SHADER_READ_BIT, 0, NULL, NULL);
+      vk_barrier_compute_w_to_compute_r(commandBuffer);
 
       radv_bvh_build_bind_pipeline(commandBuffer, RADV_META_OBJECT_KEY_BVH_COPY_BLAS_ADDRS_GFX12,
                                    copy_blas_addrs_gfx12_spv, sizeof(copy_blas_addrs_gfx12_spv),
@@ -991,11 +982,7 @@ radv_CmdCopyAccelerationStructureToMemoryKHR(VkCommandBuffer commandBuffer,
 
    if (radv_use_bvh8(pdev)) {
       /* Wait for the main copy dispatch to finish. */
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_CS_PARTIAL_FLUSH |
-                                      radv_src_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                            VK_ACCESS_2_SHADER_WRITE_BIT, 0, NULL, NULL) |
-                                      radv_dst_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                            VK_ACCESS_2_SHADER_READ_BIT, 0, NULL, NULL);
+      vk_barrier_compute_w_to_compute_r(commandBuffer);
 
       radv_bvh_build_bind_pipeline(commandBuffer, RADV_META_OBJECT_KEY_BVH_COPY_BLAS_ADDRS_GFX12,
                                    copy_blas_addrs_gfx12_spv, sizeof(copy_blas_addrs_gfx12_spv),

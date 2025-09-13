@@ -132,6 +132,8 @@ struct tu_physical_device
    bool has_sparse;
    /* Whether TU_SPARSE_VMA_MAP_ZERO can be used. */
    bool has_sparse_prr;
+   /* Whether lazy allocations are supported. */
+   bool has_lazy_bos;
    uint64_t va_start;
    uint64_t va_size;
 
@@ -144,6 +146,7 @@ struct tu_physical_device
    bool has_preemption;
 
    struct {
+      uint32_t non_lazy_type_count;
       uint32_t type_count;
       VkMemoryPropertyFlags types[VK_MAX_MEMORY_TYPES];
    } memory;
@@ -476,6 +479,15 @@ struct tu_device_memory
 {
    struct vk_device_memory vk;
 
+   uint64_t iova;
+   uint64_t size;
+
+   /* For lazy memory */
+   bool lazy;
+   bool lazy_initialized;
+   struct tu_sparse_vma lazy_vma;
+   mtx_t lazy_mutex;
+
    struct tu_bo *bo;
 
    /* for dedicated allocations */
@@ -483,6 +495,10 @@ struct tu_device_memory
 };
 VK_DEFINE_NONDISP_HANDLE_CASTS(tu_device_memory, vk.base, VkDeviceMemory,
                                VK_OBJECT_TYPE_DEVICE_MEMORY)
+
+VkResult
+tu_allocate_lazy_memory(struct tu_device *dev,
+                        struct tu_device_memory *mem);
 
 struct tu_attachment_info
 {
@@ -654,7 +670,7 @@ tu_bo_init_new_cached(struct tu_device *dev, struct vk_object_base *base,
          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
          (dev->physical_device->has_cached_coherent_memory ? 
           VK_MEMORY_PROPERTY_HOST_CACHED_BIT : 0),
-      flags, name);
+      flags, NULL, name);
 }
 
 

@@ -131,14 +131,16 @@ is_expression(const brw_shader *v, const brw_inst *const inst)
    case FS_OPCODE_INTERPOLATE_AT_PER_SLOT_OFFSET:
       return true;
    case SHADER_OPCODE_MEMORY_LOAD_LOGICAL:
-      return inst->src[MEMORY_LOGICAL_MODE].ud == MEMORY_MODE_CONSTANT;
+      return inst->as_mem()->mode == MEMORY_MODE_CONSTANT;
    case SHADER_OPCODE_LOAD_PAYLOAD:
       return !is_coalescing_payload(*v, inst);
    case SHADER_OPCODE_SEND:
-   case SHADER_OPCODE_SEND_GATHER:
-      return !inst->send_has_side_effects &&
-             !inst->send_is_volatile &&
-             !inst->eot;
+   case SHADER_OPCODE_SEND_GATHER: {
+      const brw_send_inst *send = inst->as_send();
+      return !send->has_side_effects &&
+             !send->is_volatile &&
+             !send->eot;
+   }
    default:
       return false;
    }
@@ -239,23 +241,90 @@ operands_match(const brw_inst *a, const brw_inst *b, bool *negate)
 }
 
 static bool
+send_inst_match(brw_send_inst *a, brw_send_inst *b)
+{
+   return a->mlen == b->mlen &&
+          a->ex_mlen == b->ex_mlen &&
+          a->sfid == b->sfid &&
+          a->header_size == b->header_size &&
+          a->desc == b->desc &&
+          a->ex_desc == b->ex_desc &&
+          a->offset == b->offset &&
+          a->send_bits == b->send_bits;
+}
+
+static bool
+tex_inst_match(brw_tex_inst *a, brw_tex_inst *b)
+{
+   return a->offset == b->offset &&
+          a->coord_components == b->coord_components &&
+          a->grad_components == b->grad_components &&
+          a->residency == b->residency;
+}
+
+static bool
+mem_inst_match(brw_mem_inst *a, brw_mem_inst *b)
+{
+   return a->lsc_op == b->lsc_op &&
+          a->mode == b->mode &&
+          a->binding_type == b->binding_type &&
+          a->data_size == b->data_size &&
+          a->coord_components == b->coord_components &&
+          a->components == b->components &&
+          a->flags == b->flags &&
+          a->alignment == b->alignment &&
+          a->address_offset == b->address_offset;
+}
+
+static bool
+dpas_inst_match(brw_dpas_inst *a, brw_dpas_inst *b)
+{
+   return a->sdepth == b->sdepth &&
+          a->rcount == b->rcount;
+}
+
+static bool
+load_payload_inst_match(brw_load_payload_inst *a, brw_load_payload_inst *b)
+{
+   return a->header_size == b->header_size;
+}
+
+static bool
+urb_inst_match(brw_urb_inst *a, brw_urb_inst *b)
+{
+   return a->offset == b->offset &&
+          a->components == b->components;
+}
+
+static bool
+fb_write_inst_match(brw_fb_write_inst *a, brw_fb_write_inst *b)
+{
+   return a->components == b->components &&
+          a->target == b->target &&
+          a->null_rt == b->null_rt &&
+          a->last_rt == b->last_rt;
+}
+
+static bool
 instructions_match(brw_inst *a, brw_inst *b, bool *negate)
 {
+
    return a->opcode == b->opcode &&
+          /* `kind` is derived from opcode, so skipped. */
+          (a->kind != BRW_KIND_SEND || send_inst_match(a->as_send(), b->as_send())) &&
+          (a->kind != BRW_KIND_TEX || tex_inst_match(a->as_tex(), b->as_tex())) &&
+          (a->kind != BRW_KIND_MEM || mem_inst_match(a->as_mem(), b->as_mem())) &&
+          (a->kind != BRW_KIND_DPAS || dpas_inst_match(a->as_dpas(), b->as_dpas())) &&
+          (a->kind != BRW_KIND_LOAD_PAYLOAD ||
+           load_payload_inst_match(a->as_load_payload(), b->as_load_payload())) &&
+          (a->kind != BRW_KIND_URB || urb_inst_match(a->as_urb(), b->as_urb())) &&
+          (a->kind != BRW_KIND_FB_WRITE || fb_write_inst_match(a->as_fb_write(), b->as_fb_write())) &&
           a->exec_size == b->exec_size &&
           a->group == b->group &&
           a->predicate == b->predicate &&
           a->conditional_mod == b->conditional_mod &&
           a->dst.type == b->dst.type &&
-          a->offset == b->offset &&
-          a->mlen == b->mlen &&
-          a->ex_mlen == b->ex_mlen &&
-          a->sfid == b->sfid &&
-          a->desc == b->desc &&
-          a->ex_desc == b->ex_desc &&
           a->size_written == b->size_written &&
-          a->check_tdr == b->check_tdr &&
-          a->header_size == b->header_size &&
           a->sources == b->sources &&
           a->bits == b->bits &&
           operands_match(a, b, negate);
@@ -291,22 +360,17 @@ hash_inst(const void *v)
 
    /* Skip ir and annotation - we don't care for equivalency purposes. */
 
+   /* Skip `kind` since it is derived from the opcode. */
+
    const uint8_t u8data[] = {
       inst->sources,
       inst->exec_size,
       inst->group,
-      inst->mlen,
-      inst->ex_mlen,
-      inst->sfid,
-      inst->header_size,
 
       inst->conditional_mod,
       inst->predicate,
    };
    const uint32_t u32data[] = {
-      inst->desc,
-      inst->ex_desc,
-      inst->offset,
       inst->size_written,
       inst->opcode,
       inst->bits,
@@ -316,6 +380,107 @@ hash_inst(const void *v)
    hash = HASH(hash, u32data);
 
    /* Skip hashing sched - we shouldn't be CSE'ing after that SWSB */
+
+   switch (inst->kind) {
+   case BRW_KIND_SEND: {
+      const brw_send_inst *send = inst->as_send();
+      const uint8_t send_u8data[] = {
+         send->mlen,
+         send->ex_mlen,
+         send->sfid,
+         send->send_bits,
+         send->header_size,
+      };
+      const uint32_t send_u32data[] = {
+         send->desc,
+         send->ex_desc,
+         send->offset,
+      };
+      hash = HASH(hash, send_u8data);
+      hash = HASH(hash, send_u32data);
+      break;
+   }
+
+   case BRW_KIND_TEX: {
+      const brw_tex_inst *tex = inst->as_tex();
+      const uint8_t tex_u8data[] = {
+         tex->coord_components,
+         tex->grad_components,
+         tex->residency,
+      };
+      hash = HASH(hash, tex_u8data);
+      break;
+   }
+
+   case BRW_KIND_MEM: {
+      const brw_mem_inst *mem = inst->as_mem();
+      const uint8_t mem_u8data[] = {
+         mem->lsc_op,
+         mem->mode,
+         mem->binding_type,
+         mem->data_size,
+         mem->coord_components,
+         mem->components,
+         mem->flags,
+      };
+      const uint32_t mem_u32data[] = {
+         (uint32_t)mem->address_offset,
+         mem->alignment,
+      };
+      hash = HASH(hash, mem_u8data);
+      hash = HASH(hash, mem_u32data);
+      break;
+   }
+
+   case BRW_KIND_DPAS: {
+      const brw_dpas_inst *dpas = inst->as_dpas();
+      const uint8_t dpas_u8data[] = {
+         dpas->sdepth,
+         dpas->rcount,
+      };
+      hash = HASH(hash, dpas_u8data);
+      break;
+   }
+
+   case BRW_KIND_LOAD_PAYLOAD: {
+      const brw_load_payload_inst *lp = inst->as_load_payload();
+      const uint8_t lp_u8data[] = {
+         lp->header_size,
+      };
+      hash = HASH(hash, lp_u8data);
+      break;
+   }
+
+   case BRW_KIND_URB: {
+      const brw_urb_inst *urb = inst->as_urb();
+      const uint8_t urb_u8data[] = {
+         urb->components,
+      };
+      const uint32_t urb_u32data[] = {
+         urb->offset,
+      };
+      hash = HASH(hash, urb_u8data);
+      hash = HASH(hash, urb_u32data);
+      break;
+   }
+
+   case BRW_KIND_FB_WRITE: {
+      const brw_fb_write_inst *fb_write = inst->as_fb_write();
+      const uint8_t fb_write_u8data[] = {
+         fb_write->components,
+         fb_write->target,
+         fb_write->null_rt,
+         fb_write->last_rt,
+      };
+      hash = HASH(hash, fb_write_u8data);
+      break;
+   }
+
+   case BRW_KIND_LOGICAL:
+   case BRW_KIND_BASE:
+      /* Nothing else to do. */
+      break;
+   }
 
    if (inst->opcode == BRW_OPCODE_MAD) {
       /* Commutatively combine the hashes for the multiplicands */

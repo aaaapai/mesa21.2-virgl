@@ -158,7 +158,7 @@ void r600_draw_rectangle(struct blitter_context *blitter,
 	/* Upload vertices. The hw rectangle has only 3 vertices,
 	 * The 4th one is derived from the first 3.
 	 * The vertex specification should match u_blitter's vertex element state. */
-	u_upload_alloc(rctx->b.stream_uploader, 0, sizeof(float) * 24,
+	u_upload_alloc_ref(rctx->b.stream_uploader, 0, sizeof(float) * 24,
 		       rctx->screen->info.tcc_cache_line_size,
                        &offset, &buf, (void**)&vb);
 	if (!buf)
@@ -801,10 +801,6 @@ static int r600_get_video_param(struct pipe_screen *screen,
 		return vl_video_buffer_max_size(screen);
 	case PIPE_VIDEO_CAP_PREFERRED_FORMAT:
 		return PIPE_FORMAT_NV12;
-	case PIPE_VIDEO_CAP_PREFERS_INTERLACED:
-		return false;
-	case PIPE_VIDEO_CAP_SUPPORTS_INTERLACED:
-		return false;
 	case PIPE_VIDEO_CAP_SUPPORTS_PROGRESSIVE:
 		return true;
 	case PIPE_VIDEO_CAP_MAX_LEVEL:

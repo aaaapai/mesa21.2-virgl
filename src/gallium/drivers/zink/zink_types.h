@@ -1138,6 +1138,7 @@ struct zink_compute_program {
 
    bool use_local_size;
    bool has_variable_shared_mem;
+   bool uses_bindless;
 
    unsigned scratch_size;
 
@@ -1303,6 +1304,7 @@ struct zink_resource {
    bool use_damage;
 
    bool copies_warned;
+   bool deleted; //resource_release
    bool swapchain;
    bool dmabuf;
    bool subdata; //doing subdata call
@@ -1516,7 +1518,6 @@ struct zink_screen {
       bool track_renderpasses;
       bool no_linestipple;
       bool no_linesmooth;
-      bool no_hw_gl_point;
       bool can_do_invalid_linear_modifier;
       bool inconsistent_interpolation;
       bool can_2d_view_sparse;
@@ -1924,6 +1925,9 @@ struct zink_context {
 
    uint32_t ds3_states;
    unsigned work_count;
+
+   struct pipe_resource *index_buffer; //last index buffer
+   unsigned index_size;
 
    uint32_t num_so_targets;
    struct pipe_stream_output_target *so_targets[PIPE_MAX_SO_BUFFERS];

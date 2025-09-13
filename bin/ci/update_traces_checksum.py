@@ -25,7 +25,7 @@ from gitlab_common import (get_gitlab_project, read_token, wait_for_pipeline,
 
 
 DESCRIPTION_FILE = "export PIGLIT_REPLAY_DESCRIPTION_FILE=.*/install/(.*)$"
-DEVICE_NAME = "declare -x PIGLIT_REPLAY_DEVICE_NAME='(.*)'$"
+DEVICE_NAME = "(?:declare -x|export) PIGLIT_REPLAY_DEVICE_NAME='?([^']*)'?$"
 
 
 def gather_results(
@@ -41,7 +41,7 @@ def gather_results(
             cur_job = project.jobs.get(job.id)
             # get variables
             print(f"👁  {job.name}...")
-            log: list[str] = cur_job.trace().decode("unicode_escape", "ignore").splitlines()
+            log: list[str] = cur_job.trace().decode().splitlines()
             filename: str = ''
             dev_name: str = ''
             for logline in log:

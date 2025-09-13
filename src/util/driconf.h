@@ -788,13 +788,14 @@
    DRI_CONF_OPT_B(radv_enable_float16_gfx8, def, \
                   "Expose float16 on GFX8, where it's supported but usually not beneficial.")
 
-#define DRI_CONF_RADV_DISABLE_HIZ_HIS_GFX12(def) \
-   DRI_CONF_OPT_B(radv_disable_hiz_his_gfx12, def, \
-                  "Disable HiZ/HiS on GFX12 (RDNA4) to workaround a hw bug that causes random GPU hangs")
-
 #define DRI_CONF_RADV_COOPERATIVE_MATRIX2_NV(def) \
    DRI_CONF_OPT_B(radv_cooperative_matrix2_nv, def, \
                   "Expose VK_NV_cooperative_matrix2 on supported hardware.")
+
+#define DRI_CONF_RADV_GFX12_HIZ_WA() \
+   DRI_CONF_OPT_S_NODEF(radv_gfx12_hiz_wa, \
+                        "Choose the specific HiZ workaround to apply on GFX12 (RDNA4). " \
+                        "Accepted values are: disabled, partial or full")
 
 /**
  * \brief ANV specific configuration options

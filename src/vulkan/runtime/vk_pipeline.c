@@ -102,29 +102,44 @@ get_required_subgroup_size(const void *info_pNext)
    return rss_info != NULL ? rss_info->requiredSubgroupSize : 0;
 }
 
-enum gl_subgroup_size
-vk_get_subgroup_size(uint32_t spirv_version,
-                     mesa_shader_stage stage,
+void
+vk_set_subgroup_size(struct vk_device *device,
+                     nir_shader *shader,
+                     uint32_t spirv_version,
                      const void *info_pNext,
                      bool allow_varying,
                      bool require_full)
 {
+   struct vk_properties *properties = &device->physical->properties;
    uint32_t req_subgroup_size = get_required_subgroup_size(info_pNext);
-   if (req_subgroup_size > 0) {
+   if (req_subgroup_size) {
       assert(util_is_power_of_two_nonzero(req_subgroup_size));
-      assert(req_subgroup_size >= 4 && req_subgroup_size <= 128);
-      return req_subgroup_size;
+      assert(req_subgroup_size >= 1 && req_subgroup_size <= 128);
+      shader->info.api_subgroup_size = req_subgroup_size;
+      shader->info.max_subgroup_size = req_subgroup_size;
+      shader->info.min_subgroup_size = req_subgroup_size;
    } else if (allow_varying || spirv_version >= 0x10600) {
-      /* Starting with SPIR-V 1.6, varying subgroup size the default */
-      return SUBGROUP_SIZE_VARYING;
-   } else if (require_full) {
-      assert(stage == MESA_SHADER_COMPUTE ||
-             stage == MESA_SHADER_MESH ||
-             stage == MESA_SHADER_TASK);
-      return SUBGROUP_SIZE_FULL_SUBGROUPS;
+      /* Starting with SPIR-V 1.6, varying subgroup size is the default */
    } else {
-      return SUBGROUP_SIZE_API_CONSTANT;
+      shader->info.api_subgroup_size = properties->subgroupSize;
+      if (require_full) {
+         assert(shader->info.stage == MESA_SHADER_COMPUTE ||
+                shader->info.stage == MESA_SHADER_MESH ||
+                shader->info.stage == MESA_SHADER_TASK);
+         shader->info.max_subgroup_size = properties->subgroupSize;
+         shader->info.min_subgroup_size = properties->subgroupSize;
+      }
    }
+
+   if (properties->maxSubgroupSize) {
+      assert(properties->minSubgroupSize);
+      shader->info.max_subgroup_size =
+         MIN2(shader->info.max_subgroup_size, properties->maxSubgroupSize);
+      shader->info.min_subgroup_size =
+         MAX2(shader->info.min_subgroup_size, properties->minSubgroupSize);
+   }
+
+   assert(shader->info.max_subgroup_size >= shader->info.min_subgroup_size);
 }
 
 VkResult
@@ -171,20 +186,21 @@ vk_pipeline_shader_stage_to_nir(struct vk_device *device,
       spirv_size = minfo->codeSize;
    }
 
-   enum gl_subgroup_size subgroup_size = vk_get_subgroup_size(
-      vk_spirv_version(spirv_data, spirv_size),
-      stage, info->pNext,
-      info->flags & VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT,
-      info->flags & VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT);
-
    nir_shader *nir = vk_spirv_to_nir(device, spirv_data, spirv_size, stage,
-                                     info->pName, subgroup_size,
+                                     info->pName,
                                      info->pSpecializationInfo,
                                      spirv_options, nir_options,
                                      false /* internal */,
                                      mem_ctx);
    if (nir == NULL)
       return vk_errorf(device, VK_ERROR_UNKNOWN, "spirv_to_nir failed");
+
+   vk_set_subgroup_size(
+      device, nir,
+      vk_spirv_version(spirv_data, spirv_size),
+      info->pNext,
+      info->flags & VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT,
+      info->flags & VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT);
 
    if (pipeline_flags & VK_PIPELINE_CREATE_2_VIEW_INDEX_FROM_DEVICE_INDEX_BIT_KHR)
       NIR_PASS(_, nir, nir_lower_view_index_to_device_index);
@@ -3046,7 +3062,6 @@ vk_create_rt_pipeline(struct vk_device *device,
             .shader = vk_shader_ref(group_stages[s].shader),
          };
       }
-      assert(group->stage_count > 0);
 
       qsort(group->stages, group->stage_count, sizeof(*group->stages),
             cmp_vk_rt_pipeline_stages);

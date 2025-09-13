@@ -196,8 +196,7 @@ nir_component_mask_reinterpret(nir_component_mask_t mask,
 nir_shader *
 nir_shader_create(void *mem_ctx,
                   mesa_shader_stage stage,
-                  const nir_shader_compiler_options *options,
-                  shader_info *si)
+                  const nir_shader_compiler_options *options)
 {
    nir_shader *shader = rzalloc(mem_ctx, nir_shader);
 
@@ -211,18 +210,15 @@ nir_shader_create(void *mem_ctx,
 
    shader->options = options;
 
-   if (si) {
-      assert(si->stage == stage);
-      shader->info = *si;
-   } else {
-      shader->info.stage = stage;
+   shader->info.stage = stage;
 
-      /* Assume there is no known prev/next stage, this is the case for
-       * nir_builder_init_simple_shader for example.
-       */
-      shader->info.prev_stage = MESA_SHADER_NONE;
-      shader->info.next_stage = MESA_SHADER_NONE;
-   }
+   /* Assume there is no known prev/next stage, this is the case for
+    * nir_builder_init_simple_shader for example.
+    */
+   shader->info.prev_stage = MESA_SHADER_NONE;
+   shader->info.next_stage = MESA_SHADER_NONE;
+   shader->info.max_subgroup_size = 128;
+   shader->info.min_subgroup_size = 1;
 
    exec_list_make_empty(&shader->functions);
 
@@ -692,6 +688,8 @@ nir_function_impl_create_bare(nir_shader *shader)
    impl->num_blocks = 0;
    impl->valid_metadata = nir_metadata_none;
    impl->structured = true;
+   range_minimum_query_table_init(&impl->dom_lca_info.table);
+   impl->dom_lca_info.block_from_idx = NULL;
 
    /* create start & end blocks */
    nir_block *start_block = nir_block_create(shader);

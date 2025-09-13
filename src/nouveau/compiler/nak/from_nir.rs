@@ -3343,7 +3343,7 @@ impl<'a> ShaderFromNir<'a> {
                 let (off, off_imm) = self.get_cbuf_addr_offset(&srcs[1]);
 
                 let cb = CBufRef {
-                    buf: CBuf::BindlessSSA(handle),
+                    buf: CBuf::BindlessSSA(handle[..].try_into().unwrap()),
                     offset: off_imm,
                 };
 
@@ -3969,10 +3969,13 @@ impl<'a> ShaderFromNir<'a> {
             Op::Exit(OpExit {})
         } else {
             self.cfg.add_edge(nb.index, target.index);
-            Op::Bra(OpBra {
-                target: self.get_block_label(target),
-                cond: true.into(),
-            })
+            Op::Bra(
+                OpBra {
+                    target: self.get_block_label(target),
+                    cond: true.into(),
+                }
+                .into(),
+            )
         };
         b.predicate(pred).push_op(op);
     }
