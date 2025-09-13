@@ -74,7 +74,8 @@ struct kopper_swapchain {
 enum kopper_type {
    KOPPER_X11,
    KOPPER_WAYLAND,
-   KOPPER_WIN32
+   KOPPER_WIN32,
+   KOPPER_ANDROID
 };
 
 struct kopper_displaytarget
@@ -99,6 +100,7 @@ struct kopper_displaytarget
    VkImageFormatListCreateInfo format_list;
    enum kopper_type type;
    bool is_kill;
+   bool pre_rotated;
    VkPresentModeKHR present_mode;
    unsigned readback_counter;
 

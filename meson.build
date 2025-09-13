@@ -91,6 +91,7 @@ with_radv_tests = get_option('build-radv-tests')
 with_aco_tests = get_option('build-aco-tests')
 with_glx_read_only_text = get_option('glx-read-only-text')
 with_glx_direct = get_option('glx-direct')
+with_osmesa = get_option('osmesa')
 with_vulkan_overlay_layer = get_option('vulkan-layers').contains('overlay')
 with_vulkan_device_select_layer = get_option('vulkan-layers').contains('device-select')
 with_vulkan_screenshot_layer = get_option('vulkan-layers').contains('screenshot')
@@ -130,6 +131,10 @@ if gbm_backends_path == ''
   gbm_backends_path = join_paths(get_option('prefix'), get_option('libdir'), 'gbm')
 endif
 
+
+# TODO: Remove this and the old static glapi along with it.
+with_shared_glapi = true
+
 with_opengl = get_option('opengl')
 with_gles1 = get_option('gles1').allowed()
 with_gles2 = get_option('gles2').allowed()
@@ -139,8 +144,10 @@ pre_args += '-DHAVE_OPENGL_ES_1=@0@'.format(with_gles1.to_int())
 pre_args += '-DHAVE_OPENGL_ES_2=@0@'.format(with_gles2.to_int())
 
 with_any_opengl = with_opengl or with_gles1 or with_gles2
+# Only build shared_glapi if at least one OpenGL API is enabled
+with_shared_glapi = with_shared_glapi and with_any_opengl
 
-system_has_kms_drm = ['openbsd', 'netbsd', 'freebsd', 'gnu/kfreebsd', 'dragonfly', 'linux', 'sunos', 'android', 'managarm'].contains(host_machine.system())
+system_has_kms_drm = ['openbsd', 'netbsd', 'freebsd', 'gnu/kfreebsd', 'dragonfly', 'linux', 'android', 'sunos', 'managarm'].contains(host_machine.system())
 
 gallium_drivers = get_option('gallium-drivers')
 if gallium_drivers.contains('auto')
@@ -1983,6 +1990,14 @@ if dep_unwind.found()
   pre_args += '-DHAVE_LIBUNWIND'
 endif
 
+if with_osmesa
+  if host_machine.system() == 'windows'
+    osmesa_lib_name = 'osmesa'
+  else
+    osmesa_lib_name = 'OSMesa'
+  endif
+endif
+
 # TODO: symbol mangling
 
 with_wayland_bind_display = with_platform_wayland and get_option('legacy-wayland').contains('bind-wayland-display')
@@ -2280,6 +2295,7 @@ summary(
     'OpenGL': with_opengl,
     'ES1': with_gles1,
     'ES2': with_gles2,
+    'Shared glapi': with_shared_glapi,
     'GLVND': with_glvnd,
   },
   section: 'OpenGL', bool_yn: true
@@ -2371,6 +2387,7 @@ if with_gallium
     gallium_frontends += 'rusticl'
   endif
   gallium_summary += {'Frontends': gallium_frontends}
+  gallium_summary += {'Off-screen rendering (OSMesa)': with_osmesa ? 'lib' + osmesa_lib_name : false}
   gallium_summary += {'HUD lm-sensors': dep_lmsensors.found()}
 endif
 summary(gallium_summary, section: 'Gallium', bool_yn: true, list_sep: ' ')

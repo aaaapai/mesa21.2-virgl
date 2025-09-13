@@ -939,6 +939,7 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
    struct gl_config mode, *mode_ptr = &mode;
    bool no_error = false;
 
+   printf("47\n");
    _mesa_initialize(attribs->options.mesa_extension_override);
 
    /* Create a hash table for the framebuffer interface objects
@@ -947,7 +948,9 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
    if (fscreen->st_screen == NULL) {
       struct st_screen *screen;
 
+      printf("48\n");
       screen = CALLOC_STRUCT(st_screen);
+      printf("49\n");
       simple_mtx_init(&screen->st_mutex, mtx_plain);
 
       /* We'll use drawable->ID as prehashed value to prevent the hash function
@@ -955,9 +958,12 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
        * doing lookups from st_framebuffers_purge and not dereference framebuffer
        * in time.
        */
+      printf("50\n");
       screen->drawable_ht = _mesa_hash_table_create(NULL,
                                                     NULL,
-                                                    _mesa_key_pointer_equal);
+                                                 _mesa_key_pointer_equal);
+      
+      printf("51\n");
       fscreen->st_screen = screen;
    }
 
@@ -967,45 +973,60 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
    /* OpenGL ES 2.0+ does not support sampler state LOD bias. If we are creating
     * a GLES context, communicate that to the the driver to allow optimization.
     */
+   printf("52\n");
    bool is_gles = attribs->profile == API_OPENGLES2;
+   printf("53\n");
    unsigned lod_bias_flag = is_gles ? PIPE_CONTEXT_NO_LOD_BIAS : 0;
 
+   printf("54\n");
    pipe = fscreen->screen->context_create(fscreen->screen, NULL,
                                           PIPE_CONTEXT_PREFER_THREADED |
                                           lod_bias_flag |
                                           attribs->context_flags);
    if (!pipe) {
+      printf("55\n");
       *error = ST_CONTEXT_ERROR_NO_MEMORY;
       return NULL;
    }
 
+   printf("56\n");
    st_visual_to_context_mode(&attribs->visual, &mode);
-   if (attribs->visual.color_format == PIPE_FORMAT_NONE)
+   if (attribs->visual.color_format == PIPE_FORMAT_NONE) {
+      printf("57\n");
       mode_ptr = NULL;
+   }
+   printf("58\n");
    st = st_create_context(attribs->profile, pipe, mode_ptr, shared_ctx,
                           &attribs->options, no_error,
                           !!fscreen->validate_egl_image);
    if (!st) {
+      printf("59\n");
       *error = ST_CONTEXT_ERROR_NO_MEMORY;
       pipe->destroy(pipe);
       return NULL;
    }
 
    if (attribs->flags & ST_CONTEXT_FLAG_DEBUG) {
+      printf("60\n");
       if (!_mesa_set_debug_state_int(st->ctx, GL_DEBUG_OUTPUT, GL_TRUE)) {
+         printf("61\n");
          *error = ST_CONTEXT_ERROR_NO_MEMORY;
          return NULL;
       }
 
+      printf("62\n");
       st->ctx->Const.ContextFlags |= GL_CONTEXT_FLAG_DEBUG_BIT;
    }
 
    if (st->ctx->Const.ContextFlags & GL_CONTEXT_FLAG_DEBUG_BIT) {
+      printf("63\n");
       _mesa_update_debug_callback(st->ctx);
    }
 
-   if (attribs->flags & ST_CONTEXT_FLAG_FORWARD_COMPATIBLE)
+   if (attribs->flags & ST_CONTEXT_FLAG_FORWARD_COMPATIBLE) {
+      printf("64\n");
       st->ctx->Const.ContextFlags |= GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT;
+   }
 
    if (attribs->context_flags & PIPE_CONTEXT_ROBUST_BUFFER_ACCESS) {
       st->ctx->Const.ContextFlags |= GL_CONTEXT_FLAG_ROBUST_ACCESS_BIT_ARB;
@@ -1027,6 +1048,7 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
       if (st->ctx->Version < attribs->major * 10U + attribs->minor) {
          *error = ST_CONTEXT_ERROR_BAD_VERSION;
          st_destroy_context(st);
+         printf("65 and return NULL\n");
          return NULL;
       }
    }
@@ -1043,6 +1065,7 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
       st->pipe->set_frontend_noop(st->pipe, st->ctx->IntelBlackholeRender);
 
    *error = ST_CONTEXT_SUCCESS;
+   printf("65 and return successfully\n");
    return st;
 }
 

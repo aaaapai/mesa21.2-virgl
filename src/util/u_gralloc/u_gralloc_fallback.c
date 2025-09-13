@@ -178,7 +178,7 @@ u_gralloc_fallback_create()
    struct fallback_gralloc *gr = CALLOC_STRUCT(fallback_gralloc);
    int err = 0;
 
-   err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
+   /*err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
                        (const hw_module_t **)&gr->gralloc_module);
 
    if (err) {
@@ -187,7 +187,7 @@ u_gralloc_fallback_create()
    } else if (!gr->gralloc_module->lock_ycbcr) {
       mesa_logw("Gralloc doesn't support lock_ycbcr (video buffers won't be "
                 "supported)");
-   }
+   }*/
 
    gr->base.ops.get_buffer_basic_info = fallback_gralloc_get_buffer_info;
    gr->base.ops.destroy = destroy;

@@ -158,11 +158,11 @@ u_gralloc_qcom_create()
    struct qcom_gralloc *gr = CALLOC_STRUCT(qcom_gralloc);
    int err = 0;
 
-   err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
-                       (const hw_module_t **)&gr->gralloc_module);
+   /*err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
+                       (const hw_module_t **)&gr->gralloc_module);*/
 
-   if (err)
-      goto fail;
+   /*if (err)
+      goto fail;*/
 
    bool match = false;
 

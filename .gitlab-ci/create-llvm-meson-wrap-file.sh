@@ -2,6 +2,8 @@
 
 set -exu
 
+export ANDROID_LLVM_ARTIFACT_NAME=llvm-android-20.1.7-aarch64-release
+
 # Early check for required env variables, relies on `set -u`
 : "$ANDROID_LLVM_ARTIFACT_NAME"
 

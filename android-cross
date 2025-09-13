@@ -1,0 +1,32 @@
+[binaries]
+ar = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+c = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang']
+cpp = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++']
+nm = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm'
+llvm-config = '/usr/bin/llvm-config-19'
+ld = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/lld'
+#cmake = ''
+strip = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+# Android doesn't come with a pkg-config, but we need one for meson to be happy not
+# finding all the optional deps it looks for.  Use system pkg-config pointing at a
+# directory we get to populate with any .pc files we want to add for Android
+pkg-config = ['env', 'PKG_CONFIG_LIBDIR=/tmp/build/lib/pkgconfig', '/usr/bin/pkg-config']
+
+c_host = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang'
+cpp_host = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++'
+
+[built-in options]
+c_args = ['-DANDROID', '-O3', '-DVK_USE_PLATFORM_ANDROID_KHR', '-DHAVE_OPENGL', '-fPIC', '-DPIC', '-fwhole-program-vtables', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-DLLVM_AVAILABLE', '-fdata-sections', '-ffunction-sections', '-fmerge-all-constants', '-fno-emulated-tls', '-march=armv8-a+simd+crc+crypto+fp16', '-DHAVE_STRUCT_TIMESPEC', '-I/tmp/build/include', '-Wno-macro-redefined', '-I/tmp/build/include/libdrm']
+c_link_args = ['-ldl', '-flto=thin', '-Wl,-plugin-opt=-emulated-tls=0', '-fuse-ld=lld', '-L/tmp/build/lib', '-L/tmp/build/lib/libdrm']
+cpp_args = ['-DANDROID', '-O3', '-DVK_USE_PLATFORM_ANDROID_KHR', '-DHAVE_OPENGL', '-fPIC', '-DPIC', '-fwhole-program-vtables', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-DLLVM_AVAILABLE', '-fdata-sections', '-ffunction-sections', '-fmerge-all-constants', '-fno-emulated-tls', '-march=armv8-a+simd+crc+crypto+fp16', '-DHAVE_STRUCT_TIMESPEC', '-I/tmp/build/include', '-Wno-macro-redefined', '-I/tmp/build/include/libdrm']
+cpp_link_args = ['-ldl', '-flto=thin', '-Wl,-plugin-opt=-emulated-tls=0', '-fuse-ld=lld', '-lc++_static', '-lc++abi', '-L/tmp/build/lib', '-L/tmp/build/lib/libdrm']
+
+[properties]
+skip_sanity_check = true
+sys_root = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot'
+
+[host_machine]
+system = 'android'
+cpu_family = 'aarch64'
+cpu = 'armv8a'
+endian = 'little'

@@ -80,6 +80,14 @@ init_dt_type(struct kopper_displaytarget *cdt)
       cdt->type = KOPPER_WIN32;
       break;
 #endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   case VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR:
+      cdt->type = KOPPER_ANDROID;
+      break;
+
+#else
+#error no android define
+#endif
    default:
       UNREACHABLE("unsupported!");
    }
@@ -118,6 +126,13 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
       error = VKSCR(CreateWin32SurfaceKHR)(screen->instance, win32, NULL, &surface);
       break;
    }
+#endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+    case VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR: {
+      VkAndroidSurfaceCreateInfoKHR *wdroid = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
+      error = VKSCR(CreateAndroidSurfaceKHR)(screen->instance, wdroid, NULL, &surface);
+      break;
+    }
 #endif
    default:
       UNREACHABLE("unsupported!");
@@ -235,6 +250,13 @@ find_dt_entry(struct zink_screen *screen, const struct kopper_displaytarget *cdt
       break;
    }
 #endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   case KOPPER_ANDROID: {
+      VkAndroidSurfaceCreateInfoKHR *asci = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
+      he = _mesa_hash_table_search(&screen->dts, asci->window);
+      break;
+   }
+#endif
    default:
       UNREACHABLE("unsupported!");
    }
@@ -297,12 +319,18 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
       cswap->scci.pQueueFamilyIndices = NULL;
       cswap->scci.compositeAlpha = has_alpha && !cdt->info.present_opaque
                                    ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
-                                   : VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+                                   : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
       cswap->scci.clipped = VK_TRUE;
    }
    cswap->scci.presentMode = cdt->present_mode;
    cswap->scci.minImageCount = cdt->caps.minImageCount;
-   cswap->scci.preTransform = cdt->caps.currentTransform;
+   if(cdt->caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) {
+      VkSurfaceTransformFlagBitsKHR currentTransform = cdt->caps.currentTransform;
+      cdt->pre_rotated = currentTransform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+      cswap->scci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+   } else {
+      cswap->scci.preTransform = cdt->caps.currentTransform;
+   }
    if (cdt->formats[1])
       cswap->scci.pNext = &cdt->format_list;
 
@@ -310,6 +338,7 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
    switch (cdt->type) {
    case KOPPER_X11:
    case KOPPER_WIN32:
+   case KOPPER_ANDROID:
       /* With Xcb, minImageExtent, maxImageExtent, and currentExtent must always equal the window size.
        * ...
        * Due to above restrictions, it is only possible to create a new swapchain on this
@@ -441,6 +470,7 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
             break;
          case KOPPER_WAYLAND:
          case KOPPER_WIN32:
+         case KOPPER_ANDROID:
             _mesa_hash_table_init(&screen->dts, screen, _mesa_hash_pointer, _mesa_key_pointer_equal);
             break;
          default:
@@ -510,6 +540,13 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
    case KOPPER_WIN32: {
       VkWin32SurfaceCreateInfoKHR *win32 = (VkWin32SurfaceCreateInfoKHR *)&cdt->info.bos;
       _mesa_hash_table_insert(&screen->dts, win32->hwnd, cdt);
+      break;
+   }
+#endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   case KOPPER_ANDROID: {
+      VkAndroidSurfaceCreateInfoKHR *asci = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
+      _mesa_hash_table_insert(&screen->dts, asci->window, cdt);
       break;
    }
 #endif
@@ -788,7 +825,7 @@ kopper_present(void *data, void *gdata, int thread_idx)
    swapchain->last_present = cpi->image;
    if (cpi->indefinite_acquire)
       p_atomic_dec(&swapchain->num_acquires);
-   if (error2 == VK_SUBOPTIMAL_KHR && cdt->swapchain == swapchain)
+   if ((!cdt->pre_rotated && error2 == VK_SUBOPTIMAL_KHR) && cdt->swapchain == swapchain)
       cpi->res->obj->new_dt = true;
 
    /* it's illegal to destroy semaphores if they're in use by a cmdbuf.

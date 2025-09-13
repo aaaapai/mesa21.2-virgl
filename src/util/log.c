@@ -469,7 +469,7 @@ _mesa_log(const char *fmtString, ...)
    char s[MAX_LOG_MESSAGE_LENGTH];
    va_list args;
    va_start(args, fmtString);
-   vsnprintf(s, MAX_LOG_MESSAGE_LENGTH, fmtString, args);
+   printf(s, MAX_LOG_MESSAGE_LENGTH, fmtString, args);
    va_end(args);
    mesa_log_if_debug(MESA_LOG_INFO, s);
 }
