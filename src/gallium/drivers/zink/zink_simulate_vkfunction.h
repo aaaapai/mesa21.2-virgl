@@ -67,16 +67,6 @@
 #include <xf86drm.h>
 #endif
 
-#include <unordered_map>
-#include <mutex>
-#include <condition_variable>
-#include <atomic>
-#include <vector>
-#include <cstdint>
-#include <pthread>
-#include <memory>
-#include <cstring>
-
 // 模拟实现宏
 #define ZINK_SIMULATE_FUNC(name) zink_simulate_##name
 
