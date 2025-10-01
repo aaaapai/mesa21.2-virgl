@@ -9,6 +9,14 @@
 #include <memory>
 #include <cstring>
 
+struct zink_screen *zink_simulate_screen;
+
+void init_zink_simulate_screen(struct zink_screen *screen) {
+   struct zink_screen *zink_simulate_screen = screen;
+}
+
+#undef VKSCR
+#define VKSCR(fn) zink_simulate_screen->vk.fn
 // 模拟时间线信号量的内部状态
 struct ZinkTimelineSemaphore {
     std::mutex mutex;
@@ -302,6 +310,9 @@ public:
     
 private:
     VkRenderPass create_compatible_render_pass(VkDevice device, const zink_pipeline_rendering_state& state) {
+
+        struct zink_screen *screen;
+
         std::vector<VkAttachmentDescription> attachments;
         std::vector<VkAttachmentReference> colorRefs;
         VkAttachmentReference depthRef = {};
@@ -1431,3 +1442,5 @@ VkResult ZINK_SIMULATE_FUNC(vkCreateGraphicsPipelines)(VkDevice device,
     
     return result;
 }
+#undef VKSCR
+#define VKSCR(fn) screen->vk.fn
