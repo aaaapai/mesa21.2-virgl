@@ -28,6 +28,7 @@
 #include "zink_inlines.h"
 #include "zink_query.h"
 #include "zink_surface.h"
+#include "zink_simulate_vkfunction.h"
 
 #include "util/u_blitter.h"
 #include "util/format/u_format.h"
@@ -498,7 +499,7 @@ zink_clear_texture_dynamic(struct pipe_context *pctx,
       if (res->aspect & VK_IMAGE_ASPECT_STENCIL_BIT)
          info.pStencilAttachment = &att;
    }
-   VKCTX(CmdBeginRendering)(cmdbuf, &info);
+   zink_simulate_vkCmdBeginRendering(cmdbuf, &info);
    if (!full_clear) {
       VkClearRect rect;
       rect.rect = info.renderArea;
