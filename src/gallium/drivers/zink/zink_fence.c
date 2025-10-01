@@ -28,6 +28,8 @@
 #include "zink_resource.h"
 #include "zink_screen.h"
 
+#include "zink_simulate_vkfunction.h"
+
 #include "util/os_file.h"
 #include "util/set.h"
 #include "util/u_memory.h"
