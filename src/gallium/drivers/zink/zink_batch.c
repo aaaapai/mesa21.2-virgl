@@ -239,11 +239,11 @@ zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs
    if (bs->reordered_cmdbuf)
       zink_simulate_vkFreeCommandBuffers(screen->dev, bs->cmdpool, 1, &bs->reordered_cmdbuf);
    if (bs->cmdpool)
-      VKSCR(DestroyCommandPool)(screen->dev, bs->cmdpool, NULL);
+      zink_simulate_vkDestroyCommandPool(screen->dev, bs->cmdpool, NULL);
    if (bs->unsynchronized_cmdbuf)
       zink_simulate_vkFreeCommandBuffers(screen->dev, bs->unsynchronized_cmdpool, 1, &bs->unsynchronized_cmdbuf);
    if (bs->unsynchronized_cmdpool)
-      VKSCR(DestroyCommandPool)(screen->dev, bs->unsynchronized_cmdpool, NULL);
+      zink_simulate_vkDestroyCommandPool(screen->dev, bs->unsynchronized_cmdpool, NULL);
    free(bs->real_objs.objs);
    free(bs->slab_objs.objs);
    free(bs->unsync_objs.objs);
