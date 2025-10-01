@@ -33,6 +33,7 @@
 #include "zink_bo.h"
 #include "zink_resource.h"
 #include "zink_screen.h"
+#include "zink_simulate_vkfunction.h"
 #include "util/u_hash_table.h"
 
 #ifdef HAVE_LIBDRM
@@ -829,7 +830,7 @@ buffer_commit_single(struct zink_context *ctx, struct zink_resource *res, struct
    VkResult ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, VK_NULL_HANDLE);
    if (zink_screen_handle_vkresult(screen, ret))
       return sem;
-   VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+   zink_simulate_vkDestroySemaphore(screen->dev, sem, NULL);
    return VK_NULL_HANDLE;
 }
 
@@ -977,7 +978,7 @@ texture_commit_single(struct zink_context *ctx, struct zink_resource *res, VkSpa
    VkResult ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, VK_NULL_HANDLE);
    if (zink_screen_handle_vkresult(screen, ret))
       return sem;
-   VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+   zink_simulate_vkDestroySemaphore(screen->dev, sem, NULL);
    return VK_NULL_HANDLE;
 }
 
