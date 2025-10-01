@@ -1518,7 +1518,7 @@ zink_destroy_screen(struct pipe_screen *pscreen)
    zink_descriptor_layouts_deinit(screen);
 
    if (screen->sem)
-      VKSCR(DestroySemaphore)(screen->dev, screen->sem, NULL);
+      zink_simulate_vkDestroySemaphore(screen->dev, screen->sem, NULL);
 
    if (screen->fence)
       VKSCR(DestroyFence)(screen->dev, screen->fence, NULL);
@@ -1527,9 +1527,9 @@ zink_destroy_screen(struct pipe_screen *pscreen)
       util_queue_destroy(&screen->flush_queue);
 
    while (util_dynarray_contains(&screen->semaphores, VkSemaphore))
-      VKSCR(DestroySemaphore)(screen->dev, util_dynarray_pop(&screen->semaphores, VkSemaphore), NULL);
+      zink_simulate_vkDestroySemaphore(screen->dev, util_dynarray_pop(&screen->semaphores, VkSemaphore), NULL);
    while (util_dynarray_contains(&screen->fd_semaphores, VkSemaphore))
-      VKSCR(DestroySemaphore)(screen->dev, util_dynarray_pop(&screen->fd_semaphores, VkSemaphore), NULL);
+      zink_simulate_vkDestroySemaphore(screen->dev, util_dynarray_pop(&screen->fd_semaphores, VkSemaphore), NULL);
    if (screen->bindless_layout)
       VKSCR(DestroyDescriptorSetLayout)(screen->dev, screen->bindless_layout, NULL);
 
@@ -2379,7 +2379,7 @@ zink_screen_export_dmabuf_semaphore(struct zink_screen *screen, struct zink_reso
    bool success = VKSCR(ImportSemaphoreFdKHR)(screen->dev, &sdi) == VK_SUCCESS;
    if (!success) {
       close(export.fd);
-      VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+      zink_simulate_vkDestroySemaphore(screen->dev, sem, NULL);
       return VK_NULL_HANDLE;
    }
 #endif
