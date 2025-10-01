@@ -25,6 +25,7 @@ files_libzink = files(
   'zink_state.c',
   'zink_surface.c',
   'zink_synchronization.cpp',
+  'zink_simulate_vkfunction.cpp',
 )
 
 zink_device_info = custom_target(
