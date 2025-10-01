@@ -1420,7 +1420,7 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
       obj->plane_strides[alloc_info->whandle->plane] = alloc_info->whandle->stride;
    }
 
-   VkResult result = VKSCR(CreateImage)(screen->dev, &ici, NULL, &obj->image);
+   VkResult result = zink_simulate_vkCreateImage(screen->dev, &ici, NULL, &obj->image);
    if (result != VK_SUCCESS) {
       mesa_loge("ZINK: vkCreateImage failed (%s)", vk_Result_to_str(result));
       return roc_fail_and_free_object;
