@@ -36,6 +36,7 @@
 #include "zink_screen.h"
 #include "zink_state.h"
 #include "zink_surface.h"
+#include "zink_simulate_vkfunction.h"
 
 
 #include "nir/pipe_nir.h"
@@ -4142,7 +4143,7 @@ zink_flush(struct pipe_context *pctx,
          .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
          .pNext = &esci,
       };
-      VkResult result = VKSCR(CreateSemaphore)(screen->dev, &sci, NULL, &export_sem);
+      VkResult result = zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &export_sem);
       if (zink_screen_handle_vkresult(screen, result)) {
          assert(!ctx->bs->signal_semaphore);
          ctx->bs->signal_semaphore = export_sem;
