@@ -35,6 +35,7 @@
 #include "zink_query.h"
 #include "zink_resource.h"
 #include "zink_state.h"
+#include "zink_simulate_vkfunction.h"
 #include "nir_to_spirv/nir_to_spirv.h" // for SPIRV_VERSION
 
 #include "util/u_debug.h"
@@ -2287,7 +2288,7 @@ zink_screen_init_semaphore(struct zink_screen *screen)
    tci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
    tci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
 
-   return VKSCR(CreateSemaphore)(screen->dev, &sci, NULL, &screen->sem) == VK_SUCCESS;
+   return zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &screen->sem) == VK_SUCCESS;
 }
 
 VkSemaphore
@@ -2313,7 +2314,7 @@ zink_create_exportable_semaphore(struct zink_screen *screen)
    }
    if (sem)
       return sem;
-   VkResult ret = VKSCR(CreateSemaphore)(screen->dev, &sci, NULL, &sem);
+   VkResult ret = zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &sem);
    return ret == VK_SUCCESS ? sem : VK_NULL_HANDLE;
 }
 
@@ -3146,7 +3147,7 @@ zink_create_semaphore(struct zink_screen *screen)
    }
    if (sem)
       return sem;
-   VkResult ret = VKSCR(CreateSemaphore)(screen->dev, &sci, NULL, &sem);
+   VkResult ret = zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &sem);
    return ret == VK_SUCCESS ? sem : VK_NULL_HANDLE;
 }
 
