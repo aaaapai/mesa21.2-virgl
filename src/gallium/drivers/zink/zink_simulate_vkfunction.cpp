@@ -143,405 +143,6 @@ public:
     }
 };
 
-// 拦截命令池创建函数
-VkResult zink_simulate_vkCreateCommandPool(
-    VkDevice device,
-    const VkCommandPoolCreateInfo* pCreateInfo,
-    const VkAllocationCallbacks* pAllocator,
-    VkCommandPool* pCommandPool) {
-    
-    VkResult result = VKSCR(CreateCommandPool)(device, pCreateInfo, pAllocator, pCommandPool);
-    if (result == VK_SUCCESS) {
-        ZinkDeviceManager::get().register_command_pool(*pCommandPool, device);
-    }
-    return result;
-}
-
-void zink_simulate_vkDestroyCommandPool(
-    VkDevice device,
-    VkCommandPool commandPool,
-    const VkAllocationCallbacks* pAllocator) {
-    
-    ZinkDeviceManager::get().unregister_command_pool(commandPool);
-    VKSCR(DestroyCommandPool)(device, commandPool, pAllocator);
-}
-
-// 拦截命令缓冲区分配函数
-VkResult zink_simulate_vkAllocateCommandBuffers(
-    VkDevice device,
-    const VkCommandBufferAllocateInfo* pAllocateInfo,
-    VkCommandBuffer* pCommandBuffers) {
-    
-    VkResult result = VKSCR(AllocateCommandBuffers)(device, pAllocateInfo, pCommandBuffers);
-    if (result == VK_SUCCESS) {
-        for (uint32_t i = 0; i < pAllocateInfo->commandBufferCount; ++i) {
-            ZinkDeviceManager::get().register_command_buffer(pCommandBuffers[i], pAllocateInfo->commandPool);
-        }
-    }
-    return result;
-}
-
-void zink_simulate_vkFreeCommandBuffers(
-    VkDevice device,
-    VkCommandPool commandPool,
-    uint32_t commandBufferCount,
-    const VkCommandBuffer* pCommandBuffers) {
-    
-    for (uint32_t i = 0; i < commandBufferCount; ++i) {
-        ZinkDeviceManager::get().unregister_command_buffer(pCommandBuffers[i]);
-    }
-    VKSCR(FreeCommandBuffers)(device, commandPool, commandBufferCount, pCommandBuffers);
-}
-
-// 拦截图像创建函数
-VkResult zink_simulate_vkCreateImage(
-    VkDevice device,
-    const VkImageCreateInfo* pCreateInfo,
-    const VkAllocationCallbacks* pAllocator,
-    VkImage* pImage) {
-    
-    VkResult result = VKSCR(CreateImage)(device, pCreateInfo, pAllocator, pImage);
-    if (result == VK_SUCCESS) {
-        ZinkDeviceManager::get().register_image_info(*pImage, *pCreateInfo);
-    }
-    return result;
-}
-
-void zink_simulate_vkDestroyImage(
-    VkDevice device,
-    VkImage image,
-    const VkAllocationCallbacks* pAllocator) {
-    
-    ZinkDeviceManager::get().unregister_image_info(image);
-    VKSCR(DestroyImage)(device, image, pAllocator);
-}
-
-// 拦截图像视图创建函数
-VkResult zink_simulate_vkCreateImageView(
-    VkDevice device,
-    const VkImageViewCreateInfo* pCreateInfo,
-    const VkAllocationCallbacks* pAllocator,
-    VkImageView* pImageView) {
-    
-    VkResult result = VKSCR(CreateImageView)(device, pCreateInfo, pAllocator, pImageView);
-    if (result == VK_SUCCESS) {
-        ZinkDeviceManager::get().register_image_view(*pImageView, pCreateInfo->image);
-    }
-    return result;
-}
-
-void zink_simulate_vkDestroyImageView(
-    VkDevice device,
-    VkImageView imageView,
-    const VkAllocationCallbacks* pAllocator) {
-    
-    ZinkDeviceManager::get().unregister_image_view(imageView);
-    VKSCR(DestroyImageView)(device, imageView, pAllocator);
-}
-
-// 现在实现三个辅助函数
-VkDevice get_command_buffer_device(VkCommandBuffer commandBuffer) {
-    VkDevice device = ZinkDeviceManager::get().get_device_from_command_buffer(commandBuffer);
-    
-    // 如果无法从映射中获取，尝试使用回退方案
-    if (device == VK_NULL_HANDLE) {
-        // 在实际实现中，可能需要查询命令缓冲区的内部状态
-        // 这里使用一个简单的回退：返回第一个可用的设备
-        // 注意：这仅适用于单设备应用程序
-        static VkDevice fallback_device = VK_NULL_HANDLE;
-        return fallback_device;
-    }
-    
-    return device;
-}
-
-VkFormat get_image_view_format(VkImageView imageView) {
-    VkImage image = ZinkDeviceManager::get().get_image_from_image_view(imageView);
-    if (image == VK_NULL_HANDLE) {
-        return VK_FORMAT_UNDEFINED;
-    }
-    
-    // 获取图像创建信息
-    VkImageCreateInfo imageInfo = ZinkDeviceManager::get().get_image_info(image);
-    return imageInfo.format;
-}
-
-void get_image_view_size(VkImageView imageView, uint32_t* width, uint32_t* height, uint32_t* layers) {
-    VkImage image = ZinkDeviceManager::get().get_image_from_image_view(imageView);
-    if (image == VK_NULL_HANDLE) {
-        if (width) *width = 0;
-        if (height) *height = 0;
-        if (layers) *layers = 0;
-        return;
-    }
-    
-    // 获取图像创建信息
-    VkImageCreateInfo imageInfo = ZinkDeviceManager::get().get_image_info(image);
-    
-    if (width) *width = imageInfo.extent.width;
-    if (height) *height = imageInfo.extent.height;
-    
-    // 对于层数，需要考虑数组层数
-    if (layers) {
-        *layers = imageInfo.arrayLayers;
-        
-        // 如果图像类型是3D，则使用深度作为层数
-        if (imageInfo.imageType == VK_IMAGE_TYPE_3D) {
-            *layers = imageInfo.extent.depth;
-        }
-    }
-}
-
-// 模拟函数实现
-VkResult zink_simulate_vkCreateSemaphore(
-    VkDevice device,
-    const VkSemaphoreCreateInfo* pCreateInfo,
-    const VkAllocationCallbacks* pAllocator,
-    VkSemaphore* pSemaphore) {
-    
-    // 首先创建真正的二进制信号量
-    VkResult result = VKSCR(CreateSemaphore)(device, pCreateInfo, pAllocator, pSemaphore);
-    if (result != VK_SUCCESS) {
-        return result;
-    }
-    
-    // 解析时间线信号量特定的创建信息
-    uint64_t initial_value = 0;
-    const VkSemaphoreTypeCreateInfo* type_info = nullptr;
-    
-    // 遍历pNext链查找VkSemaphoreTypeCreateInfo
-    const void* pNext = pCreateInfo->pNext;
-    while (pNext) {
-        VkStructureType sType = *reinterpret_cast<const VkStructureType*>(pNext);
-        if (sType == VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO) {
-            type_info = reinterpret_cast<const VkSemaphoreTypeCreateInfo*>(pNext);
-            break;
-        }
-        pNext = reinterpret_cast<const VkBaseInStructure*>(pNext)->pNext;
-    }
-    
-    if (type_info && type_info->semaphoreType == VK_SEMAPHORE_TYPE_TIMELINE) {
-        initial_value = type_info->initialValue;
-    }
-    
-    // 注册到我们的模拟管理器
-    ZinkTimelineSemaphoreManager::getInstance()->registerSemaphore(*pSemaphore, initial_value);
-    
-    return VK_SUCCESS;
-}
-
-void zink_simulate_vkDestroySemaphore(
-    VkDevice device,
-    VkSemaphore semaphore,
-    const VkAllocationCallbacks* pAllocator) {
-    
-    // 从模拟管理器中注销
-    ZinkTimelineSemaphoreManager::getInstance()->unregisterSemaphore(semaphore);
-    
-    // 销毁真正的信号量
-    VKSCR(DestroySemaphore)(device, semaphore, pAllocator);
-}
-
-VkResult zink_simulate_vkGetSemaphoreCounterValue(
-    VkDevice device, 
-    VkSemaphore semaphore, 
-    uint64_t* pValue) {
-    
-    auto state = ZinkTimelineSemaphoreManager::getInstance()->getSemaphoreState(semaphore);
-    if (!state) {
-        return VK_ERROR_INITIALIZATION_FAILED;
-    }
-    
-    std::lock_guard<std::mutex> lock(state->mutex);
-    *pValue = state->current_value;
-    
-    return VK_SUCCESS;
-}
-
-VkResult zink_simulate_vkWaitSemaphores(
-    VkDevice device,
-    const VkSemaphoreWaitInfo* pWaitInfo,
-    uint64_t timeout) {
-    
-    if (!pWaitInfo || pWaitInfo->semaphoreCount == 0) {
-        return VK_SUCCESS;
-    }
-    
-    auto start_time = std::chrono::steady_clock::now();
-    
-    for (uint32_t i = 0; i < pWaitInfo->semaphoreCount; ++i) {
-        VkSemaphore semaphore = pWaitInfo->pSemaphores[i];
-        uint64_t target_value = pWaitInfo->pValues[i];
-        
-        auto state = ZinkTimelineSemaphoreManager::getInstance()->getSemaphoreState(semaphore);
-        if (!state) {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-        
-        std::unique_lock<std::mutex> lock(state->mutex);
-        
-        // 检查是否已经达到目标值
-        if (state->current_value >= target_value) {
-            continue;
-        }
-        
-        // 注册等待
-        state->pending_waits.push_back(target_value);
-        
-        // 等待条件变量
-        bool wait_success = false;
-        if (timeout == UINT64_MAX) {
-            // 无限等待
-            state->cv.wait(lock, [state, target_value] {
-                return state->current_value >= target_value;
-            });
-            wait_success = true;
-        } else {
-            // 有限时间等待
-            auto timeout_duration = std::chrono::nanoseconds(timeout);
-            wait_success = state->cv.wait_for(lock, timeout_duration, [state, target_value] {
-                return state->current_value >= target_value;
-            });
-        }
-        
-        // 移除等待注册
-        auto it = std::find(state->pending_waits.begin(), state->pending_waits.end(), target_value);
-        if (it != state->pending_waits.end()) {
-            state->pending_waits.erase(it);
-        }
-        
-        if (!wait_success) {
-            return VK_TIMEOUT;
-        }
-        
-        // 检查是否超时
-        if (timeout != UINT64_MAX) {
-            auto current_time = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(current_time - start_time).count();
-            if (elapsed > timeout) {
-                return VK_TIMEOUT;
-            }
-        }
-    }
-    
-    return VK_SUCCESS;
-}
-
-VkResult zink_simulate_vkSignalSemaphore(
-    VkDevice device,
-    const VkSemaphoreSignalInfo* pSignalInfo) {
-    
-    if (!pSignalInfo) {
-        return VK_ERROR_VALIDATION_FAILED_EXT;
-    }
-    
-    auto state = ZinkTimelineSemaphoreManager::getInstance()->getSemaphoreState(pSignalInfo->semaphore);
-    if (!state) {
-        return VK_ERROR_INITIALIZATION_FAILED;
-    }
-    
-    {
-        std::lock_guard<std::mutex> lock(state->mutex);
-        
-        // 时间线信号量值必须单调递增
-        if (pSignalInfo->value <= state->current_value) {
-            return VK_ERROR_VALIDATION_FAILED_EXT;
-        }
-        
-        state->current_value = pSignalInfo->value;
-        state->signaled_value = pSignalInfo->value;
-    }
-    
-    // 通知所有等待的线程
-    state->cv.notify_all();
-    
-    return VK_SUCCESS;
-}
-
-// 队列提交相关的辅助函数 - 用于处理时间线信号量在队列操作中的使用
-VkResult zink_simulate_QueueSubmitWithTimeline(
-    VkQueue queue,
-    uint32_t submitCount,
-    const VkSubmitInfo* pSubmits,
-    VkFence fence) {
-    
-    // 这个函数需要应用程序在调用vkQueueSubmit之前预处理提交信息
-    // 将时间线信号量等待转换为二进制信号量等待
-    
-    std::vector<VkSubmitInfo> modified_submits;
-    std::vector<std::vector<VkSemaphore>> binary_wait_semaphores;
-    std::vector<std::vector<VkPipelineStageFlags>> binary_wait_stages;
-    
-    for (uint32_t i = 0; i < submitCount; ++i) {
-        const VkSubmitInfo& submit = pSubmits[i];
-        
-        // 查找时间线信号量信息
-        const VkTimelineSemaphoreSubmitInfo* timeline_info = nullptr;
-        const void* pNext = submit.pNext;
-        while (pNext) {
-            VkStructureType sType = *reinterpret_cast<const VkStructureType*>(pNext);
-            if (sType == VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO) {
-                timeline_info = reinterpret_cast<const VkTimelineSemaphoreSubmitInfo*>(pNext);
-                break;
-            }
-            pNext = reinterpret_cast<const VkBaseInStructure*>(pNext)->pNext;
-        }
-        
-        if (!timeline_info) {
-            // 没有时间线信号量，直接使用原提交
-            modified_submits.push_back(submit);
-            continue;
-        }
-        
-        // 这里需要复杂的逻辑来将时间线等待转换为二进制信号量等待
-        // 由于这需要维护额外的二进制信号量池和复杂的同步逻辑
-        // 这里只提供框架，实际实现需要更完整的工程
-        
-        VkSubmitInfo modified_submit = submit;
-        // 移除时间线特定的pNext链
-        modified_submit.pNext = nullptr;
-        
-        // TODO: 实现时间线到二进制信号量的转换逻辑
-        // 这包括：
-        // 1. 为每个时间线信号量等待创建或重用二进制信号量
-        // 2. 确保二进制信号量在正确的时间被触发
-        // 3. 处理信号操作
-        
-        modified_submits.push_back(modified_submit);
-    }
-    
-    // 调用真正的队列提交
-    return VKSCR(QueueSubmit)(queue, modified_submits.size(), modified_submits.data(), fence);
-}
-
-// 用于处理VkSubmitInfo2的模拟函数（如果需要）
-VkResult zink_simulate_vkQueueSubmit2(
-    VkQueue queue,
-    uint32_t submitCount,
-    const VkSubmitInfo2* pSubmits,
-    VkFence fence) {
-    
-    // VkSubmitInfo2在Vulkan 1.1中不存在，需要降级到VkSubmitInfo
-    // 这里简化处理，实际需要完整转换
-    
-    std::vector<VkSubmitInfo> legacy_submits;
-    
-    for (uint32_t i = 0; i < submitCount; ++i) {
-        const VkSubmitInfo2& submit2 = pSubmits[i];
-        VkSubmitInfo legacy_submit = {};
-        legacy_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        
-        // TODO: 实现VkSubmitInfo2到VkSubmitInfo的完整转换
-        // 包括时间线信号量的处理
-        
-        legacy_submits.push_back(legacy_submit);
-    }
-    
-    return zink_simulate_QueueSubmitWithTimeline(queue, legacy_submits.size(), 
-                                               legacy_submits.data(), fence);
-}
-
-
 // 渲染状态管理
 struct zink_rendering_state {
     VkRenderingFlagsKHR flags;
@@ -767,27 +368,425 @@ private:
         return renderPass;
     }
     
-    VkFramebuffer create_framebuffer(VkDevice device, const std::vector<VkImageView>& attachments,
-                                    uint32_t width, uint32_t height, uint32_t layers) {
-        VkFramebufferCreateInfo framebufferInfo = {};
-        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        // 注意：这里需要正确的renderPass，但在我们的架构中，这由调用者处理
-        framebufferInfo.renderPass = VK_NULL_HANDLE; // 需要在外部设置
-        framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-        framebufferInfo.pAttachments = attachments.data();
-        framebufferInfo.width = width;
-        framebufferInfo.height = height;
-        framebufferInfo.layers = layers;
+    // 完善 create_framebuffer 函数（在 zink_simulate_context 类中）
+    VkFramebuffer create_framebuffer(VkDevice device, 
+                                                       const std::vector<VkImageView>& attachments,
+                                                       uint32_t width, uint32_t height, 
+                                                       uint32_t layers) {
+       if (attachments.empty()) {
+           return VK_NULL_HANDLE;
+       }
+    
+       // 为这些附件找到或创建兼容的渲染通道
+       // 这里简化处理，创建一个最小化的渲染通道
+       std::vector<VkAttachmentDescription> attachment_descs;
+       std::vector<VkAttachmentReference> color_refs;
+       VkAttachmentReference depth_ref = {};
+       bool has_depth = false;
+    
+       // 分析附件格式
+       for (VkImageView image_view : attachments) {
+           VkFormat format = get_image_view_format(image_view);
+           if (format == VK_FORMAT_UNDEFINED) {
+               continue;
+           }
         
-        VkFramebuffer framebuffer;
-        VkResult result = VKSCR(CreateFramebuffer)(device, &framebufferInfo, nullptr, &framebuffer);
-        if (result != VK_SUCCESS) {
-            return VK_NULL_HANDLE;
-        }
+           VkAttachmentDescription desc = {};
+           desc.format = format;
+           desc.samples = VK_SAMPLE_COUNT_1_BIT;
+           desc.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+           desc.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+           desc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+           desc.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+           desc.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+           desc.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         
-        return framebuffer;
+           // 检查是否是深度/模板格式
+           if (format == VK_FORMAT_D16_UNORM || format == VK_FORMAT_D32_SFLOAT || 
+               format == VK_FORMAT_D16_UNORM_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT ||
+               format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
+               desc.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+               desc.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+               has_depth = true;
+               depth_ref.attachment = static_cast<uint32_t>(attachment_descs.size());
+               depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+           } else {
+               color_refs.push_back({static_cast<uint32_t>(attachment_descs.size()), 
+                                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+           }
+        
+           attachment_descs.push_back(desc);
+       }
+    
+       // 创建子通道
+       VkSubpassDescription subpass = {};
+       subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+       subpass.colorAttachmentCount = static_cast<uint32_t>(color_refs.size());
+       subpass.pColorAttachments = color_refs.data();
+       subpass.pDepthStencilAttachment = has_depth ? &depth_ref : nullptr;
+        
+       // 子通道依赖
+       VkSubpassDependency dependency = {};
+       dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+       dependency.dstSubpass = 0;
+       dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | 
+                                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+       dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | 
+                                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+       dependency.srcAccessMask = 0;
+       dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | 
+                                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+       
+       // 创建渲染通道
+       VkRenderPassCreateInfo render_pass_info = {};
+       render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+       render_pass_info.attachmentCount = static_cast<uint32_t>(attachment_descs.size());
+       render_pass_info.pAttachments = attachment_descs.data();
+       render_pass_info.subpassCount = 1;
+       render_pass_info.pSubpasses = &subpass;
+       render_pass_info.dependencyCount = 1;
+       render_pass_info.pDependencies = &dependency;
+    
+       VkRenderPass render_pass;
+       if (VKSCR(CreateRenderPass)(device, &render_pass_info, nullptr, &render_pass) != VK_SUCCESS) {
+           return VK_NULL_HANDLE;
+       }
+    
+        // 现在创建帧缓冲区
+       VkFramebufferCreateInfo framebuffer_info = {};
+       framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+       framebuffer_info.renderPass = render_pass;
+       framebuffer_info.attachmentCount = static_cast<uint32_t>(attachments.size());
+       framebuffer_info.pAttachments = attachments.data();
+       framebuffer_info.width = width;
+       framebuffer_info.height = height;
+       framebuffer_info.layers = layers;
+    
+       VkFramebuffer framebuffer;
+       VkResult result = VKSCR(CreateFramebuffer)(device, &framebuffer_info, nullptr, &framebuffer);
+    
+       // 清理临时渲染通道
+       VKSCR(DestroyRenderPass)(device, render_pass, nullptr);
+    
+       return (result == VK_SUCCESS) ? framebuffer : VK_NULL_HANDLE;
     }
 };
+
+
+// 现在实现三个辅助函数
+VkDevice get_command_buffer_device(VkCommandBuffer commandBuffer) {
+    VkDevice device = ZinkDeviceManager::get().get_device_from_command_buffer(commandBuffer);
+    
+    // 如果无法从映射中获取，尝试使用回退方案
+    if (device == VK_NULL_HANDLE) {
+        // 在实际实现中，可能需要查询命令缓冲区的内部状态
+        // 这里使用一个简单的回退：返回第一个可用的设备
+        // 注意：这仅适用于单设备应用程序
+        static VkDevice fallback_device = VK_NULL_HANDLE;
+        return fallback_device;
+    }
+    
+    return device;
+}
+
+VkFormat get_image_view_format(VkImageView imageView) {
+    VkImage image = ZinkDeviceManager::get().get_image_from_image_view(imageView);
+    if (image == VK_NULL_HANDLE) {
+        return VK_FORMAT_UNDEFINED;
+    }
+    
+    // 获取图像创建信息
+    VkImageCreateInfo imageInfo = ZinkDeviceManager::get().get_image_info(image);
+    return imageInfo.format;
+}
+
+void get_image_view_size(VkImageView imageView, uint32_t* width, uint32_t* height, uint32_t* layers) {
+    VkImage image = ZinkDeviceManager::get().get_image_from_image_view(imageView);
+    if (image == VK_NULL_HANDLE) {
+        if (width) *width = 0;
+        if (height) *height = 0;
+        if (layers) *layers = 0;
+        return;
+    }
+    
+    // 获取图像创建信息
+    VkImageCreateInfo imageInfo = ZinkDeviceManager::get().get_image_info(image);
+    
+    if (width) *width = imageInfo.extent.width;
+    if (height) *height = imageInfo.extent.height;
+    
+    // 对于层数，需要考虑数组层数
+    if (layers) {
+        *layers = imageInfo.arrayLayers;
+        
+        // 如果图像类型是3D，则使用深度作为层数
+        if (imageInfo.imageType == VK_IMAGE_TYPE_3D) {
+            *layers = imageInfo.extent.depth;
+        }
+    }
+}
+
+// 拦截命令池创建函数
+VkResult zink_simulate_vkCreateCommandPool(
+    VkDevice device,
+    const VkCommandPoolCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkCommandPool* pCommandPool) {
+    
+    VkResult result = VKSCR(CreateCommandPool)(device, pCreateInfo, pAllocator, pCommandPool);
+    if (result == VK_SUCCESS) {
+        ZinkDeviceManager::get().register_command_pool(*pCommandPool, device);
+    }
+    return result;
+}
+
+void zink_simulate_vkDestroyCommandPool(
+    VkDevice device,
+    VkCommandPool commandPool,
+    const VkAllocationCallbacks* pAllocator) {
+    
+    ZinkDeviceManager::get().unregister_command_pool(commandPool);
+    VKSCR(DestroyCommandPool)(device, commandPool, pAllocator);
+}
+
+// 拦截命令缓冲区分配函数
+VkResult zink_simulate_vkAllocateCommandBuffers(
+    VkDevice device,
+    const VkCommandBufferAllocateInfo* pAllocateInfo,
+    VkCommandBuffer* pCommandBuffers) {
+    
+    VkResult result = VKSCR(AllocateCommandBuffers)(device, pAllocateInfo, pCommandBuffers);
+    if (result == VK_SUCCESS) {
+        for (uint32_t i = 0; i < pAllocateInfo->commandBufferCount; ++i) {
+            ZinkDeviceManager::get().register_command_buffer(pCommandBuffers[i], pAllocateInfo->commandPool);
+        }
+    }
+    return result;
+}
+
+void zink_simulate_vkFreeCommandBuffers(
+    VkDevice device,
+    VkCommandPool commandPool,
+    uint32_t commandBufferCount,
+    const VkCommandBuffer* pCommandBuffers) {
+    
+    for (uint32_t i = 0; i < commandBufferCount; ++i) {
+        ZinkDeviceManager::get().unregister_command_buffer(pCommandBuffers[i]);
+    }
+    VKSCR(FreeCommandBuffers)(device, commandPool, commandBufferCount, pCommandBuffers);
+}
+
+// 拦截图像创建函数
+VkResult zink_simulate_vkCreateImage(
+    VkDevice device,
+    const VkImageCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkImage* pImage) {
+    
+    VkResult result = VKSCR(CreateImage)(device, pCreateInfo, pAllocator, pImage);
+    if (result == VK_SUCCESS) {
+        ZinkDeviceManager::get().register_image_info(*pImage, *pCreateInfo);
+    }
+    return result;
+}
+
+void zink_simulate_vkDestroyImage(
+    VkDevice device,
+    VkImage image,
+    const VkAllocationCallbacks* pAllocator) {
+    
+    ZinkDeviceManager::get().unregister_image_info(image);
+    VKSCR(DestroyImage)(device, image, pAllocator);
+}
+
+// 拦截图像视图创建函数
+VkResult zink_simulate_vkCreateImageView(
+    VkDevice device,
+    const VkImageViewCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkImageView* pImageView) {
+    
+    VkResult result = VKSCR(CreateImageView)(device, pCreateInfo, pAllocator, pImageView);
+    if (result == VK_SUCCESS) {
+        ZinkDeviceManager::get().register_image_view(*pImageView, pCreateInfo->image);
+    }
+    return result;
+}
+
+void zink_simulate_vkDestroyImageView(
+    VkDevice device,
+    VkImageView imageView,
+    const VkAllocationCallbacks* pAllocator) {
+    
+    ZinkDeviceManager::get().unregister_image_view(imageView);
+    VKSCR(DestroyImageView)(device, imageView, pAllocator);
+}
+
+// 模拟函数实现
+VkResult zink_simulate_vkCreateSemaphore(
+    VkDevice device,
+    const VkSemaphoreCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkSemaphore* pSemaphore) {
+    
+    // 首先创建真正的二进制信号量
+    VkResult result = VKSCR(CreateSemaphore)(device, pCreateInfo, pAllocator, pSemaphore);
+    if (result != VK_SUCCESS) {
+        return result;
+    }
+    
+    // 解析时间线信号量特定的创建信息
+    uint64_t initial_value = 0;
+    const VkSemaphoreTypeCreateInfo* type_info = nullptr;
+    
+    // 遍历pNext链查找VkSemaphoreTypeCreateInfo
+    const void* pNext = pCreateInfo->pNext;
+    while (pNext) {
+        VkStructureType sType = *reinterpret_cast<const VkStructureType*>(pNext);
+        if (sType == VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO) {
+            type_info = reinterpret_cast<const VkSemaphoreTypeCreateInfo*>(pNext);
+            break;
+        }
+        pNext = reinterpret_cast<const VkBaseInStructure*>(pNext)->pNext;
+    }
+    
+    if (type_info && type_info->semaphoreType == VK_SEMAPHORE_TYPE_TIMELINE) {
+        initial_value = type_info->initialValue;
+    }
+    
+    // 注册到我们的模拟管理器
+    ZinkTimelineSemaphoreManager::getInstance()->registerSemaphore(*pSemaphore, initial_value);
+    
+    return VK_SUCCESS;
+}
+
+void zink_simulate_vkDestroySemaphore(
+    VkDevice device,
+    VkSemaphore semaphore,
+    const VkAllocationCallbacks* pAllocator) {
+    
+    // 从模拟管理器中注销
+    ZinkTimelineSemaphoreManager::getInstance()->unregisterSemaphore(semaphore);
+    
+    // 销毁真正的信号量
+    VKSCR(DestroySemaphore)(device, semaphore, pAllocator);
+}
+
+VkResult zink_simulate_vkGetSemaphoreCounterValue(
+    VkDevice device, 
+    VkSemaphore semaphore, 
+    uint64_t* pValue) {
+    
+    auto state = ZinkTimelineSemaphoreManager::getInstance()->getSemaphoreState(semaphore);
+    if (!state) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    
+    std::lock_guard<std::mutex> lock(state->mutex);
+    *pValue = state->current_value;
+    
+    return VK_SUCCESS;
+}
+
+VkResult zink_simulate_vkWaitSemaphores(
+    VkDevice device,
+    const VkSemaphoreWaitInfo* pWaitInfo,
+    uint64_t timeout) {
+    
+    if (!pWaitInfo || pWaitInfo->semaphoreCount == 0) {
+        return VK_SUCCESS;
+    }
+    
+    auto start_time = std::chrono::steady_clock::now();
+    
+    for (uint32_t i = 0; i < pWaitInfo->semaphoreCount; ++i) {
+        VkSemaphore semaphore = pWaitInfo->pSemaphores[i];
+        uint64_t target_value = pWaitInfo->pValues[i];
+        
+        auto state = ZinkTimelineSemaphoreManager::getInstance()->getSemaphoreState(semaphore);
+        if (!state) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        
+        std::unique_lock<std::mutex> lock(state->mutex);
+        
+        // 检查是否已经达到目标值
+        if (state->current_value >= target_value) {
+            continue;
+        }
+        
+        // 注册等待
+        state->pending_waits.push_back(target_value);
+        
+        // 等待条件变量
+        bool wait_success = false;
+        if (timeout == UINT64_MAX) {
+            // 无限等待
+            state->cv.wait(lock, [state, target_value] {
+                return state->current_value >= target_value;
+            });
+            wait_success = true;
+        } else {
+            // 有限时间等待
+            auto timeout_duration = std::chrono::nanoseconds(timeout);
+            wait_success = state->cv.wait_for(lock, timeout_duration, [state, target_value] {
+                return state->current_value >= target_value;
+            });
+        }
+        
+        // 移除等待注册
+        auto it = std::find(state->pending_waits.begin(), state->pending_waits.end(), target_value);
+        if (it != state->pending_waits.end()) {
+            state->pending_waits.erase(it);
+        }
+        
+        if (!wait_success) {
+            return VK_TIMEOUT;
+        }
+        
+        // 检查是否超时
+        if (timeout != UINT64_MAX) {
+            auto current_time = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(current_time - start_time).count();
+            if (elapsed > timeout) {
+                return VK_TIMEOUT;
+            }
+        }
+    }
+    
+    return VK_SUCCESS;
+}
+
+VkResult zink_simulate_vkSignalSemaphore(
+    VkDevice device,
+    const VkSemaphoreSignalInfo* pSignalInfo) {
+    
+    if (!pSignalInfo) {
+        return VK_ERROR_VALIDATION_FAILED_EXT;
+    }
+    
+    auto state = ZinkTimelineSemaphoreManager::getInstance()->getSemaphoreState(pSignalInfo->semaphore);
+    if (!state) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        
+        // 时间线信号量值必须单调递增
+        if (pSignalInfo->value <= state->current_value) {
+            return VK_ERROR_VALIDATION_FAILED_EXT;
+        }
+        
+        state->current_value = pSignalInfo->value;
+        state->signaled_value = pSignalInfo->value;
+    }
+    
+    // 通知所有等待的线程
+    state->cv.notify_all();
+    
+    return VK_SUCCESS;
+}
 
 // VK_KHR_dynamic_rendering 模拟实现
 void ZINK_SIMULATE_FUNC(vkCmdBeginRendering)(VkCommandBuffer commandBuffer, 
@@ -908,114 +907,6 @@ void ZINK_SIMULATE_FUNC(vkCmdEndRendering)(VkCommandBuffer commandBuffer) {
     zink_simulate_context::get().remove_rendering_state(commandBuffer);
 }
 
-// 增强的图形管线创建，支持动态渲染状态
-VkResult ZINK_SIMULATE_FUNC(vkCreateGraphicsPipelines)(VkDevice device, 
-                                                      VkPipelineCache pipelineCache,
-                                                      uint32_t createInfoCount,
-                                                      const VkGraphicsPipelineCreateInfo* pCreateInfos,
-                                                      const VkAllocationCallbacks* pAllocator,
-                                                      VkPipeline* pPipelines) {
-    
-    std::vector<VkGraphicsPipelineCreateInfo> modifiedCreateInfos;
-    std::vector<std::vector<VkPipelineColorBlendAttachmentState>> blendAttachmentStates;
-    
-    for (uint32_t i = 0; i < createInfoCount; ++i) {
-        const VkGraphicsPipelineCreateInfo* baseInfo = &pCreateInfos[i];
-        VkGraphicsPipelineCreateInfo modifiedInfo = *baseInfo;
-        
-        // 处理动态渲染特定的 pNext 链项目
-        const VkPipelineRenderingCreateInfo* renderingInfo = nullptr;
-        std::vector<const void*> preservedPNexts;
-        
-        const void* pNext = baseInfo->pNext;
-        while (pNext) {
-            const VkBaseInStructure* baseStruct = static_cast<const VkBaseInStructure*>(pNext);
-            if (baseStruct->sType == VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO) {
-                renderingInfo = static_cast<const VkPipelineRenderingCreateInfo*>(pNext);
-            } else {
-                preservedPNexts.push_back(pNext);
-            }
-            pNext = baseStruct->pNext;
-        }
-        
-        // 重建 pNext 链（移除动态渲染特定结构）
-        if (!preservedPNexts.empty()) {
-            // 简化处理：只保留第一个 pNext
-            modifiedInfo.pNext = preservedPNexts[0];
-        } else {
-            modifiedInfo.pNext = nullptr;
-        }
-        
-        // 如果存在动态渲染信息，确保渲染通道兼容
-        if (renderingInfo) {
-            // 构建渲染通道状态
-            zink_pipeline_rendering_state pipelineState;
-            pipelineState.viewMask = renderingInfo->viewMask;
-            pipelineState.colorAttachmentFormats.assign(renderingInfo->pColorAttachmentFormats,
-                                                       renderingInfo->pColorAttachmentFormats + renderingInfo->colorAttachmentCount);
-            pipelineState.depthAttachmentFormat = renderingInfo->depthAttachmentFormat;
-            pipelineState.stencilAttachmentFormat = renderingInfo->stencilAttachmentFormat;
-            
-            // 获取或创建兼容的渲染通道
-            VkRenderPass renderPass = zink_simulate_context::get().get_cached_render_pass(device, pipelineState);
-            if (renderPass != VK_NULL_HANDLE) {
-                modifiedInfo.renderPass = renderPass;
-            }
-            
-            // 确保混合状态附件数量匹配
-            if (modifiedInfo.pColorBlendState && 
-                modifiedInfo.pColorBlendState->attachmentCount != renderingInfo->colorAttachmentCount) {
-                
-                VkPipelineColorBlendStateCreateInfo newBlendState = *modifiedInfo.pColorBlendState;
-                std::vector<VkPipelineColorBlendAttachmentState> newAttachments;
-                
-                if (renderingInfo->colorAttachmentCount > 0) {
-                    // 复制现有的混合状态或使用默认值
-                    if (newBlendState.pAttachments && newBlendState.attachmentCount > 0) {
-                        for (uint32_t j = 0; j < renderingInfo->colorAttachmentCount; ++j) {
-                            if (j < newBlendState.attachmentCount) {
-                                newAttachments.push_back(newBlendState.pAttachments[j]);
-                            } else {
-                                // 使用默认混合状态
-                                VkPipelineColorBlendAttachmentState defaultAttachment = {};
-                                defaultAttachment.blendEnable = VK_FALSE;
-                                defaultAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | 
-                                                                  VK_COLOR_COMPONENT_G_BIT | 
-                                                                  VK_COLOR_COMPONENT_B_BIT | 
-                                                                  VK_COLOR_COMPONENT_A_BIT;
-                                newAttachments.push_back(defaultAttachment);
-                            }
-                        }
-                    } else {
-                        // 创建默认混合状态
-                        newAttachments.resize(renderingInfo->colorAttachmentCount);
-                        for (auto& attachment : newAttachments) {
-                            attachment.blendEnable = VK_FALSE;
-                            attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | 
-                                                       VK_COLOR_COMPONENT_G_BIT | 
-                                                       VK_COLOR_COMPONENT_B_BIT | 
-                                                       VK_COLOR_COMPONENT_A_BIT;
-                        }
-                    }
-                }
-                
-                blendAttachmentStates.push_back(newAttachments);
-                newBlendState.attachmentCount = static_cast<uint32_t>(newAttachments.size());
-                newBlendState.pAttachments = blendAttachmentStates.back().data();
-                
-                // 注意：这里需要修改 modifiedInfo.pColorBlendState 指向新的混合状态
-                // 由于结构体复制，这需要更复杂的处理
-            }
-        }
-        
-        modifiedCreateInfos.push_back(modifiedInfo);
-    }
-    
-    // 调用核心的管线创建函数
-    return VKSCR(CreateGraphicsPipelines)(device, pipelineCache, createInfoCount, 
-                                   modifiedCreateInfos.data(), pAllocator, pPipelines);
-}
-
 // 设备清理函数
 void ZINK_SIMULATE_FUNC(vkDestroyDevice)(VkDevice device, const VkAllocationCallbacks* pAllocator) {
     zink_simulate_context::get().cleanup_device(device);
@@ -1106,4 +997,428 @@ void ZINK_SIMULATE_FUNC(vkCmdPipelineBarrier2)(
             static_cast<uint32_t>(imageBarriers.size()), imageBarriers.data()
         );
     }
+}
+
+// 完善 zink_simulate_QueueSubmitWithTimeline 函数
+VkResult zink_simulate_QueueSubmitWithTimeline(
+    VkQueue queue,
+    uint32_t submitCount,
+    const VkSubmitInfo* pSubmits,
+    VkFence fence) {
+    
+    std::vector<VkSubmitInfo> modified_submits;
+    std::vector<std::vector<VkSemaphore>> binary_wait_semaphores_storage;
+    std::vector<std::vector<VkPipelineStageFlags>> binary_wait_stages_storage;
+    std::vector<std::vector<VkSemaphore>> binary_signal_semaphores_storage;
+    
+    // 二进制信号量池管理
+    static std::mutex binary_semaphore_pool_mutex;
+    static std::unordered_map<VkDevice, std::vector<VkSemaphore>> binary_semaphore_pool;
+    
+    auto get_or_create_binary_semaphore = [](VkDevice device) -> VkSemaphore {
+        std::lock_guard<std::mutex> lock(binary_semaphore_pool_mutex);
+        
+        auto& pool = binary_semaphore_pool[device];
+        if (!pool.empty()) {
+            VkSemaphore semaphore = pool.back();
+            pool.pop_back();
+            return semaphore;
+        }
+        
+        // 创建新的二进制信号量
+        VkSemaphoreCreateInfo semaphoreInfo = {};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        
+        VkSemaphore semaphore;
+        if (VKSCR(CreateSemaphore)(device, &semaphoreInfo, nullptr, &semaphore) == VK_SUCCESS) {
+            return semaphore;
+        }
+        
+        return VK_NULL_HANDLE;
+    };
+    
+    auto return_binary_semaphore = [](VkDevice device, VkSemaphore semaphore) {
+        std::lock_guard<std::mutex> lock(binary_semaphore_pool_mutex);
+        binary_semaphore_pool[device].push_back(semaphore);
+    };
+    
+    for (uint32_t i = 0; i < submitCount; ++i) {
+        const VkSubmitInfo& submit = pSubmits[i];
+        VkSubmitInfo modified_submit = submit;
+        
+        // 查找时间线信号量信息
+        const VkTimelineSemaphoreSubmitInfo* timeline_info = nullptr;
+        std::vector<const void*> preserved_pnexts;
+        
+        const void* pNext = submit.pNext;
+        while (pNext) {
+            VkStructureType sType = *reinterpret_cast<const VkStructureType*>(pNext);
+            if (sType == VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO) {
+                timeline_info = reinterpret_cast<const VkTimelineSemaphoreSubmitInfo*>(pNext);
+            } else {
+                preserved_pnexts.push_back(pNext);
+            }
+            pNext = reinterpret_cast<const VkBaseInStructure*>(pNext)->pNext;
+        }
+        
+        // 重建 pNext 链（移除时间线特定结构）
+        if (!preserved_pnexts.empty()) {
+            // 简化处理：只保留第一个非时间线结构
+            modified_submit.pNext = preserved_pnexts[0];
+        } else {
+            modified_submit.pNext = nullptr;
+        }
+        
+        // 处理时间线等待信号量
+        if (timeline_info && timeline_info->waitSemaphoreValueCount > 0) {
+            std::vector<VkSemaphore> binary_waits;
+            std::vector<VkPipelineStageFlags> binary_wait_stages;
+            
+            VkDevice device = VK_NULL_HANDLE;
+            
+            for (uint32_t j = 0; j < submit.waitSemaphoreCount; ++j) {
+                VkSemaphore semaphore = submit.pWaitSemaphores[j];
+                uint64_t target_value = timeline_info->pWaitSemaphoreValues[j];
+                
+                auto state = ZinkTimelineSemaphoreManager::getInstance()->getSemaphoreState(semaphore);
+                if (state) {
+                    // 如果当前值已经达到目标，则不需要等待
+                    std::lock_guard<std::mutex> lock(state->mutex);
+                    if (state->current_value >= target_value) {
+                        continue;
+                    }
+                    
+                    // 创建二进制信号量来模拟等待
+                    if (device == VK_NULL_HANDLE) {
+                        // 尝试获取设备（简化实现）
+                        device = get_command_buffer_device(submit.pCommandBuffers[0]);
+                    }
+                    
+                    VkSemaphore binary_semaphore = get_or_create_binary_semaphore(device);
+                    if (binary_semaphore != VK_NULL_HANDLE) {
+                        binary_waits.push_back(binary_semaphore);
+                        binary_wait_stages.push_back(submit.pWaitDstStageMask[j]);
+                        
+                        // 安排信号量在时间线达到目标值时发出信号
+                        // 这需要额外的线程或回调机制，这里简化处理
+                        // 在实际实现中，需要更复杂的同步机制
+                    }
+                }
+            }
+            
+            if (!binary_waits.empty()) {
+                modified_submit.waitSemaphoreCount = static_cast<uint32_t>(binary_waits.size());
+                modified_submit.pWaitSemaphores = binary_waits.data();
+                modified_submit.pWaitDstStageMask = binary_wait_stages.data();
+                
+                binary_wait_semaphores_storage.push_back(std::move(binary_waits));
+                binary_wait_stages_storage.push_back(std::move(binary_wait_stages));
+            } else {
+                modified_submit.waitSemaphoreCount = 0;
+                modified_submit.pWaitSemaphores = nullptr;
+                modified_submit.pWaitDstStageMask = nullptr;
+            }
+        }
+        
+        // 处理时间线信号信号量（简化实现）
+        if (timeline_info && timeline_info->signalSemaphoreValueCount > 0) {
+            std::vector<VkSemaphore> binary_signals;
+            
+            for (uint32_t j = 0; j < submit.signalSemaphoreCount; ++j) {
+                VkSemaphore semaphore = submit.pSignalSemaphores[j];
+                uint64_t signal_value = timeline_info->pSignalSemaphoreValues[j];
+                
+                auto state = ZinkTimelineSemaphoreManager::getInstance()->getSemaphoreState(semaphore);
+                if (state) {
+                    // 在实际实现中，这里应该安排一个操作来在队列工作完成后更新时间线信号量
+                    // 简化实现：立即更新（这不正确，但作为占位符）
+                    VkSemaphoreSignalInfo signalInfo = {};
+                    signalInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO;
+                    signalInfo.semaphore = semaphore;
+                    signalInfo.value = signal_value;
+                    zink_simulate_vkSignalSemaphore(VK_NULL_HANDLE, &signalInfo);
+                }
+            }
+            
+            // 清空信号信号量，因为我们已经手动处理了时间线信号
+            modified_submit.signalSemaphoreCount = 0;
+            modified_submit.pSignalSemaphores = nullptr;
+        }
+        
+        modified_submits.push_back(modified_submit);
+    }
+    
+    // 调用真正的队列提交
+    VkResult result = VKSCR(QueueSubmit)(queue, modified_submits.size(), modified_submits.data(), fence);
+    
+    // 清理临时二进制信号量（在实际实现中，应该在信号量真正被使用后清理）
+    // 这里简化处理，立即清理
+    for (auto& binary_semaphores : binary_wait_semaphores_storage) {
+        for (VkSemaphore semaphore : binary_semaphores) {
+            // 在实际实现中，应该等待信号量被使用后再回收
+            // return_binary_semaphore(device, semaphore);
+        }
+    }
+    
+    return result;
+}
+
+// 完善 zink_simulate_vkQueueSubmit2 函数
+VkResult zink_simulate_vkQueueSubmit2(
+    VkQueue queue,
+    uint32_t submitCount,
+    const VkSubmitInfo2* pSubmits,
+    VkFence fence) {
+    
+    std::vector<VkSubmitInfo> legacy_submits;
+    
+    for (uint32_t i = 0; i < submitCount; ++i) {
+        const VkSubmitInfo2& submit2 = pSubmits[i];
+        VkSubmitInfo legacy_submit = {};
+        legacy_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        
+        // 转换命令缓冲区
+        legacy_submit.commandBufferCount = submit2.commandBufferInfoCount;
+        if (submit2.commandBufferInfoCount > 0) {
+            std::vector<VkCommandBuffer> command_buffers(submit2.commandBufferInfoCount);
+            for (uint32_t j = 0; j < submit2.commandBufferInfoCount; ++j) {
+                command_buffers[j] = submit2.pCommandBufferInfos[j].commandBuffer;
+            }
+            legacy_submit.pCommandBuffers = command_buffers.data();
+        }
+        
+        // 转换等待信号量
+        legacy_submit.waitSemaphoreCount = submit2.waitSemaphoreInfoCount;
+        if (submit2.waitSemaphoreInfoCount > 0) {
+            std::vector<VkSemaphore> wait_semaphores(submit2.waitSemaphoreInfoCount);
+            std::vector<VkPipelineStageFlags> wait_stages(submit2.waitSemaphoreInfoCount);
+            
+            for (uint32_t j = 0; j < submit2.waitSemaphoreInfoCount; ++j) {
+                const VkSemaphoreSubmitInfo& wait_info = submit2.pWaitSemaphoreInfos[j];
+                wait_semaphores[j] = wait_info.semaphore;
+                wait_stages[j] = static_cast<VkPipelineStageFlags>(wait_info.stageMask);
+            }
+            
+            legacy_submit.pWaitSemaphores = wait_semaphores.data();
+            legacy_submit.pWaitDstStageMask = wait_stages.data();
+        }
+        
+        // 转换信号信号量
+        legacy_submit.signalSemaphoreCount = submit2.signalSemaphoreInfoCount;
+        if (submit2.signalSemaphoreInfoCount > 0) {
+            std::vector<VkSemaphore> signal_semaphores(submit2.signalSemaphoreInfoCount);
+            for (uint32_t j = 0; j < submit2.signalSemaphoreInfoCount; ++j) {
+                signal_semaphores[j] = submit2.pSignalSemaphoreInfos[j].semaphore;
+            }
+            legacy_submit.pSignalSemaphores = signal_semaphores.data();
+        }
+        
+        // 处理时间线信号量信息
+        VkTimelineSemaphoreSubmitInfo timeline_info = {};
+        timeline_info.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+        
+        bool has_timeline_waits = false;
+        bool has_timeline_signals = false;
+        
+        if (submit2.waitSemaphoreInfoCount > 0) {
+            std::vector<uint64_t> wait_values(submit2.waitSemaphoreInfoCount);
+            for (uint32_t j = 0; j < submit2.waitSemaphoreInfoCount; ++j) {
+                wait_values[j] = submit2.pWaitSemaphoreInfos[j].value;
+                if (wait_values[j] > 0) {
+                    has_timeline_waits = true;
+                }
+            }
+            if (has_timeline_waits) {
+                timeline_info.waitSemaphoreValueCount = submit2.waitSemaphoreInfoCount;
+                timeline_info.pWaitSemaphoreValues = wait_values.data();
+            }
+        }
+        
+        if (submit2.signalSemaphoreInfoCount > 0) {
+            std::vector<uint64_t> signal_values(submit2.signalSemaphoreInfoCount);
+            for (uint32_t j = 0; j < submit2.signalSemaphoreInfoCount; ++j) {
+                signal_values[j] = submit2.pSignalSemaphoreInfos[j].value;
+                if (signal_values[j] > 0) {
+                    has_timeline_signals = true;
+                }
+            }
+            if (has_timeline_signals) {
+                timeline_info.signalSemaphoreValueCount = submit2.signalSemaphoreInfoCount;
+                timeline_info.pSignalSemaphoreValues = signal_values.data();
+            }
+        }
+        
+        // 如果有时间线信号量操作，添加时间线信息到 pNext
+        if (has_timeline_waits || has_timeline_signals) {
+            legacy_submit.pNext = &timeline_info;
+        }
+        
+        legacy_submits.push_back(legacy_submit);
+    }
+    
+    return zink_simulate_QueueSubmitWithTimeline(queue, legacy_submits.size(), 
+                                               legacy_submits.data(), fence);
+}
+
+// 完善 vkCreateGraphicsPipelines 函数
+VkResult ZINK_SIMULATE_FUNC(vkCreateGraphicsPipelines)(VkDevice device, 
+                                                      VkPipelineCache pipelineCache,
+                                                      uint32_t createInfoCount,
+                                                      const VkGraphicsPipelineCreateInfo* pCreateInfos,
+                                                      const VkAllocationCallbacks* pAllocator,
+                                                      VkPipeline* pPipelines) {
+    
+    std::vector<VkGraphicsPipelineCreateInfo> modifiedCreateInfos;
+    std::vector<std::vector<VkPipelineColorBlendAttachmentState>> blendAttachmentStates;
+    std::vector<std::vector<VkDynamicState>> dynamicStates;
+    std::vector<VkPipelineVertexInputStateCreateInfo> vertexInputStates;
+    std::vector<VkPipelineRenderingCreateInfo> renderingCreateInfos;
+    
+    for (uint32_t i = 0; i < createInfoCount; ++i) {
+        const VkGraphicsPipelineCreateInfo* baseInfo = &pCreateInfos[i];
+        VkGraphicsPipelineCreateInfo modifiedInfo = *baseInfo;
+        
+        // 处理动态渲染特定的 pNext 链项目
+        const VkPipelineRenderingCreateInfo* renderingInfo = nullptr;
+        std::vector<const void*> preservedPNexts;
+        
+        const void* pNext = baseInfo->pNext;
+        while (pNext) {
+            const VkBaseInStructure* baseStruct = static_cast<const VkBaseInStructure*>(pNext);
+            if (baseStruct->sType == VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO) {
+                renderingInfo = static_cast<const VkPipelineRenderingCreateInfo*>(pNext);
+            } else {
+                preservedPNexts.push_back(pNext);
+            }
+            pNext = baseStruct->pNext;
+        }
+        
+        // 重建 pNext 链（移除动态渲染特定结构）
+        if (!preservedPNexts.empty()) {
+            modifiedInfo.pNext = preservedPNexts[0];
+        } else {
+            modifiedInfo.pNext = nullptr;
+        }
+        
+        // 如果存在动态渲染信息，确保渲染通道兼容
+        if (renderingInfo) {
+            // 构建渲染通道状态
+            zink_pipeline_rendering_state pipelineState;
+            pipelineState.viewMask = renderingInfo->viewMask;
+            pipelineState.colorAttachmentFormats.assign(
+                renderingInfo->pColorAttachmentFormats,
+                renderingInfo->pColorAttachmentFormats + renderingInfo->colorAttachmentCount);
+            pipelineState.depthAttachmentFormat = renderingInfo->depthAttachmentFormat;
+            pipelineState.stencilAttachmentFormat = renderingInfo->stencilAttachmentFormat;
+            
+            // 获取或创建兼容的渲染通道
+            VkRenderPass renderPass = zink_simulate_context::get().get_cached_render_pass(device, pipelineState);
+            if (renderPass != VK_NULL_HANDLE) {
+                modifiedInfo.renderPass = renderPass;
+                
+                // 确保子通道索引正确
+                if (modifiedInfo.subpass != 0) {
+                    modifiedInfo.subpass = 0; // 动态渲染通常对应第一个子通道
+                }
+            }
+            
+            // 确保混合状态附件数量匹配
+            if (modifiedInfo.pColorBlendState && 
+                renderingInfo->colorAttachmentCount > 0) {
+                
+                VkPipelineColorBlendStateCreateInfo newBlendState = *modifiedInfo.pColorBlendState;
+                std::vector<VkPipelineColorBlendAttachmentState> newAttachments;
+                
+                // 复制现有的混合状态或使用默认值
+                if (newBlendState.pAttachments && newBlendState.attachmentCount > 0) {
+                    // 使用现有的混合状态，如果数量不够则用默认值补充
+                    for (uint32_t j = 0; j < renderingInfo->colorAttachmentCount; ++j) {
+                        if (j < newBlendState.attachmentCount) {
+                            newAttachments.push_back(newBlendState.pAttachments[j]);
+                        } else {
+                            // 使用默认混合状态
+                            VkPipelineColorBlendAttachmentState defaultAttachment = {};
+                            defaultAttachment.blendEnable = VK_FALSE;
+                            defaultAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                            defaultAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+                            defaultAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+                            defaultAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                            defaultAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+                            defaultAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+                            defaultAttachment.colorWriteMask = 
+                                VK_COLOR_COMPONENT_R_BIT | 
+                                VK_COLOR_COMPONENT_G_BIT | 
+                                VK_COLOR_COMPONENT_B_BIT | 
+                                VK_COLOR_COMPONENT_A_BIT;
+                            newAttachments.push_back(defaultAttachment);
+                        }
+                    }
+                } else {
+                    // 创建默认混合状态
+                    newAttachments.resize(renderingInfo->colorAttachmentCount);
+                    for (auto& attachment : newAttachments) {
+                        attachment.blendEnable = VK_FALSE;
+                        attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                        attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+                        attachment.colorBlendOp = VK_BLEND_OP_ADD;
+                        attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                        attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+                        attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+                        attachment.colorWriteMask = 
+                            VK_COLOR_COMPONENT_R_BIT | 
+                            VK_COLOR_COMPONENT_G_BIT | 
+                            VK_COLOR_COMPONENT_B_BIT | 
+                            VK_COLOR_COMPONENT_A_BIT;
+                    }
+                }
+                
+                blendAttachmentStates.push_back(newAttachments);
+                newBlendState.attachmentCount = static_cast<uint32_t>(newAttachments.size());
+                newBlendState.pAttachments = blendAttachmentStates.back().data();
+                
+                // 更新混合状态
+                modifiedInfo.pColorBlendState = &newBlendState;
+            }
+            
+            // 处理顶点输入状态 - 确保与动态渲染兼容
+            if (modifiedInfo.pVertexInputState) {
+                VkPipelineVertexInputStateCreateInfo newVertexInput = *modifiedInfo.pVertexInputState;
+                vertexInputStates.push_back(newVertexInput);
+                modifiedInfo.pVertexInputState = &vertexInputStates.back();
+            }
+            
+            // 添加动态状态支持
+            if (!modifiedInfo.pDynamicState) {
+                std::vector<VkDynamicState> dynStates = {
+                    VK_DYNAMIC_STATE_VIEWPORT,
+                    VK_DYNAMIC_STATE_SCISSOR,
+                    VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+                    VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+                    VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+                    VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+                    VK_DYNAMIC_STATE_STENCIL_OP
+                };
+                
+                dynamicStates.push_back(dynStates);
+                
+                VkPipelineDynamicStateCreateInfo dynamicState = {};
+                dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+                dynamicState.dynamicStateCount = static_cast<uint32_t>(dynStates.size());
+                dynamicState.pDynamicStates = dynamicStates.back().data();
+                
+                // 注意：这里需要将 dynamicState 添加到 preservedPNexts 或直接设置
+                // 简化处理：直接设置到 modifiedInfo
+                modifiedInfo.pDynamicState = &dynamicState;
+            }
+        }
+        
+        modifiedCreateInfos.push_back(modifiedInfo);
+    }
+    
+    // 调用核心的管线创建函数
+    VkResult result = VKSCR(CreateGraphicsPipelines)(
+        device, pipelineCache, createInfoCount, 
+        modifiedCreateInfos.data(), pAllocator, pPipelines);
+    
+    return result;
 }
