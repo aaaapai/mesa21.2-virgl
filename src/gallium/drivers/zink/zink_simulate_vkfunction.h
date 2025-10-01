@@ -77,6 +77,9 @@
 #include <memory>
 #include <cstring>
 
+// 模拟实现宏
+#define ZINK_SIMULATE_FUNC(name) zink_simulate_##name
+
 VkResult zink_simulate_vkCreateSemaphore(
     VkDevice device,
     const VkSemaphoreCreateInfo* pCreateInfo,
