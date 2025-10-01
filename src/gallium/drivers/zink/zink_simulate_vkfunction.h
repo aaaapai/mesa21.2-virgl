@@ -80,6 +80,54 @@
 // 模拟实现宏
 #define ZINK_SIMULATE_FUNC(name) zink_simulate_##name
 
+VkDevice get_command_buffer_device(VkCommandBuffer commandBuffer);
+VkFormat get_image_view_format(VkImageView imageView);
+void get_image_view_size(VkImageView imageView, uint32_t* width, uint32_t* height, uint32_t* layers);
+
+void zink_simulate_vkDestroyImageView(
+    VkDevice device,
+    VkImageView imageView,
+    const VkAllocationCallbacks* pAllocator);
+
+VkResult zink_simulate_vkCreateImageView(
+    VkDevice device,
+    const VkImageViewCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkImageView* pImageView);
+
+void zink_simulate_vkDestroyImage(
+    VkDevice device,
+    VkImage image,
+    const VkAllocationCallbacks* pAllocator);
+
+VkResult zink_simulate_vkCreateImage(
+    VkDevice device,
+    const VkImageCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkImage* pImage);
+
+void zink_simulate_vkFreeCommandBuffers(
+    VkDevice device,
+    VkCommandPool commandPool,
+    uint32_t commandBufferCount,
+    const VkCommandBuffer* pCommandBuffers);
+
+VkResult zink_simulate_vkAllocateCommandBuffers(
+    VkDevice device,
+    const VkCommandBufferAllocateInfo* pAllocateInfo,
+    VkCommandBuffer* pCommandBuffers);
+
+void zink_simulate_vkDestroyCommandPool(
+    VkDevice device,
+    VkCommandPool commandPool,
+    const VkAllocationCallbacks* pAllocator);
+
+VkResult zink_simulate_vkCreateCommandPool(
+    VkDevice device,
+    const VkCommandPoolCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkCommandPool* pCommandPool);
+
 VkResult zink_simulate_vkCreateSemaphore(
     VkDevice device,
     const VkSemaphoreCreateInfo* pCreateInfo,
