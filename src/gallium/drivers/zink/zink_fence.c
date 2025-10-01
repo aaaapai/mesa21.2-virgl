@@ -294,7 +294,7 @@ zink_semaphore_fence_create(struct pipe_screen *pscreen, VkSemaphoreType sema_ty
       .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
       &tci
    };
-   result = VKSCR(CreateSemaphore)(screen->dev, &sci, NULL, &mfence->sem);
+   result = zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &mfence->sem);
    if (result != VK_SUCCESS) {
       mesa_loge("ZINK: vkCreateSemaphore failed (%s)", vk_Result_to_str(result));
       FREE(mfence);
@@ -383,7 +383,7 @@ zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **
 
    *pfence = NULL;
 
-   if (VKSCR(CreateSemaphore)(screen->dev, &sci, NULL, &mfence->sem) != VK_SUCCESS) {
+   if (zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &mfence->sem) != VK_SUCCESS) {
       FREE(mfence);
       return;
    }
