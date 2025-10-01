@@ -12,60 +12,6 @@
 #include "zink_query.h"
 #include "zink_resource.h"
 #include "zink_state.h"
-#include "nir_to_spirv/nir_to_spirv.h" // for SPIRV_VERSION
-
-#include "util/u_debug.h"
-#include "util/u_dl.h"
-#include "util/os_file.h"
-#include "util/u_memory.h"
-#include "util/u_screen.h"
-#include "util/u_string.h"
-#include "util/perf/u_trace.h"
-#include "util/u_transfer_helper.h"
-#include "util/hex.h"
-#include "util/xmlconfig.h"
-
-#include "util/u_cpu_detect.h"
-
-#ifdef HAVE_LIBDRM
-#include <xf86drm.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#ifdef MAJOR_IN_MKDEV
-#include <sys/mkdev.h>
-#endif
-#ifdef MAJOR_IN_SYSMACROS
-#include <sys/sysmacros.h>
-#endif
-#endif
-
-#if DETECT_OS_WINDOWS
-#include <io.h>
-#define VK_LIBNAME "vulkan-1.dll"
-#else
-#include <unistd.h>
-#if DETECT_OS_APPLE
-#define VK_LIBNAME "libvulkan.1.dylib"
-#elif DETECT_OS_ANDROID
-#define VK_LIBNAME "libvulkan.so"
-#else
-#define VK_LIBNAME "libvulkan.so.1"
-#endif
-#endif
-
-#ifdef __APPLE__
-#include "MoltenVK/mvk_vulkan.h"
-// Source of MVK_VERSION
-#include "MoltenVK/mvk_config.h"
-#define VK_NO_PROTOTYPES
-#include "MoltenVK/mvk_deprecated_api.h"
-#include "MoltenVK/mvk_private_api.h"
-#endif /* __APPLE__ */
-
-#ifdef HAVE_LIBDRM
-#include "drm-uapi/dma-buf.h"
-#include <xf86drm.h>
-#endif
 
 // 模拟实现宏
 #define ZINK_SIMULATE_FUNC(name) zink_simulate_##name
