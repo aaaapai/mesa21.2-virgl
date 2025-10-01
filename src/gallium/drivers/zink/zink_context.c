@@ -3275,7 +3275,7 @@ begin_rendering(struct zink_context *ctx, bool check_msaa_expand)
 
    if (has_msrtss)
       ctx->dynamic_fb.info.pNext = ctx->transient_attachments ? &msrtss : NULL;
-   VKCTX(CmdBeginRendering)(ctx->bs->cmdbuf, &ctx->dynamic_fb.info);
+   zink_simulate_vkCmdBeginRendering(ctx->bs->cmdbuf, &ctx->dynamic_fb.info);
    ctx->in_rp = true;
    return clear_buffers;
 }
