@@ -1,3 +1,72 @@
+#include "zink_screen.h"
+
+#include "zink_kopper.h"
+#include "zink_compiler.h"
+#include "zink_context.h"
+#include "zink_descriptors.h"
+#include "zink_fence.h"
+#include "vk_format.h"
+#include "zink_format.h"
+#include "zink_program.h"
+#include "zink_public.h"
+#include "zink_query.h"
+#include "zink_resource.h"
+#include "zink_state.h"
+#include "nir_to_spirv/nir_to_spirv.h" // for SPIRV_VERSION
+
+#include "util/u_debug.h"
+#include "util/u_dl.h"
+#include "util/os_file.h"
+#include "util/u_memory.h"
+#include "util/u_screen.h"
+#include "util/u_string.h"
+#include "util/perf/u_trace.h"
+#include "util/u_transfer_helper.h"
+#include "util/hex.h"
+#include "util/xmlconfig.h"
+
+#include "util/u_cpu_detect.h"
+
+#ifdef HAVE_LIBDRM
+#include <xf86drm.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#ifdef MAJOR_IN_MKDEV
+#include <sys/mkdev.h>
+#endif
+#ifdef MAJOR_IN_SYSMACROS
+#include <sys/sysmacros.h>
+#endif
+#endif
+
+#if DETECT_OS_WINDOWS
+#include <io.h>
+#define VK_LIBNAME "vulkan-1.dll"
+#else
+#include <unistd.h>
+#if DETECT_OS_APPLE
+#define VK_LIBNAME "libvulkan.1.dylib"
+#elif DETECT_OS_ANDROID
+#define VK_LIBNAME "libvulkan.so"
+#else
+#define VK_LIBNAME "libvulkan.so.1"
+#endif
+#endif
+
+#ifdef __APPLE__
+#include "MoltenVK/mvk_vulkan.h"
+// Source of MVK_VERSION
+#include "MoltenVK/mvk_config.h"
+#define VK_NO_PROTOTYPES
+#include "MoltenVK/mvk_deprecated_api.h"
+#include "MoltenVK/mvk_private_api.h"
+#endif /* __APPLE__ */
+
+#ifdef HAVE_LIBDRM
+#include "drm-uapi/dma-buf.h"
+#include <xf86drm.h>
+#endif
+
 #include <vulkan/vulkan.h>
 #include <unordered_map>
 #include <mutex>
@@ -5,6 +74,7 @@
 #include <atomic>
 #include <vector>
 #include <cstdint>
+#include <pthread>
 
 // 模拟时间线信号量的内部状态
 struct ZinkTimelineSemaphore {
@@ -61,7 +131,7 @@ VkResult zink_simulate_vkCreateSemaphore(
     VkSemaphore* pSemaphore) {
     
     // 首先创建真正的二进制信号量
-    VkResult result = vkCreateSemaphore(device, pCreateInfo, pAllocator, pSemaphore);
+    VkResult result = VKSCR(CreateSemaphore)(device, pCreateInfo, pAllocator, pSemaphore);
     if (result != VK_SUCCESS) {
         return result;
     }
@@ -100,7 +170,7 @@ void zink_simulate_vkDestroySemaphore(
     ZinkTimelineSemaphoreManager::getInstance()->unregisterSemaphore(semaphore);
     
     // 销毁真正的信号量
-    vkDestroySemaphore(device, semaphore, pAllocator);
+    VKSCR(DestroySemaphore)(device, semaphore, pAllocator);
 }
 
 VkResult zink_simulate_vkGetSemaphoreCounterValue(
