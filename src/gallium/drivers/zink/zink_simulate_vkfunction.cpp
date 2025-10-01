@@ -47,6 +47,251 @@ public:
     }
 };
 
+// 在文件开头添加这些全局管理类
+class ZinkDeviceManager {
+private:
+    std::mutex device_mutex_;
+    std::unordered_map<VkCommandPool, VkDevice> command_pool_to_device_;
+    std::unordered_map<VkCommandBuffer, VkCommandPool> command_buffer_to_pool_;
+    std::unordered_map<VkImageView, VkImage> image_view_to_image_;
+    std::unordered_map<VkImage, VkImageCreateInfo> image_info_cache_;
+    
+public:
+    static ZinkDeviceManager& get() {
+        static ZinkDeviceManager instance;
+        return instance;
+    }
+    
+    // 命令池和设备映射
+    void register_command_pool(VkCommandPool commandPool, VkDevice device) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        command_pool_to_device_[commandPool] = device;
+    }
+    
+    void unregister_command_pool(VkCommandPool commandPool) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        command_pool_to_device_.erase(commandPool);
+    }
+    
+    void register_command_buffer(VkCommandBuffer commandBuffer, VkCommandPool commandPool) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        command_buffer_to_pool_[commandBuffer] = commandPool;
+    }
+    
+    void unregister_command_buffer(VkCommandBuffer commandBuffer) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        command_buffer_to_pool_.erase(commandBuffer);
+    }
+    
+    // 图像视图和图像映射
+    void register_image_view(VkImageView imageView, VkImage image) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        image_view_to_image_[imageView] = image;
+    }
+    
+    void unregister_image_view(VkImageView imageView) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        image_view_to_image_.erase(imageView);
+    }
+    
+    void register_image_info(VkImage image, const VkImageCreateInfo& createInfo) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        image_info_cache_[image] = createInfo;
+    }
+    
+    void unregister_image_info(VkImage image) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        image_info_cache_.erase(image);
+    }
+    
+    // 查询函数
+    VkDevice get_device_from_command_buffer(VkCommandBuffer commandBuffer) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        
+        auto pool_it = command_buffer_to_pool_.find(commandBuffer);
+        if (pool_it == command_buffer_to_pool_.end()) {
+            return VK_NULL_HANDLE;
+        }
+        
+        auto device_it = command_pool_to_device_.find(pool_it->second);
+        if (device_it == command_pool_to_device_.end()) {
+            return VK_NULL_HANDLE;
+        }
+        
+        return device_it->second;
+    }
+    
+    VkImage get_image_from_image_view(VkImageView imageView) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        auto it = image_view_to_image_.find(imageView);
+        return it != image_view_to_image_.end() ? it->second : VK_NULL_HANDLE;
+    }
+    
+    VkImageCreateInfo get_image_info(VkImage image) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        auto it = image_info_cache_.find(image);
+        if (it != image_info_cache_.end()) {
+            return it->second;
+        }
+        
+        // 返回默认值
+        VkImageCreateInfo defaultInfo = {};
+        defaultInfo.extent = {1, 1, 1};
+        defaultInfo.arrayLayers = 1;
+        defaultInfo.mipLevels = 1;
+        return defaultInfo;
+    }
+};
+
+// 拦截命令池创建函数
+VkResult zink_simulate_vkCreateCommandPool(
+    VkDevice device,
+    const VkCommandPoolCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkCommandPool* pCommandPool) {
+    
+    VkResult result = VKSCR(CreateCommandPool)(device, pCreateInfo, pAllocator, pCommandPool);
+    if (result == VK_SUCCESS) {
+        ZinkDeviceManager::get().register_command_pool(*pCommandPool, device);
+    }
+    return result;
+}
+
+void zink_simulate_vkDestroyCommandPool(
+    VkDevice device,
+    VkCommandPool commandPool,
+    const VkAllocationCallbacks* pAllocator) {
+    
+    ZinkDeviceManager::get().unregister_command_pool(commandPool);
+    VKSCR(DestroyCommandPool)(device, commandPool, pAllocator);
+}
+
+// 拦截命令缓冲区分配函数
+VkResult zink_simulate_vkAllocateCommandBuffers(
+    VkDevice device,
+    const VkCommandBufferAllocateInfo* pAllocateInfo,
+    VkCommandBuffer* pCommandBuffers) {
+    
+    VkResult result = VKSCR(AllocateCommandBuffers)(device, pAllocateInfo, pCommandBuffers);
+    if (result == VK_SUCCESS) {
+        for (uint32_t i = 0; i < pAllocateInfo->commandBufferCount; ++i) {
+            ZinkDeviceManager::get().register_command_buffer(pCommandBuffers[i], pAllocateInfo->commandPool);
+        }
+    }
+    return result;
+}
+
+void zink_simulate_vkFreeCommandBuffers(
+    VkDevice device,
+    VkCommandPool commandPool,
+    uint32_t commandBufferCount,
+    const VkCommandBuffer* pCommandBuffers) {
+    
+    for (uint32_t i = 0; i < commandBufferCount; ++i) {
+        ZinkDeviceManager::get().unregister_command_buffer(pCommandBuffers[i]);
+    }
+    VKSCR(FreeCommandBuffers)(device, commandPool, commandBufferCount, pCommandBuffers);
+}
+
+// 拦截图像创建函数
+VkResult zink_simulate_vkCreateImage(
+    VkDevice device,
+    const VkImageCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkImage* pImage) {
+    
+    VkResult result = VKSCR(CreateImage)(device, pCreateInfo, pAllocator, pImage);
+    if (result == VK_SUCCESS) {
+        ZinkDeviceManager::get().register_image_info(*pImage, *pCreateInfo);
+    }
+    return result;
+}
+
+void zink_simulate_vkDestroyImage(
+    VkDevice device,
+    VkImage image,
+    const VkAllocationCallbacks* pAllocator) {
+    
+    ZinkDeviceManager::get().unregister_image_info(image);
+    VKSCR(DestroyImage)(device, image, pAllocator);
+}
+
+// 拦截图像视图创建函数
+VkResult zink_simulate_vkCreateImageView(
+    VkDevice device,
+    const VkImageViewCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkImageView* pImageView) {
+    
+    VkResult result = VKSCR(CreateImageView)(device, pCreateInfo, pAllocator, pImageView);
+    if (result == VK_SUCCESS) {
+        ZinkDeviceManager::get().register_image_view(*pImageView, pCreateInfo->image);
+    }
+    return result;
+}
+
+void zink_simulate_vkDestroyImageView(
+    VkDevice device,
+    VkImageView imageView,
+    const VkAllocationCallbacks* pAllocator) {
+    
+    ZinkDeviceManager::get().unregister_image_view(imageView);
+    VKSCR(DestroyImageView)(device, imageView, pAllocator);
+}
+
+// 现在实现三个辅助函数
+VkDevice get_command_buffer_device(VkCommandBuffer commandBuffer) {
+    VkDevice device = ZinkDeviceManager::get().get_device_from_command_buffer(commandBuffer);
+    
+    // 如果无法从映射中获取，尝试使用回退方案
+    if (device == VK_NULL_HANDLE) {
+        // 在实际实现中，可能需要查询命令缓冲区的内部状态
+        // 这里使用一个简单的回退：返回第一个可用的设备
+        // 注意：这仅适用于单设备应用程序
+        static VkDevice fallback_device = VK_NULL_HANDLE;
+        return fallback_device;
+    }
+    
+    return device;
+}
+
+VkFormat get_image_view_format(VkImageView imageView) {
+    VkImage image = ZinkDeviceManager::get().get_image_from_image_view(imageView);
+    if (image == VK_NULL_HANDLE) {
+        return VK_FORMAT_UNDEFINED;
+    }
+    
+    // 获取图像创建信息
+    VkImageCreateInfo imageInfo = ZinkDeviceManager::get().get_image_info(image);
+    return imageInfo.format;
+}
+
+void get_image_view_size(VkImageView imageView, uint32_t* width, uint32_t* height, uint32_t* layers) {
+    VkImage image = ZinkDeviceManager::get().get_image_from_image_view(imageView);
+    if (image == VK_NULL_HANDLE) {
+        if (width) *width = 0;
+        if (height) *height = 0;
+        if (layers) *layers = 0;
+        return;
+    }
+    
+    // 获取图像创建信息
+    VkImageCreateInfo imageInfo = ZinkDeviceManager::get().get_image_info(image);
+    
+    if (width) *width = imageInfo.extent.width;
+    if (height) *height = imageInfo.extent.height;
+    
+    // 对于层数，需要考虑数组层数
+    if (layers) {
+        *layers = imageInfo.arrayLayers;
+        
+        // 如果图像类型是3D，则使用深度作为层数
+        if (imageInfo.imageType == VK_IMAGE_TYPE_3D) {
+            *layers = imageInfo.extent.depth;
+        }
+    }
+}
+
 // 模拟函数实现
 VkResult zink_simulate_vkCreateSemaphore(
     VkDevice device,
@@ -769,28 +1014,6 @@ VkResult ZINK_SIMULATE_FUNC(vkCreateGraphicsPipelines)(VkDevice device,
     // 调用核心的管线创建函数
     return VKSCR(CreateGraphicsPipelines)(device, pipelineCache, createInfoCount, 
                                    modifiedCreateInfos.data(), pAllocator, pPipelines);
-}
-
-// 辅助函数实现
-VkDevice get_command_buffer_device(VkCommandBuffer commandBuffer) {
-    // 在实际实现中，需要通过命令池来获取设备
-    // 这里简化返回一个全局设备或通过其他方式获取
-    static VkDevice g_device = VK_NULL_HANDLE;
-    return g_device;
-}
-
-VkFormat get_image_view_format(VkImageView imageView) {
-    // 在实际实现中，需要查询图像视图对应的图像格式
-    // 这里返回一个默认值
-    return VK_FORMAT_R8G8B8A8_UNORM;
-}
-
-void get_image_view_size(VkImageView imageView, uint32_t* width, uint32_t* height, uint32_t* layers) {
-    // 在实际实现中，需要查询图像视图对应的图像尺寸
-    // 这里设置默认值
-    if (width) *width = 1920;
-    if (height) *height = 1080;
-    if (layers) *layers = 1;
 }
 
 // 设备清理函数
