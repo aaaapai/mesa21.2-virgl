@@ -329,7 +329,7 @@ create_batch_state(struct zink_context *ctx)
    cbai.commandBufferCount = 2;
 
    VRAM_ALLOC_LOOP(result,
-      VKSCR(AllocateCommandBuffers)(screen->dev, &cbai, cmdbufs),
+      zink_simulate_vkAllocateCommandBuffers(screen->dev, &cbai, cmdbufs),
       if (result != VK_SUCCESS) {
          mesa_loge("ZINK: vkAllocateCommandBuffers failed (%s)", vk_Result_to_str(result));
          goto fail;
@@ -342,7 +342,7 @@ create_batch_state(struct zink_context *ctx)
    cbai.commandPool = bs->unsynchronized_cmdpool;
    cbai.commandBufferCount = 1;
    VRAM_ALLOC_LOOP(result,
-      VKSCR(AllocateCommandBuffers)(screen->dev, &cbai, &bs->unsynchronized_cmdbuf);,
+      zink_simulate_vkAllocateCommandBuffers(screen->dev, &cbai, &bs->unsynchronized_cmdbuf);,
       if (result != VK_SUCCESS) {
          mesa_loge("ZINK: vkAllocateCommandBuffers failed (%s)", vk_Result_to_str(result));
          goto fail;
