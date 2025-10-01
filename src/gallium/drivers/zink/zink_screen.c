@@ -3698,6 +3698,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 
    screen->frame_marker_emitted = zink_screen_debug_marker_begin(screen, "frame");
 
+   init_zink_simulate_screen(screen);
    return screen;
 
 fail:
