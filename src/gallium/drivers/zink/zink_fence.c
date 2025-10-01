@@ -47,7 +47,7 @@ destroy_fence(struct zink_screen *screen, struct zink_tc_fence *mfence)
    mfence->fence = NULL;
    tc_unflushed_batch_token_reference(&mfence->tc_token, NULL);
    if (mfence->sem)
-      VKSCR(DestroySemaphore)(screen->dev, mfence->sem, NULL);
+      zink_simulate_vkDestroySemaphore(screen->dev, mfence->sem, NULL);
    FREE(mfence);
 }
 
@@ -361,7 +361,7 @@ zink_create_fence_fd(struct pipe_context *pctx, struct pipe_fence_handle **pfenc
 fail_sem_import:
    close(dup_fd);
 fail_fd_dup:
-   VKSCR(DestroySemaphore)(screen->dev, mfence->sem, NULL);
+   zink_simulate_vkDestroySemaphore(screen->dev, mfence->sem, NULL);
 }
 
 #ifdef _WIN32
@@ -403,7 +403,7 @@ zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **
    return;
 
 fail:
-   VKSCR(DestroySemaphore)(screen->dev, mfence->sem, NULL);
+   zink_simulate_vkDestroySemaphore(screen->dev, mfence->sem, NULL);
    FREE(mfence);
 }
 #endif
