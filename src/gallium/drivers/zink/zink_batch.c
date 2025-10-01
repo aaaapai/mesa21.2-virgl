@@ -7,6 +7,7 @@
 #include "zink_resource.h"
 #include "zink_screen.h"
 #include "zink_surface.h"
+#include "zink_simulate_vkfunction.h"
 
 #ifdef VK_USE_PLATFORM_METAL_EXT
 #include "QuartzCore/CAMetalLayer.h"
@@ -234,13 +235,13 @@ zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs
    mtx_destroy(&bs->usage.mtx);
 
    if (bs->cmdbuf)
-      VKSCR(FreeCommandBuffers)(screen->dev, bs->cmdpool, 1, &bs->cmdbuf);
+      zink_simulate_vkFreeCommandBuffers(screen->dev, bs->cmdpool, 1, &bs->cmdbuf);
    if (bs->reordered_cmdbuf)
-      VKSCR(FreeCommandBuffers)(screen->dev, bs->cmdpool, 1, &bs->reordered_cmdbuf);
+      zink_simulate_vkFreeCommandBuffers(screen->dev, bs->cmdpool, 1, &bs->reordered_cmdbuf);
    if (bs->cmdpool)
       VKSCR(DestroyCommandPool)(screen->dev, bs->cmdpool, NULL);
    if (bs->unsynchronized_cmdbuf)
-      VKSCR(FreeCommandBuffers)(screen->dev, bs->unsynchronized_cmdpool, 1, &bs->unsynchronized_cmdbuf);
+      zink_simulate_vkFreeCommandBuffers(screen->dev, bs->unsynchronized_cmdpool, 1, &bs->unsynchronized_cmdbuf);
    if (bs->unsynchronized_cmdpool)
       VKSCR(DestroyCommandPool)(screen->dev, bs->unsynchronized_cmdpool, NULL);
    free(bs->real_objs.objs);
