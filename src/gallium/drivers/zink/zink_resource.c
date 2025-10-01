@@ -32,6 +32,7 @@
 #include "zink_screen.h"
 #include "zink_surface.h"
 #include "zink_kopper.h"
+#include "zink_simulate_vkfunction.h"
 
 #ifdef VK_USE_PLATFORM_METAL_EXT
 #include "QuartzCore/CAMetalLayer.h"
@@ -211,7 +212,7 @@ zink_destroy_resource_surface_cache(struct zink_screen *screen, struct set *ht, 
    } else {
       set_foreach_remove(ht, he) {
          struct zink_surface *surf = (void*)he->key;
-         VKSCR(DestroyImageView)(screen->dev, surf->image_view, NULL);
+         zink_simulate_vkDestroyImageView(screen->dev, surf->image_view, NULL);
          FREE(surf);
       }
       _mesa_set_fini(ht, NULL);
