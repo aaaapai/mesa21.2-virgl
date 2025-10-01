@@ -1,5 +1,15 @@
 #include "zink_simulate_vkfunction.h"
 
+#include <unordered_map>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <vector>
+#include <cstdint>
+#include <pthread>
+#include <memory>
+#include <cstring>
+
 // 模拟时间线信号量的内部状态
 struct ZinkTimelineSemaphore {
     std::mutex mutex;
