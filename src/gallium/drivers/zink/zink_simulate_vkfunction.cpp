@@ -297,10 +297,6 @@ VkResult zink_simulate_vkQueueSubmit2(
 }
 
 
-
-// 模拟实现宏
-#define ZINK_SIMULATE_FUNC(name) zink_simulate_##name
-
 // 渲染状态管理
 struct zink_rendering_state {
     VkRenderingFlagsKHR flags;
