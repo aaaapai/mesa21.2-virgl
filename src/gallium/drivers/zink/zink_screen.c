@@ -2441,7 +2441,7 @@ zink_screen_timeline_wait(struct zink_screen *screen, uint64_t batch_id, uint64_
    bool success = false;
    if (screen->device_lost)
       return true;
-   VkResult ret = VKSCR(WaitSemaphores)(screen->dev, &wi, timeout);
+   VkResult ret = zink_simulate_vkWaitSemaphores(screen->dev, &wi, timeout);
    success = zink_screen_handle_vkresult(screen, ret);
 
    if (success)
