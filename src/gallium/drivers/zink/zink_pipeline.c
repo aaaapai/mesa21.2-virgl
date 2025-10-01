@@ -599,7 +599,7 @@ zink_create_gfx_pipeline_output(struct zink_screen *screen, struct zink_gfx_pipe
    VkPipeline pipeline;
    VkResult result;
    VRAM_ALLOC_LOOP(result,
-      VKSCR(CreateGraphicsPipelines)(screen->dev, VK_NULL_HANDLE, 1, &pci, NULL, &pipeline),
+      zink_simulate_vkCreateGraphicsPipelines(screen->dev, VK_NULL_HANDLE, 1, &pci, NULL, &pipeline),
       if (result != VK_SUCCESS) {
          mesa_loge("ZINK: vkCreateGraphicsPipelines failed (%s)", vk_Result_to_str(result));
          return VK_NULL_HANDLE;
@@ -680,7 +680,7 @@ zink_create_gfx_pipeline_input(struct zink_screen *screen,
    VkPipeline pipeline;
    VkResult result;
    VRAM_ALLOC_LOOP(result,
-      VKSCR(CreateGraphicsPipelines)(screen->dev, VK_NULL_HANDLE, 1, &pci, NULL, &pipeline),
+      zink_simulate_vkCreateGraphicsPipelines(screen->dev, VK_NULL_HANDLE, 1, &pci, NULL, &pipeline),
       if (result != VK_SUCCESS) {
          mesa_loge("ZINK: vkCreateGraphicsPipelines failed (%s)", vk_Result_to_str(result));
          return VK_NULL_HANDLE;
@@ -818,7 +818,7 @@ create_gfx_pipeline_library(struct zink_screen *screen, struct zink_shader_objec
    VkPipeline pipeline;
    VkResult result;
    VRAM_ALLOC_LOOP(result,
-      VKSCR(CreateGraphicsPipelines)(screen->dev, pipeline_cache, 1, &pci, NULL, &pipeline),
+      zink_simulate_vkCreateGraphicsPipelines(screen->dev, pipeline_cache, 1, &pci, NULL, &pipeline),
       if (result != VK_SUCCESS) {
          mesa_loge("ZINK: vkCreateGraphicsPipelines failed");
          return VK_NULL_HANDLE;
@@ -877,7 +877,7 @@ zink_create_gfx_pipeline_combined(struct zink_screen *screen, struct zink_gfx_pr
    u_rwlock_wrlock(&prog->base.pipeline_cache_lock);
    VkResult result;
    VRAM_ALLOC_LOOP(result,
-      VKSCR(CreateGraphicsPipelines)(screen->dev, prog->base.pipeline_cache, 1, &pci, NULL, &pipeline),
+      zink_simulate_vkCreateGraphicsPipelines(screen->dev, prog->base.pipeline_cache, 1, &pci, NULL, &pipeline),
       u_rwlock_wrunlock(&prog->base.pipeline_cache_lock);
       if (result != VK_SUCCESS && result != VK_PIPELINE_COMPILE_REQUIRED) {
          mesa_loge("ZINK: vkCreateGraphicsPipelines failed");
