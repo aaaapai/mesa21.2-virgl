@@ -29,6 +29,7 @@
 #include "zink_surface.h"
 #include "zink_resource.h"
 #include "zink_kopper.h"
+#include "zink_simulate_vkfunction.h"
 
 static void
 zink_kopper_set_present_mode_for_interval(struct kopper_displaytarget *cdt, int interval)
@@ -181,7 +182,7 @@ destroy_swapchain(struct zink_screen *screen, struct kopper_swapchain *cswap)
        * has a pending signal operation and is not safe to recycle.
        */
       if (cswap->images[i].acquire != VK_NULL_HANDLE)
-         VKSCR(DestroySemaphore)(screen->dev, cswap->images[i].acquire, NULL);
+         zink_simulate_vkDestroySemaphore(screen->dev, cswap->images[i].acquire, NULL);
 
       pipe_resource_reference(&cswap->images[i].readback, NULL);
       zink_destroy_resource_surface_cache(screen, &cswap->images[i].surface_cache, false);
@@ -653,7 +654,7 @@ kopper_acquire(struct zink_screen *screen, struct zink_resource *res, uint64_t t
             timeout += 4000;
             continue;
          }
-         VKSCR(DestroySemaphore)(screen->dev, acquire, NULL);
+         zink_simulate_vkDestroySemaphore(screen->dev, acquire, NULL);
          return ret;
       }
       break;
