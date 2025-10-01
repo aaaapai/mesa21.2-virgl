@@ -266,7 +266,7 @@ VkResult zink_simulate_QueueSubmitWithTimeline(
     }
     
     // 调用真正的队列提交
-    return vkQueueSubmit(queue, modified_submits.size(), modified_submits.data(), fence);
+    return VKSCR(QueueSubmit)(queue, modified_submits.size(), modified_submits.data(), fence);
 }
 
 // 用于处理VkSubmitInfo2的模拟函数（如果需要）
