@@ -32,6 +32,7 @@
 #include "zink_render_pass.h"
 #include "zink_screen.h"
 #include "zink_state.h"
+#include "zink_simulate_vkfunction.h"
 
 #include "util/u_debug.h"
 #include "util/u_prim.h"
@@ -405,7 +406,7 @@ zink_create_gfx_pipeline(struct zink_screen *screen,
    u_rwlock_wrlock(&prog->base.pipeline_cache_lock);
    VkResult result;
    VRAM_ALLOC_LOOP(result,
-      VKSCR(CreateGraphicsPipelines)(screen->dev, prog->base.pipeline_cache, 1, &pci, NULL, &pipeline),
+      zink_simulate_vkCreateGraphicsPipelines(screen->dev, prog->base.pipeline_cache, 1, &pci, NULL, &pipeline),
       u_rwlock_wrunlock(&prog->base.pipeline_cache_lock);
       if (result != VK_SUCCESS) {
          mesa_loge("ZINK: vkCreateGraphicsPipelines failed (%s)", vk_Result_to_str(result));
