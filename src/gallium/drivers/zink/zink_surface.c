@@ -27,6 +27,7 @@
 #include "zink_screen.h"
 #include "zink_surface.h"
 #include "zink_kopper.h"
+#include "zink_simulate_vkfunction.h"
 
 #include "util/format/u_format.h"
 #include "util/u_inlines.h"
@@ -146,7 +147,7 @@ create_surface(struct pipe_context *pctx,
    assert(ivci->image);
    VkImageViewUsageCreateInfo usage_info = { VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO };
    apply_view_usage_for_format(screen, pres, templ->format, ivci, &usage_info);
-   VkResult result = VKSCR(CreateImageView)(screen->dev, ivci, NULL,
+   VkResult result = zink_simulate_vkCreateImageView(screen->dev, ivci, NULL,
                                             &surface->image_view);
    if (result != VK_SUCCESS) {
       mesa_loge("ZINK: vkCreateImageView failed (%s)", vk_Result_to_str(result));
