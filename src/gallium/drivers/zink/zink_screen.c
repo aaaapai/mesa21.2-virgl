@@ -3491,6 +3491,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 #endif // VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
 
    check_base_requirements(screen);
+   init_zink_simulate_screen(screen);
    util_live_shader_cache_init(&screen->shaders, zink_create_gfx_shader_state, zink_delete_shader_state);
 
    for (unsigned i = 0; i < ARRAY_SIZE(screen->base.nir_options); i++)
@@ -3698,7 +3699,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 
    screen->frame_marker_emitted = zink_screen_debug_marker_begin(screen, "frame");
 
-   init_zink_simulate_screen(screen);
    return screen;
 
 fail:
