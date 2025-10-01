@@ -235,7 +235,7 @@ zink_destroy_resource_object(struct zink_screen *screen, struct zink_resource_ob
    } else if (obj->dt) {
       zink_kopper_displaytarget_destroy(screen, obj->dt);
    } else if (!obj->is_aux) {
-      VKSCR(DestroyImage)(screen->dev, obj->image, NULL);
+      zink_simulate_vkDestroyImage(screen->dev, obj->image, NULL);
    } else {
 #if defined(ZINK_USE_DMABUF) && !defined(_WIN32)
       close(obj->handle);
@@ -1566,7 +1566,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
          VKSCR(DestroyBuffer)(screen->dev, obj->buffer, NULL);
          VKSCR(DestroyBuffer)(screen->dev, obj->storage_buffer, NULL);
       } else
-         VKSCR(DestroyImage)(screen->dev, obj->image, NULL);
+         zink_simulate_vkDestroyImage(screen->dev, obj->image, NULL);
       FALLTHROUGH;
    case roc_fail_and_free_object:
       FREE(obj);
