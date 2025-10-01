@@ -307,14 +307,14 @@ create_batch_state(struct zink_context *ctx)
    VkResult result;
 
    VRAM_ALLOC_LOOP(result,
-      VKSCR(CreateCommandPool)(screen->dev, &cpci, NULL, &bs->cmdpool),
+      zink_simulate_vkCreateCommandPool(screen->dev, &cpci, NULL, &bs->cmdpool),
       if (result != VK_SUCCESS) {
          mesa_loge("ZINK: vkCreateCommandPool failed (%s)", vk_Result_to_str(result));
          goto fail;
       }
    );
    VRAM_ALLOC_LOOP(result,
-      VKSCR(CreateCommandPool)(screen->dev, &cpci, NULL, &bs->unsynchronized_cmdpool),
+      zink_simulate_vkCreateCommandPool(screen->dev, &cpci, NULL, &bs->unsynchronized_cmdpool),
       if (result != VK_SUCCESS) {
          mesa_loge("ZINK: vkCreateCommandPool failed (%s)", vk_Result_to_str(result));
          goto fail;
