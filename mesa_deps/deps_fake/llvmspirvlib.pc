@@ -1,0 +1,4 @@
+Name: llvmspirvlib
+Description: 莫须有
+Version: 1.0
+Libs:
