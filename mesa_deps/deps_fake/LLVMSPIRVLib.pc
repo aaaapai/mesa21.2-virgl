@@ -1,5 +1,4 @@
 Name: LLVMSPIRVLib
-Description: Library for translating between LLVM IR and SPIR-V 莫须有
+Description: Library for translating between LLVM IR and SPIR-V
 Version: 19.0
-Requires: llvm
 Libs:
