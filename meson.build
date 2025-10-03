@@ -1851,7 +1851,7 @@ endif
 
 dep_clang = null_dep
 if with_clc
-  llvm_libdir = dep_llvm.get_variable(cmake : 'LLVM_LIBRARY_DIR', configtool: 'libdir')
+  llvm_libdir = null_dep
 
   dep_clang = cpp.find_library('clang-cpp', dirs : llvm_libdir, required : false)
 
@@ -1874,7 +1874,7 @@ if with_clc
 
     dep_clang = []
     foreach m : clang_modules
-      dep_clang += cpp.find_library(m, dirs : llvm_libdir, required : true)
+      dep_clang += cpp.find_library(m, dirs : llvm_libdir, required : false)
     endforeach
   endif
 endif
