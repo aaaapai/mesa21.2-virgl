@@ -212,6 +212,7 @@ zink_destroy_resource_surface_cache(struct zink_screen *screen, struct set *ht, 
    } else {
       set_foreach_remove(ht, he) {
          struct zink_surface *surf = (void*)he->key;
+         init_zink_simulate_screen(screen);
          zink_simulate_vkDestroyImageView(screen->dev, surf->image_view, NULL);
          FREE(surf);
       }
@@ -235,6 +236,7 @@ zink_destroy_resource_object(struct zink_screen *screen, struct zink_resource_ob
    } else if (obj->dt) {
       zink_kopper_displaytarget_destroy(screen, obj->dt);
    } else if (!obj->is_aux) {
+      init_zink_simulate_screen(screen);
       zink_simulate_vkDestroyImage(screen->dev, obj->image, NULL);
    } else {
 #if defined(ZINK_USE_DMABUF) && !defined(_WIN32)
@@ -1420,6 +1422,7 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
       obj->plane_strides[alloc_info->whandle->plane] = alloc_info->whandle->stride;
    }
 
+   init_zink_simulate_screen(screen);
    VkResult result = zink_simulate_vkCreateImage(screen->dev, &ici, NULL, &obj->image);
    if (result != VK_SUCCESS) {
       mesa_loge("ZINK: vkCreateImage failed (%s)", vk_Result_to_str(result));
@@ -1565,8 +1568,10 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       if (templ->target == PIPE_BUFFER) {
          VKSCR(DestroyBuffer)(screen->dev, obj->buffer, NULL);
          VKSCR(DestroyBuffer)(screen->dev, obj->storage_buffer, NULL);
-      } else
+      } else {
+         init_zink_simulate_screen(screen);
          zink_simulate_vkDestroyImage(screen->dev, obj->image, NULL);
+      }
       FALLTHROUGH;
    case roc_fail_and_free_object:
       FREE(obj);
