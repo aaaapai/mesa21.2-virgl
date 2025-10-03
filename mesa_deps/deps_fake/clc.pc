@@ -1,4 +1,0 @@
-Name: clc
-Description: llvm clc library
-Version: 1.0
-Libs:

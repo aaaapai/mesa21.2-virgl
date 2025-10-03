@@ -1,0 +1,4 @@
+Name: libclc
+Description: LLVM OpenCL library
+Version: 1.0
+Libs:
