@@ -47,7 +47,7 @@ jobs:
             -Dvc4=disabled \
             -Detnaviv=disabled \
            -Dfreedreno-kgsl=false
-          meson compile -C "build-android" -j 4
+          meson compile -C "build-android" -j 6
           meson install -C "build-android"
 
           cd ..
