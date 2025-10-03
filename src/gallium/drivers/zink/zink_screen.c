@@ -1517,8 +1517,10 @@ zink_destroy_screen(struct pipe_screen *pscreen)
 
    zink_descriptor_layouts_deinit(screen);
 
-   if (screen->sem)
+   if (screen->sem) {
+      init_zink_simulate_screen(screen);
       zink_simulate_vkDestroySemaphore(screen->dev, screen->sem, NULL);
+   }
 
    if (screen->fence)
       VKSCR(DestroyFence)(screen->dev, screen->fence, NULL);
@@ -1526,6 +1528,7 @@ zink_destroy_screen(struct pipe_screen *pscreen)
    if (util_queue_is_initialized(&screen->flush_queue))
       util_queue_destroy(&screen->flush_queue);
 
+   init_zink_simulate_screen(screen);
    while (util_dynarray_contains(&screen->semaphores, VkSemaphore))
       zink_simulate_vkDestroySemaphore(screen->dev, util_dynarray_pop(&screen->semaphores, VkSemaphore), NULL);
    while (util_dynarray_contains(&screen->fd_semaphores, VkSemaphore))
@@ -2288,6 +2291,7 @@ zink_screen_init_semaphore(struct zink_screen *screen)
    tci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
    tci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
 
+   init_zink_simulate_screen(screen);
    return zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &screen->sem) == VK_SUCCESS;
 }
 
@@ -2314,6 +2318,7 @@ zink_create_exportable_semaphore(struct zink_screen *screen)
    }
    if (sem)
       return sem;
+   init_zink_simulate_screen(screen);
    VkResult ret = zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &sem);
    return ret == VK_SUCCESS ? sem : VK_NULL_HANDLE;
 }
@@ -2376,9 +2381,11 @@ zink_screen_export_dmabuf_semaphore(struct zink_screen *screen, struct zink_reso
       .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
       .fd = export.fd,
    };
+   printf("zink_screen_export_dmabuf_semaphore\n");
    bool success = VKSCR(ImportSemaphoreFdKHR)(screen->dev, &sdi) == VK_SUCCESS;
    if (!success) {
       close(export.fd);
+      init_zink_simulate_screen(screen);
       zink_simulate_vkDestroySemaphore(screen->dev, sem, NULL);
       return VK_NULL_HANDLE;
    }
@@ -2441,6 +2448,7 @@ zink_screen_timeline_wait(struct zink_screen *screen, uint64_t batch_id, uint64_
    bool success = false;
    if (screen->device_lost)
       return true;
+   init_zink_simulate_screen(screen);
    VkResult ret = zink_simulate_vkWaitSemaphores(screen->dev, &wi, timeout);
    success = zink_screen_handle_vkresult(screen, ret);
 
@@ -3147,6 +3155,7 @@ zink_create_semaphore(struct zink_screen *screen)
    }
    if (sem)
       return sem;
+   init_zink_simulate_screen(screen);
    VkResult ret = zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &sem);
    return ret == VK_SUCCESS ? sem : VK_NULL_HANDLE;
 }
