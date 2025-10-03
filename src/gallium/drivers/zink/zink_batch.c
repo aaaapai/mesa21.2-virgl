@@ -234,14 +234,20 @@ zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs
    cnd_destroy(&bs->usage.flush);
    mtx_destroy(&bs->usage.mtx);
 
-   if (bs->cmdbuf)
+   if (bs->cmdbuf) {
+      init_zink_simulate_screen(screen);
       zink_simulate_vkFreeCommandBuffers(screen->dev, bs->cmdpool, 1, &bs->cmdbuf);
+   }
+   init_zink_simulate_screen(screen);
    if (bs->reordered_cmdbuf)
       zink_simulate_vkFreeCommandBuffers(screen->dev, bs->cmdpool, 1, &bs->reordered_cmdbuf);
+   init_zink_simulate_screen(screen);
    if (bs->cmdpool)
       zink_simulate_vkDestroyCommandPool(screen->dev, bs->cmdpool, NULL);
+   init_zink_simulate_screen(screen);
    if (bs->unsynchronized_cmdbuf)
       zink_simulate_vkFreeCommandBuffers(screen->dev, bs->unsynchronized_cmdpool, 1, &bs->unsynchronized_cmdbuf);
+   init_zink_simulate_screen(screen);
    if (bs->unsynchronized_cmdpool)
       zink_simulate_vkDestroyCommandPool(screen->dev, bs->unsynchronized_cmdpool, NULL);
    free(bs->real_objs.objs);
@@ -289,7 +295,7 @@ zink_label_cmd_buffer(struct zink_context *ctx, VkDevice device, VkCommandBuffer
       .pObjectName = name,
    };
 
-   VKSCR(SetDebugUtilsObjectNameEXT)(device, &name_info);
+   //VKSCR(SetDebugUtilsObjectNameEXT)(device, &name_info);
 }
 
 /* batch states are created:
@@ -306,6 +312,7 @@ create_batch_state(struct zink_context *ctx)
    cpci.queueFamilyIndex = screen->gfx_queue;
    VkResult result;
 
+   init_zink_simulate_screen(screen);
    VRAM_ALLOC_LOOP(result,
       zink_simulate_vkCreateCommandPool(screen->dev, &cpci, NULL, &bs->cmdpool),
       if (result != VK_SUCCESS) {
@@ -313,6 +320,7 @@ create_batch_state(struct zink_context *ctx)
          goto fail;
       }
    );
+   init_zink_simulate_screen(screen);
    VRAM_ALLOC_LOOP(result,
       zink_simulate_vkCreateCommandPool(screen->dev, &cpci, NULL, &bs->unsynchronized_cmdpool),
       if (result != VK_SUCCESS) {
