@@ -46,8 +46,10 @@ destroy_fence(struct zink_screen *screen, struct zink_tc_fence *mfence)
       util_dynarray_delete_unordered(&mfence->fence->mfences, struct zink_tc_fence *, mfence);
    mfence->fence = NULL;
    tc_unflushed_batch_token_reference(&mfence->tc_token, NULL);
-   if (mfence->sem)
+   if (mfence->sem) {
+      init_zink_simulate_screen(screen);
       zink_simulate_vkDestroySemaphore(screen->dev, mfence->sem, NULL);
+   }
    FREE(mfence);
 }
 
@@ -296,6 +298,7 @@ zink_semaphore_fence_create(struct pipe_screen *pscreen, VkSemaphoreType sema_ty
       .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
       &tci
    };
+   init_zink_simulate_screen(screen);
    result = zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &mfence->sem);
    if (result != VK_SUCCESS) {
       mesa_loge("ZINK: vkCreateSemaphore failed (%s)", vk_Result_to_str(result));
@@ -361,6 +364,7 @@ zink_create_fence_fd(struct pipe_context *pctx, struct pipe_fence_handle **pfenc
 fail_sem_import:
    close(dup_fd);
 fail_fd_dup:
+   init_zink_simulate_screen(screen);
    zink_simulate_vkDestroySemaphore(screen->dev, mfence->sem, NULL);
 }
 
@@ -385,6 +389,7 @@ zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **
 
    *pfence = NULL;
 
+   init_zink_simulate_screen(screen);
    if (zink_simulate_vkCreateSemaphore(screen->dev, &sci, NULL, &mfence->sem) != VK_SUCCESS) {
       FREE(mfence);
       return;
@@ -403,6 +408,7 @@ zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **
    return;
 
 fail:
+   init_zink_simulate_screen(screen);
    zink_simulate_vkDestroySemaphore(screen->dev, mfence->sem, NULL);
    FREE(mfence);
 }
