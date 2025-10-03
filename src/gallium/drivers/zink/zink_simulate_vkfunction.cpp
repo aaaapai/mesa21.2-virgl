@@ -12,6 +12,7 @@
 struct zink_screen *zink_simulate_screen;
 
 void init_zink_simulate_screen(struct zink_screen *screen) {
+   printf("init_zink_simulate_screen : %p", screen);
    struct zink_screen *zink_simulate_screen = screen;
 }
 
