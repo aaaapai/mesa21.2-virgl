@@ -16,6 +16,10 @@
 // 模拟实现宏
 #define ZINK_SIMULATE_FUNC(name) zink_simulate_##name
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 VkDevice get_command_buffer_device(VkCommandBuffer commandBuffer);
 VkFormat get_image_view_format(VkImageView imageView);
 void get_image_view_size(VkImageView imageView, uint32_t* width, uint32_t* height, uint32_t* layers);
@@ -121,3 +125,6 @@ void ZINK_SIMULATE_FUNC(vkCmdPipelineBarrier2)(
     VkCommandBuffer commandBuffer,
     const VkDependencyInfo* pDependencyInfo);
 
+#ifdef __cplusplus
+}
+#endif
