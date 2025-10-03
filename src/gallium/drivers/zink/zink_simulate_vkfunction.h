@@ -20,6 +20,8 @@
 extern "C" {
 #endif
 
+void init_zink_simulate_screen(struct zink_screen *screen);
+
 VkDevice get_command_buffer_device(VkCommandBuffer commandBuffer);
 VkFormat get_image_view_format(VkImageView imageView);
 void get_image_view_size(VkImageView imageView, uint32_t* width, uint32_t* height, uint32_t* layers);
