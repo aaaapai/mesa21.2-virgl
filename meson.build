@@ -1812,7 +1812,7 @@ pre_args += '-DGALLIVM_USE_ORCJIT=@0@'.format((dep_llvm.found() and llvm_with_or
 if with_clc
   chosen_llvm_version_array = dep_llvm.version().split('.')
   chosen_llvm_version_major = chosen_llvm_version_array[0].to_int()
-  chosen_llvm_version_minor = chosen_llvm_version_array[1].to_int()
+  chosen_llvm_version_minor = 0
 
   # Require an SPIRV-LLVM-Translator version compatible with the chosen LLVM
   # one.
