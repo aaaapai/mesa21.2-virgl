@@ -1,7 +1,7 @@
 [binaries]
 ar = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-c = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang']
-cpp = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++']
+c = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang']
+cpp = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++']
 nm = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm'
 llvm-config = '/usr/bin/llvm-config-19'
 ld = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/lld'
@@ -10,10 +10,10 @@ strip = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm
 # Android doesn't come with a pkg-config, but we need one for meson to be happy not
 # finding all the optional deps it looks for.  Use system pkg-config pointing at a
 # directory we get to populate with any .pc files we want to add for Android
-pkg-config = ['env', 'PKG_CONFIG_LIBDIR=/tmp/build/lib/pkgconfig', '/usr/bin/pkg-config']
+pkg-config = ['env', 'PKG_CONFIG_LIBDIR=/tmp/build/lib/pkgconfig:$PWD/mesa_deps/spirv-tools/pkgconfig:$PWD/mesa_deps/deps_fake', '/usr/bin/pkg-config']
 
-c_host = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang'
-cpp_host = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++'
+c_host = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang'
+cpp_host = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++'
 
 [built-in options]
 c_args = ['-DANDROID', '-O3', '-DVK_USE_PLATFORM_ANDROID_KHR', '-DHAVE_OPENGL', '-fPIC', '-DPIC', '-fwhole-program-vtables', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-DLLVM_AVAILABLE', '-fdata-sections', '-ffunction-sections', '-fmerge-all-constants', '-fno-emulated-tls', '-march=armv8-a+simd+crc+crypto+fp16', '-DHAVE_STRUCT_TIMESPEC', '-I/tmp/build/include', '-Wno-macro-redefined', '-I/tmp/build/include/libdrm']
