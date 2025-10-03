@@ -3280,6 +3280,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
       // goto fail;
    }
 
+   init_zink_simulate_screen(screen);
    if (config) {
       driParseConfigFiles(config->options, config->options_info, 0, "zink",
                           NULL, NULL, NULL, 0, NULL, 0);
@@ -3491,7 +3492,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 #endif // VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
 
    check_base_requirements(screen);
-   init_zink_simulate_screen(screen);
    util_live_shader_cache_init(&screen->shaders, zink_create_gfx_shader_state, zink_delete_shader_state);
 
    for (unsigned i = 0; i < ARRAY_SIZE(screen->base.nir_options); i++)
