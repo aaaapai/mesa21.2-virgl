@@ -72,11 +72,11 @@ jobs:
             -Dgbm=disabled \
             -Dopengl=true \
             -Dgles2=enabled \
-            -Degl-lib-suffix=-mesa \
-            -Dgles-lib-suffix=-mesa \
+            -Degl-lib-suffix=_mesa \
+            -Dgles-lib-suffix=_mesa \
             -Dvulkan-drivers= \
             -Dtools= \
-            -Dgallium-drivers=zink
+            -Dgallium-drivers=
           meson compile -C "build-android" -j 4
           meson install -C "build-android"
       - name: Upload libraries
