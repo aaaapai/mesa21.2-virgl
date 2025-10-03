@@ -75,7 +75,8 @@ jobs:
             -Dgles-lib-suffix=_mesa \
             -Dvulkan-drivers=panfrost \
             -Dtools= \
-            -Dgallium-drivers=
+            -Dgallium-drivers= \
+            -Dcpp_rtti=false
           meson compile -C "build-android" -j 6
           meson install -C "build-android"
       - name: Upload libraries
