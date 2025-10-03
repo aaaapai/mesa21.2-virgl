@@ -64,7 +64,6 @@ jobs:
             -Dplatforms=android \
             -Dplatform-sdk-version=29 \
             -Dandroid-stub=true \
-            -Dllvm=disabled \
             -Dshared-llvm=disabled \
             -Dxlib-lease=disabled \
             -Degl=enabled \
