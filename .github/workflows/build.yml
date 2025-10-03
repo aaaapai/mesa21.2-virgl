@@ -77,7 +77,7 @@ jobs:
             -Dvulkan-drivers=panfrost \
             -Dtools= \
             -Dgallium-drivers=
-          meson compile -C "build-android" -j 4
+          meson compile -C "build-android" -j 6
           meson install -C "build-android"
       - name: Upload libraries
         uses: actions/upload-artifact@main
