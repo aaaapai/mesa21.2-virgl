@@ -11,9 +11,13 @@
 
 struct zink_screen *zink_simulate_screen;
 
+extern "C" {
+
 void init_zink_simulate_screen(struct zink_screen *screen) {
    struct zink_screen *zink_simulate_screen = screen;
 }
+
+} //extern "C"
 
 #undef VKSCR
 #define VKSCR(fn) zink_simulate_screen->vk.fn
@@ -492,6 +496,8 @@ private:
     }
 };
 
+
+extern "C" {
 
 // 现在实现三个辅助函数
 VkDevice get_command_buffer_device(VkCommandBuffer commandBuffer) {
@@ -1442,5 +1448,8 @@ VkResult ZINK_SIMULATE_FUNC(vkCreateGraphicsPipelines)(VkDevice device,
     
     return result;
 }
+
+} //extern "C"
+
 #undef VKSCR
 #define VKSCR(fn) screen->vk.fn
