@@ -1853,9 +1853,9 @@ dep_clang = null_dep
 if with_clc
   llvm_libdir = null_dep
 
-  dep_clang = cpp.find_library('clang-cpp', dirs : llvm_libdir, required : false)
+  # dep_clang = cpp.find_library('clang-cpp', dirs : llvm_libdir, required : false)
 
-  if not dep_clang.found() or not _shared_llvm
+  if dep_clang.found() or _shared_llvm
     clang_modules = [
       'clangBasic', 'clangAST', 'clangCodeGen', 'clangLex',
       'clangDriver', 'clangFrontend', 'clangFrontendTool',
