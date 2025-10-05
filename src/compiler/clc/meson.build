@@ -21,7 +21,7 @@ if not _shared_llvm or \
     # LLVM 16 changed to only using a major version
     clang_version_dir = dep_llvm.version().split('.')[0]
   endif
-  clang_resource_dir = join_paths(llvm_libdir, 'clang', clang_version_dir, 'include')
+  clang_resource_dir = dependency('', required : false)
 
   opencl_c_base_h = custom_target(
     'opencl-c-base.h',
@@ -121,7 +121,7 @@ idep_mesaclc = declare_dependency(
   link_args : _idep_mesaclc_link_args,
 )
 
-if get_option('mesa-clc') != 'system' and (with_driver_using_cl or \
+if get_option('mesa-clc') == 'system' and (with_driver_using_cl or \
                                            get_option('install-mesa-clc'))
   prog_mesa_clc = executable(
     'mesa_clc',
