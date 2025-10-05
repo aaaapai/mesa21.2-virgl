@@ -21,23 +21,6 @@ if not _shared_llvm or \
     # LLVM 16 changed to only using a major version
     clang_version_dir = dep_llvm.version().split('.')[0]
   endif
-  clang_resource_dir = dependency('', required : false)
-
-  opencl_c_base_h = custom_target(
-    'opencl-c-base.h',
-    input : [files_xxd, join_paths(clang_resource_dir, 'opencl-c-base.h')],
-    output : 'opencl-c-base.h.h',
-    command : [prog_python, '@INPUT@', '@OUTPUT@', '-n', 'opencl_c_base_source'],
-  )
-
-  opencl_c_h = custom_target(
-    'opencl-c.h',
-    input : [files_xxd, join_paths(clang_resource_dir, 'opencl-c.h')],
-    output : 'opencl-c.h.h',
-    command : [prog_python, '@INPUT@', '@OUTPUT@', '-n', 'opencl_c_source'],
-  )
-
-  _libmesaclc_sources += [opencl_c_base_h, opencl_c_h]
   _libmesaclc_cpp_args += ['-DUSE_STATIC_OPENCL_C_H=1']
 endif
 
