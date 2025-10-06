@@ -73,9 +73,9 @@ jobs:
             -Dgles2=enabled \
             -Degl-lib-suffix=_mesa \
             -Dgles-lib-suffix=_mesa \
-            -Dvulkan-drivers=panfrost \
+            -Dvulkan-drivers= \
             -Dtools= \
-            -Dgallium-drivers= \
+            -Dgallium-drivers=zink \
             -Dcpp_rtti=false
           meson compile -C "build-android" -j 6
           meson install -C "build-android"
