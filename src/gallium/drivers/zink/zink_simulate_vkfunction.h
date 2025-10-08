@@ -21,6 +21,7 @@ extern "C" {
 #endif
 
 void init_zink_simulate_screen(struct zink_screen *screen);
+void init_zink_simulate_ctx(const struct zink_context *ctx);
 
 VkDevice get_command_buffer_device(VkCommandBuffer commandBuffer);
 VkFormat get_image_view_format(VkImageView imageView);
