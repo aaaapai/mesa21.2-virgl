@@ -1778,8 +1778,8 @@ eglBindAPI(EGLenum api)
 
    t = _eglGetCurrentThread();
 
-   if (!_eglIsApiValid(api))
-      RETURN_EGL_ERROR(NULL, EGL_BAD_PARAMETER, EGL_FALSE);
+   /*if (!_eglIsApiValid(api))
+      RETURN_EGL_ERROR(NULL, EGL_BAD_PARAMETER, EGL_FALSE);*/
 
    t->CurrentAPI = api;
 
