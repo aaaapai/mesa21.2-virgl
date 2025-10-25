@@ -1,12 +1,7 @@
 if with_android_stub
   stub_libs = []
-  lib_names = ['cutils', 'hardware', 'log', 'nativewindow', 'sync']
 
-  if with_libbacktrace
-    lib_names += ['backtrace']
-  endif
-
-  foreach lib : lib_names
+  foreach lib : ['backtrace', 'cutils', 'nativewindow', 'sync', 'hardware']
     stub_libs += static_library(
       lib,
       files(lib + '_stub.cpp'),
@@ -15,7 +10,4 @@ if with_android_stub
     )
   endforeach
 
-  dep_android = declare_dependency(
-    link_with : stub_libs,
-  )
 endif
