@@ -333,7 +333,7 @@ zink_create_render_pass(struct zink_screen *screen,
    if (!rp)
       goto fail;
 
-   if ((screen->vk_version >= VK_MAKE_VERSION(1,1,0)) && !(getenv("ZINK_USE_RENDER_PASS"))) {
+   if (((screen->vk_version >= VK_MAKE_VERSION(1,2,0)) || (getenv("ZINK_USE_RENDER_PASS2"))) && !getenv("ZINK_USE_ERNDER_PASS")) {
       rp->render_pass = create_render_pass2(screen, state, pstate);
    } else {
       rp->render_pass = create_render_pass(screen, state, pstate);
