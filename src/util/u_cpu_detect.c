@@ -65,15 +65,11 @@
 #endif
 #endif
 
-#if defined(PIPE_OS_LINUX)
 #include <signal.h>
 #include <fcntl.h>
 #include <elf.h>
-#endif
 
-#ifdef PIPE_OS_UNIX
 #include <unistd.h>
-#endif
 
 #if defined(HAS_ANDROID_CPUFEATURES)
 #include <cpu-features.h>
@@ -86,9 +82,7 @@
 #endif
 #endif
 
-#if defined(HAS_SCHED_H)
 #include <sched.h>
-#endif
 
 DEBUG_GET_ONCE_BOOL_OPTION(dump_cpu, "GALLIUM_DUMP_CPU", false)
 
