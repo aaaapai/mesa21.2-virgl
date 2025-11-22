@@ -142,6 +142,7 @@ ALLOWED_ANDROID_VERSION = {
     "VK_KHR_surface": 26,
     "VK_KHR_display": 26,
     "VK_KHR_android_surface": 26,
+    "VK_OHOS_surface": 24,
     "VK_KHR_mir_surface": 26,
     "VK_KHR_wayland_surface": 26,
     "VK_KHR_win32_surface": 26,
