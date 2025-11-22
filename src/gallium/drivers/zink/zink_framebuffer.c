@@ -60,7 +60,7 @@ zink_init_framebuffer_imageless(struct zink_screen *screen, struct zink_framebuf
 
    struct hash_entry *he = _mesa_hash_table_search_pre_hashed(&fb->objects, hash, rp);
    if (he) {
-#if defined(_WIN64) || defined(__x86_64__)
+#if VK_USE_64_BIT_PTR_DEFINES
       ret = (VkFramebuffer)he->data;
 #else
       VkFramebuffer *ptr = he->data;
@@ -90,7 +90,7 @@ zink_init_framebuffer_imageless(struct zink_screen *screen, struct zink_framebuf
 
    if (VKSCR(CreateFramebuffer)(screen->dev, &fci, NULL, &ret) != VK_SUCCESS)
       return;
-#if defined(_WIN64) || defined(__x86_64__)
+#if VK_USE_64_BIT_PTR_DEFINES
    _mesa_hash_table_insert_pre_hashed(&fb->objects, hash, rp, ret);
 #else
    VkFramebuffer *ptr = ralloc(fb, VkFramebuffer);
@@ -214,7 +214,7 @@ zink_init_framebuffer(struct zink_screen *screen, struct zink_framebuffer *fb, s
 
    struct hash_entry *he = _mesa_hash_table_search_pre_hashed(&fb->objects, hash, rp);
    if (he) {
-#if defined(_WIN64) || defined(__x86_64__)
+#if VK_USE_64_BIT_PTR_DEFINES
       ret = (VkFramebuffer)he->data;
 #else
       VkFramebuffer *ptr = he->data;
@@ -236,7 +236,7 @@ zink_init_framebuffer(struct zink_screen *screen, struct zink_framebuffer *fb, s
 
    if (VKSCR(CreateFramebuffer)(screen->dev, &fci, NULL, &ret) != VK_SUCCESS)
       return;
-#if defined(_WIN64) || defined(__x86_64__)
+#if VK_USE_64_BIT_PTR_DEFINES
    _mesa_hash_table_insert_pre_hashed(&fb->objects, hash, rp, ret);
 #else
    VkFramebuffer *ptr = ralloc(fb, VkFramebuffer);
