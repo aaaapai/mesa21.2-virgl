@@ -22,15 +22,13 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_ohos.h>
 #include "zink_context.h"
 #include "zink_screen.h"
 #include "zink_resource.h"
 #include "zink_kopper.h"
 #include "vk_enum_to_str.h"
-
-// Provided by VK_OHOS_surface
-VkResult vkCreateSurfaceOHOS(VkInstance instance, const VkSurfaceCreateInfoOHOS* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface);
 
 #define kopper_displaytarget(dt) ((struct kopper_displaytarget*)dt)
 
