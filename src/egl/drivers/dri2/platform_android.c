@@ -54,7 +54,7 @@
 
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_android.h>
-#include "dri_util.h"
+#include "../../../gallium/frontends/dri/dri_util.h"
 
 #define ALIGN(val, align)	(((val) + (align) - 1) & ~((align) - 1))
 
