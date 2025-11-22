@@ -711,9 +711,11 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       }
    }
 
+   printf("1\n");
    config = dri2_get_dri_config(dri2_conf, type,
                                 dri2_surf->base.GLColorspace);
    if (!config) {
+      printf("2\n");
       _eglError(EGL_BAD_MATCH, "Unsupported surfacetype/colorspace configuration");
       goto cleanup_surface;
    }
@@ -724,8 +726,9 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
     if (dri2_dpy->kopper)
         dri2_surf->window = window;
 
-   if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
-      goto cleanup_surface;
+   printf("3\n");
+   dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf);
+      //goto cleanup_surface;
 
    if (window) {
       ANativeWindow_acquire(window);
