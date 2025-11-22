@@ -70,7 +70,7 @@ jobs:
             -Dxlib-lease=disabled \
             -Degl=disabled \
             -Degl-native-platform=android \
-            -Dgbm=enabled \
+            -Dgbm=disabled \
             -Dopengl=true \
             -Dvulkan-drivers= \
             -Dtools= \
