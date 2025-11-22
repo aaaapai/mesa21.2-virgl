@@ -147,17 +147,6 @@ else
   with_shared_glapi = _sg == 'enabled'
 endif
 
-# shared-glapi is required if at least two OpenGL APIs are being built
-if not with_shared_glapi
-  if ((with_gles1 == 'enabled' and with_gles2 == 'enabled') or
-      (with_gles1 == 'enabled' and with_opengl) or
-      (with_gles2 == 'enabled' and with_opengl))
-    error('shared-glapi required for building two or more of OpenGL, OpenGL ES 1.x, OpenGL ES 2.x')
-  endif
-  with_gles1 = 'disabled'
-  with_gles2 = 'disabled'
-endif
-
 # We require OpenGL for OpenGL ES
 if not with_opengl
   if (with_gles1 == 'enabled' or with_gles2 == 'enabled') and not with_opengl
@@ -189,12 +178,12 @@ if gallium_drivers.contains('auto')
     if ['x86', 'x86_64'].contains(host_machine.cpu_family())
       gallium_drivers = [
         'r300', 'r600', 'radeonsi', 'nouveau', 'virgl', 'svga', 'swrast',
-        'iris', 'crocus', 'i915'
+        'iris', 'crocus', 'i915', 'zink'
       ]
     elif ['arm', 'aarch64'].contains(host_machine.cpu_family())
       gallium_drivers = [
         'v3d', 'vc4', 'freedreno', 'etnaviv', 'nouveau',
-        'tegra', 'virgl', 'lima', 'panfrost', 'swrast'
+        'tegra', 'virgl', 'lima', 'panfrost', 'swrast', 'zink'
       ]
     elif ['mips', 'mips64', 'riscv32', 'riscv64'].contains(host_machine.cpu_family())
       gallium_drivers = [
@@ -463,8 +452,6 @@ if _egl == 'auto'
 elif _egl == 'enabled'
   if not with_dri and not with_platform_haiku and not with_platform_windows
     error('EGL requires dri, haiku, or windows')
-  elif not with_shared_glapi
-    error('EGL requires shared-glapi')
   elif not ['disabled', 'dri'].contains(with_glx)
     error('EGL requires dri, but a GLX is being built without dri')
   elif host_machine.system() == 'darwin'
@@ -1962,9 +1949,6 @@ else
 endif
 
 if with_osmesa
-  if not with_gallium_softpipe
-    error('OSMesa gallium requires gallium softpipe or llvmpipe.')
-  endif
   if host_machine.system() == 'windows'
     osmesa_lib_name = 'osmesa'
   else
