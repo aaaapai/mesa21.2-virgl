@@ -173,7 +173,7 @@ util_get_cpu_caps(void)
 
 void _util_cpu_detect_once(void);
 
-inline void util_cpu_detect(void) {
+static inline void util_cpu_detect(void) {
       _util_cpu_detect_once();
 }
 
