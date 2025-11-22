@@ -222,7 +222,6 @@ EXTENSIONS = [
         properties=True,
         conditions=["$feats.descriptorBindingPartiallyBound"]),
     Extension("VK_KHR_android_surface"),
-    Extension("VK_OHOS_surface"),
 ]
 
 # constructor: Versions(device_version(major, minor, patch), struct_version(major, minor))
@@ -595,11 +594,6 @@ if __name__ == "__main__":
             continue
 
         entry = registry.get_registry_entry(ext.name)
-
-        if entry.ext_type != "device":
-            error_count += 1
-            print("The extension {} is {} extension - expected a device extension.".format(ext.name, entry.ext_type))
-            continue
 
         if ext.has_features:
             if not (entry.features_struct and ext.physical_device_struct("Features") == entry.features_struct):
