@@ -59,8 +59,7 @@ import sys
 #
 #  - guard: adds a #if defined(`extension_name`)/#endif guard around the code generated for this Extension.
 EXTENSIONS = [
-    Extension("VK_KHR_maintenance1",
-        required=True),
+    Extension("VK_KHR_maintenance1"),
     Extension("VK_KHR_maintenance2"),
     Extension("VK_KHR_maintenance3"),
     Extension("VK_KHR_external_memory"),
