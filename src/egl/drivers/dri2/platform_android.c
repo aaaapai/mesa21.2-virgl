@@ -705,7 +705,7 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       if (dri2_surf->base.ActiveRenderBuffer == EGL_SINGLE_BUFFER)
          dri2_surf->gralloc_usage |= dri2_dpy->front_rendering_usage;
 
-      if (ANativeWindow_setUsage(window, dri2_surf->gralloc_usage)) {
+      if (!ANativeWindow_setUsage(window, dri2_surf->gralloc_usage)) {
          _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
          goto cleanup_surface;
       }
