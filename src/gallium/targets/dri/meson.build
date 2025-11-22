@@ -68,10 +68,3 @@ libgallium_dri = shared_library(
   install_dir : dri_drivers_path,
   name_suffix : 'so',
 )
-
-meson.add_install_script(
-  install_megadrivers_py.path(),
-  libgallium_dri.full_path(),
-  dri_drivers_path,
-  gallium_dri_drivers,
-)
