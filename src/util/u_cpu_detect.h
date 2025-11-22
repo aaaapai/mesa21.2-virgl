@@ -171,6 +171,10 @@ util_get_cpu_caps(void)
    return &_util_cpu_caps_state.caps;
 }
 
+void _util_cpu_detect_once(void);
+
+#define util_cpu_detect _util_cpu_detect_once
+
 #ifdef __cplusplus
 }
 #endif
