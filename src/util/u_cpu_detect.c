@@ -684,8 +684,6 @@ void check_max_vector_bits(void)
 #endif
 }
 
-void _util_cpu_detect_once(void);
-
 void
 _util_cpu_detect_once(void)
 {
