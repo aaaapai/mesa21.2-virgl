@@ -81,7 +81,7 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
       VkAndroidSurfaceCreateInfoKHR *wdroid = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
       error = VKSCR(CreateAndroidSurfaceKHR)(screen->instance, wdroid, NULL, &surface);
       if (error != VK_SUCCESS) {
-         error = VKSCR(vkCreateSurfaceOHOS)(screen->instance, wdroid, NULL, &surface);
+         error = vkCreateSurfaceOHOS(screen->instance, wdroid, NULL, &surface);
       }
       break;
     }
