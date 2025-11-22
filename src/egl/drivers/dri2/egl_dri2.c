@@ -800,6 +800,7 @@ dri2_open_driver(_EGLDisplay *disp)
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    static const char *search_path_vars[] = {
       "LIBGL_DRIVERS_PATH",
+      "LD_LIBRARY_PATH",
       NULL,
    };
 
