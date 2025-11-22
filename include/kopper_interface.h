@@ -70,6 +70,18 @@ struct __DRIkopperExtensionRec {
                                         const __DRIconfig *config,
                                         void *loaderPrivate,
                                         int pixmap);
+
+   __DRIscreen *(*createNewScreen)(int screen,
+				    const __DRIextension **extensions,
+				    const __DRIconfig ***driver_configs,
+				    void *loaderPrivate);
+
+   __DRIscreen *(*createNewScreen2)(int screen,
+                                    const __DRIextension **loader_extensions,
+                                    const __DRIextension **driver_extensions,
+                                    const __DRIconfig ***driver_configs,
+                                    void *loaderPrivate);
+
 };
 
 /**
