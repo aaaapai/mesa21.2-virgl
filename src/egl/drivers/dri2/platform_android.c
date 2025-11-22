@@ -996,10 +996,6 @@ droid_query_buffer_age(_EGLDisplay *disp, _EGLSurface *surface)
    return dri2_surf->back ? dri2_surf->back->age : 0;
 }
 
-(_EGLDisplay *disp, _EGLSurface *surface)
-   return dri2_surf->back ? dri2_surf->back->age : 0;
-}
-
 static EGLint
 droid_query_buffer_age_kopper(_EGLDisplay *disp, _EGLSurface *surface)
 {
@@ -1598,9 +1594,6 @@ static const __DRIextension *droid_image_loader_extensions[] = {
    NULL,
 };
 
-static_assert(sizeof(struct kopper_vk_surface_create_storage) >=
-                 sizeof(VkAndroidSurfaceCreateInfoKHR),
-              "");
 static void
 kopperSetSurfaceCreateInfo(void *_draw, struct kopper_loader_info *out)	
 {
