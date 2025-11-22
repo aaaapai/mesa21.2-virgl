@@ -1103,16 +1103,9 @@ dri2_create_screen(_EGLDisplay *disp)
             dri2_dpy->swrast->createNewScreen2(0, dri2_dpy->loader_extensions,
                                                dri2_dpy->driver_extensions,
                                                &dri2_dpy->driver_configs, disp);
-         dri2_dpy->dri_screen =
-            dri2_dpy->kopper->createNewScreen2(0, dri2_dpy->loader_extensions,
-                                               dri2_dpy->driver_extensions,
-                                               &dri2_dpy->driver_configs, disp);
       } else {
          dri2_dpy->dri_screen =
             dri2_dpy->swrast->createNewScreen(0, dri2_dpy->loader_extensions,
-                                              &dri2_dpy->driver_configs, disp);
-         dri2_dpy->dri_screen =
-            dri2_dpy->kopper->createNewScreen(0, dri2_dpy->loader_extensions,
                                               &dri2_dpy->driver_configs, disp);
       }
    }
