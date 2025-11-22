@@ -82,6 +82,10 @@ struct __DRIkopperExtensionRec {
                                     const __DRIconfig ***driver_configs,
                                     void *loaderPrivate);
 
+   int64_t (*swapBuffers)(__DRIdrawable *draw);
+   void (*setSwapInterval)(__DRIdrawable *drawable, int interval);
+   int (*queryBufferAge)(__DRIdrawable *drawable);
+
 };
 
 /**
