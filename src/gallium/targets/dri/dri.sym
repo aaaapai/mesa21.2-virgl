@@ -1,11 +1,15 @@
 {
 	global:
 		__driDriverGetExtensions*;
-        _glapi_get_proc_address;
-        _glapi_get_proc_offset;
-        _glapi_get_proc_name;
-        glXGetProcAddress;
-        glXGetProcAddressARB;
+                _glapi_get_proc_address;
+                _glapi_get_proc_offset;
+                _glapi_get_proc_name;
+                glXGetProcAddress;
+                glXGetProcAddressARB;
+                galliumdrm_driver_extensions;
+                dri_image_drawable_get_buffers;
+                driVkImageExtension;
+                driVkImageExtensionSw;
 	local:
 		*;
 };
