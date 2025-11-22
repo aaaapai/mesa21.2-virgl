@@ -51,7 +51,7 @@ static ANativeWindow_setSharedBufferMode_t fp_ANativeWindow_setSharedBufferMode 
 static ANativeWindow_getWidth_t fp_ANativeWindow_getWidth = NULL;
 static ANativeWindow_getHeight_t fp_ANativeWindow_getHeight = NULL;
 
-static atomic_int isinitNativeWindowWrapper = 0;
+static atomic_int isinitNativeWindowWrapper(0);
 
 static void initNativeWindowWrapper() {
     const char* libPaths[] = {
