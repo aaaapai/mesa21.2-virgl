@@ -199,7 +199,6 @@ branch of the member gitlab server.
 #endif</type>
 
         <type category="basetype">struct <name>ANativeWindow</name>;</type>
-        <type category="basetype">typedef struct NativeWindow <name>OHNativeWindow</name>;</type>
         <type category="basetype">struct <name>AHardwareBuffer</name>;</type>
         <type category="basetype">
 #ifdef __OBJC__
@@ -332,7 +331,6 @@ typedef void <name>CAMetalLayer</name>;
         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkDisplayModeCreateFlagsKHR</name>;</type>
         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkDisplaySurfaceCreateFlagsKHR</name>;</type>
         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkAndroidSurfaceCreateFlagsKHR</name>;</type>
-        <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkSurfaceCreateFlagsOHOS</name>;</type>
         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkViSurfaceCreateFlagsNN</name>;</type>
         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkWaylandSurfaceCreateFlagsKHR</name>;</type>
         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkWin32SurfaceCreateFlagsKHR</name>;</type>
@@ -1905,12 +1903,6 @@ typedef void <name>CAMetalLayer</name>;
             <member optional="true">const <type>void</type>*                                    <name>pNext</name></member>
             <member optional="true"><type>VkAndroidSurfaceCreateFlagsKHR</type> <name>flags</name></member>
             <member noautovalidity="true">struct <type>ANativeWindow</type>*    <name>window</name></member>
-        </type>
-        <type category="struct" name="VkSurfaceCreateInfoOHOS">
-            <member values="VK_STRUCTURE_TYPE_SURFACE_CREATE_INFO_OHOS"><type>VkStructureType</type> <name>sType</name></member>
-            <member optional="true">const <type>void</type>*                                    <name>pNext</name></member>
-            <member optional="true"><type>VkSurfaceCreateFlagsOHOS</type> <name>flags</name></member>
-            <member noautovalidity="true"><type>OHNativeWindow</type>*    <name>window</name></member>
         </type>
         <type category="struct" name="VkViSurfaceCreateInfoNN">
             <member values="VK_STRUCTURE_TYPE_VI_SURFACE_CREATE_INFO_NN"><type>VkStructureType</type> <name>sType</name></member>
@@ -9599,13 +9591,6 @@ typedef void <name>CAMetalLayer</name>;
             <param optional="true">const <type>VkAllocationCallbacks</type>* <name>pAllocator</name></param>
             <param><type>VkSurfaceKHR</type>* <name>pSurface</name></param>
         </command>
-        <command successcodes="VK_SUCCESS" errorcodes="VK_ERROR_OUT_OF_HOST_MEMORY,VK_ERROR_SURFACE_LOST_KHR,VK_ERROR_UNKNOWN,VK_ERROR_VALIDATION_FAILED">
-            <proto><type>VkResult</type> <name>vkCreateSurfaceOHOS</name></proto>
-            <param><type>VkInstance</type> <name>instance</name></param>
-            <param>const <type>VkSurfaceCreateInfoOHOS</type>* <name>pCreateInfo</name></param>
-            <param optional="true">const <type>VkAllocationCallbacks</type>* <name>pAllocator</name></param>
-            <param><type>VkSurfaceKHR</type>* <name>pSurface</name></param>
-        </command>
         <command successcodes="VK_SUCCESS,VK_INCOMPLETE" errorcodes="VK_ERROR_OUT_OF_HOST_MEMORY,VK_ERROR_OUT_OF_DEVICE_MEMORY">
             <proto><type>VkResult</type> <name>vkGetPhysicalDeviceDisplayPropertiesKHR</name></proto>
             <param><type>VkPhysicalDevice</type> <name>physicalDevice</name></param>
@@ -13208,7 +13193,7 @@ typedef void <name>CAMetalLayer</name>;
                 <enum value="&quot;VK_KHR_mir_surface&quot;"                    name="VK_KHR_MIR_SURFACE_EXTENSION_NAME"/>
             </require>
         </extension>
-        <extension name="VK_KHR_android_surface" number="9" type="instance" depends="VK_KHR_surface" platform="android" author="KHR" contact="Jesse Hall @critsec" supported="vulkan" ratified="vulkan" nofeatures="true">
+        <extension name="VK_KHR_android_surface" number="9" type="instance" requires="VK_KHR_surface" platform="android" author="KHR" contact="Jesse Hall @critsec" supported="vulkan">
             <require>
                 <enum value="6"                                                 name="VK_KHR_ANDROID_SURFACE_SPEC_VERSION"/>
                 <enum value="&quot;VK_KHR_android_surface&quot;"                name="VK_KHR_ANDROID_SURFACE_EXTENSION_NAME"/>
@@ -13217,17 +13202,6 @@ typedef void <name>CAMetalLayer</name>;
                 <type name="VkAndroidSurfaceCreateFlagsKHR"/>
                 <type name="VkAndroidSurfaceCreateInfoKHR"/>
                 <command name="vkCreateAndroidSurfaceKHR"/>
-            </require>
-        </extension>
-        <extension name="VK_OHOS_surface" number="588" type="instance" depends="VK_KHR_surface" platform="ohos" author="HUAWEI" contact="Weilan Chen @wchen-h" supported="vulkan" nofeatures="true">
-            <require>
-                <enum value="1"                                                 name="VK_OHOS_SURFACE_SPEC_VERSION"/>
-                <enum value="&quot;VK_OHOS_surface&quot;"                       name="VK_OHOS_SURFACE_EXTENSION_NAME"/>
-                <enum value="1000685000" extends="VkStructureType"                      name="VK_STRUCTURE_TYPE_SURFACE_CREATE_INFO_OHOS"/>
-                <type name="VkSurfaceCreateFlagsOHOS"/>
-                <type name="VkSurfaceCreateInfoOHOS"/>
-                <type name="OHNativeWindow"/>
-                <command name="vkCreateSurfaceOHOS"/>
             </require>
         </extension>
         <extension name="VK_KHR_win32_surface" number="10" type="instance" requires="VK_KHR_surface" platform="win32" author="KHR" contact="Jesse Hall @critsec,Ian Elliott @ianelliottus" supported="vulkan">
