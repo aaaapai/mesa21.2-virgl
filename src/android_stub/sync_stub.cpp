@@ -6,7 +6,7 @@
 #include <dlfcn.h>
 #include <stdatomic.h>
 
-static atomic_int isinitSyncWrapper = 0;
+static atomic_int isinitSyncWrapper(0);
 
 // 在文件开头添加以下内容
 
