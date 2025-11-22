@@ -221,6 +221,8 @@ EXTENSIONS = [
         features=True,
         properties=True,
         conditions=["$feats.descriptorBindingPartiallyBound"]),
+    Extension("VK_KHR_android_surface"),
+    Extension("VK_KHR_OHOS_surface"),
 ]
 
 # constructor: Versions(device_version(major, minor, patch), struct_version(major, minor))
