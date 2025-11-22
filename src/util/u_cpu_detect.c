@@ -32,9 +32,10 @@
  * @author Based on the work of Eric Anholt <anholt@FreeBSD.org>
  */
 
-#include "util/detect.h"
-#include "util/compiler.h"
-
+#include "detect_os.h"
+#include "pipe/p_config.h"
+#include "pipe/p_compiler.h"
+   
 #include "util/u_debug.h"
 #include "u_cpu_detect.h"
 #include "u_math.h"
@@ -66,16 +67,12 @@
 #endif
 #endif
 
-#if DETECT_OS_LINUX
 #include <sys/auxv.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <elf.h>
-#endif
 
-#if DETECT_OS_POSIX
 #include <unistd.h>
-#endif
 
 #if defined(HAS_ANDROID_CPUFEATURES)
 #include <cpu-features.h>
@@ -88,9 +85,7 @@
 #endif
 #endif
 
-#if defined(HAS_SCHED_H)
 #include <sched.h>
-#endif
 
 // prevent inadvert infinite recursion
 #define util_get_cpu_caps() util_get_cpu_caps_DO_NOT_USE()
