@@ -22,7 +22,8 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_ohos.h>
 #include "zink_context.h"
 #include "zink_screen.h"
 #include "zink_resource.h"
@@ -45,6 +46,11 @@ init_dt_type(struct kopper_displaytarget *cdt)
     case VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR:
        cdt->type = KOPPER_WAYLAND;
        break;
+#endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   case VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR:
+      cdt->type = KOPPER_ANDROID;
+      break;
 #endif
     default:
        unreachable("unsupported!");
@@ -69,6 +75,13 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
     case VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR:
        error = VKSCR(CreateWaylandSurfaceKHR)(screen->instance, &cdt->info.wl, NULL, &surface);
        break;
+#endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+    case VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR: {
+      VkAndroidSurfaceCreateInfoKHR *wdroid = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
+      error = VKSCR(CreateAndroidSurfaceKHR)(screen->instance, wdroid, NULL, &surface);
+      break;
+    }
 #endif
     default:
        unreachable("unsupported!");
@@ -192,6 +205,7 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
    /* different display platforms have, by vulkan spec, different sizing methodologies */
    switch (cdt->type) {
    case KOPPER_X11:
+   case KOPPER_ANDROID:
       /* With Xcb, minImageExtent, maxImageExtent, and currentExtent must always equal the window size.
        * ...
        * Due to above restrictions, it is only possible to create a new swapchain on this
@@ -295,6 +309,7 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
       if (unlikely(!screen->dts.table)) {
          switch (k.type) {
          case KOPPER_X11:
+         case KOPPER_ANDROID:
             _mesa_hash_table_init(&screen->dts, screen, NULL, _mesa_key_pointer_equal);
             break;
          case KOPPER_WAYLAND:
@@ -358,6 +373,13 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
    case KOPPER_WAYLAND:
       _mesa_hash_table_insert(&screen->dts, cdt->info.wl.surface, cdt);
       break;
+#endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   case KOPPER_ANDROID: {
+      VkAndroidSurfaceCreateInfoKHR *asci = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
+      _mesa_hash_table_insert(&screen->dts, asci->window, cdt);
+      break;
+   }
 #endif
    default:
       unreachable("unsupported!");

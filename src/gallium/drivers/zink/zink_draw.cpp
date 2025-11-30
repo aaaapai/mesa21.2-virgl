@@ -495,7 +495,7 @@ zink_draw(struct pipe_context *pctx,
    unsigned work_count = ctx->batch.work_count;
    enum pipe_prim_type mode = (enum pipe_prim_type)dinfo->mode;
 
-   if (unlikely(!screen->info.have_EXT_conditional_rendering)) {
+   if (unlikely(!screen->info.have_EXT_conditional_rendering) && getenv("ZINK_USE_CPU_BASED_CONDITIONAL_RENDERING")) {
       if (!hack_conditional_render(pctx, dinfo, drawid_offset, dindirect, draws, num_draws))
          return;
    }

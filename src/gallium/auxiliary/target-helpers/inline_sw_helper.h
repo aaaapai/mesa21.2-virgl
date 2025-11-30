@@ -34,6 +34,10 @@
 #include "asahi/agx_public.h"
 #endif
 
+#ifdef GALLIUM_ZINK
+#include "../../drivers/zink/zink_public.h"
+#endif
+
 static inline struct pipe_screen *
 sw_screen_create_named(struct sw_winsys *winsys, const char *driver)
 {
