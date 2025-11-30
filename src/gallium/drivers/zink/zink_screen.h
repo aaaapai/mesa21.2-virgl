@@ -144,7 +144,6 @@ struct zink_screen {
    uint32_t gfx_queue;
    uint32_t max_queues;
    uint32_t timestamp_valid_bits;
-   unsigned max_fences;
    VkDevice dev;
    VkQueue queue; //gfx+compute
    VkQueue thread_queue; //gfx+compute
@@ -262,9 +261,6 @@ struct mem_cache_entry {
 
 VkFormat
 zink_get_format(struct zink_screen *screen, enum pipe_format format);
-
-bool
-zink_screen_batch_id_wait(struct zink_screen *screen, uint32_t batch_id, uint64_t timeout);
 
 bool
 zink_screen_timeline_wait(struct zink_screen *screen, uint32_t batch_id, uint64_t timeout);
