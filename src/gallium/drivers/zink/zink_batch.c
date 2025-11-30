@@ -164,6 +164,9 @@ zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs
    cnd_destroy(&bs->usage.flush);
    mtx_destroy(&bs->usage.mtx);
 
+   if (bs->fence.fence)
+      VKSCR(DestroyFence)(screen->dev, bs->fence.fence, NULL);
+
    if (bs->cmdbuf)
       VKSCR(FreeCommandBuffers)(screen->dev, bs->cmdpool, 1, &bs->cmdbuf);
    if (bs->barrier_cmdbuf)
