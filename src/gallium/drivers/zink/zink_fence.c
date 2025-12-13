@@ -209,7 +209,9 @@ zink_fence_finish(struct zink_screen *screen, struct pipe_context *pctx, struct 
    if (fence->submitted && zink_screen_check_last_finished(screen, fence->batch_id))
       return true;
 
-   return fence_wait(screen, fence, timeout_ns);
+   if (screen->info.have_KHR_timeline_semaphore)
+      return fence_wait(screen, fence, timeout_ns);
+   return zink_vkfence_wait(screen, fence, timeout_ns);
 }
 
 static bool
