@@ -977,7 +977,7 @@ zink_get_query_result(struct pipe_context *pctx,
    } else if (!threaded_query(q)->flushed &&
               /* timeline drivers can wait during buffer map */
               !zink_screen(pctx->screen)->info.have_KHR_timeline_semaphore)
-      zink_batch_usage_check_completion(ctx, query->batch_id);
+      zink_batch_usage_check_completion(ctx, query->batch_uses);
 
    return get_query_result(pctx, q, wait, result);
 }
