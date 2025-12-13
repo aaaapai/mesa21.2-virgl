@@ -364,6 +364,7 @@ struct zink_context {
    bool dirty_so_targets;
    bool xfb_barrier;
    bool first_frame_done;
+   bool have_timelines;
 
    bool gfx_dirty;
 
