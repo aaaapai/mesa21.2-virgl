@@ -65,6 +65,9 @@ void
 zink_init_framebuffer(struct zink_screen *screen, struct zink_framebuffer *fb, struct zink_render_pass *rp);
 
 void
+zink_init_framebuffer_imageless(struct zink_screen *screen, struct zink_framebuffer *fb, struct zink_render_pass *rp);
+
+void
 zink_destroy_framebuffer(struct zink_screen *screen,
                          struct zink_framebuffer *fbuf);
 
@@ -88,6 +91,8 @@ zink_framebuffer_reference(struct zink_screen *screen,
    return ret;
 }
 
+struct zink_framebuffer *
+zink_get_framebuffer_imageless(struct zink_context *ctx);
 struct zink_framebuffer *
 zink_get_framebuffer(struct zink_context *ctx);
 #endif
