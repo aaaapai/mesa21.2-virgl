@@ -2139,7 +2139,6 @@ update_framebuffer_state(struct zink_context *ctx, int old_w, int old_h)
    struct zink_framebuffer *fb = ctx->get_framebuffer(ctx);
    struct zink_screen *screen = zink_screen(ctx->base.screen);
    if (ctx->framebuffer && !screen->info.have_KHR_imageless_framebuffer) {
-      simple_mtx_lock(&screen->framebuffer_mtx);
       struct hash_entry *he = _mesa_hash_table_search(&screen->framebuffer_cache, &ctx->framebuffer->state);
       if (ctx->framebuffer && !ctx->framebuffer->state.num_attachments) {
          /* if this has no attachments then its lifetime has ended */
@@ -2155,7 +2154,6 @@ update_framebuffer_state(struct zink_context *ctx, int old_w, int old_h)
        */
       if (zink_framebuffer_reference(screen, &ctx->framebuffer, NULL) && he)
          _mesa_hash_table_remove(&screen->framebuffer_cache, he);
-      simple_mtx_unlock(&screen->framebuffer_mtx);
    }
    ctx->fb_changed |= ctx->framebuffer != fb;
    ctx->framebuffer = fb;
