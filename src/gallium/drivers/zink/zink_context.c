@@ -2218,7 +2218,7 @@ setup_framebuffer(struct zink_context *ctx)
    if (!ctx->fb_changed)
       return;
 
-   zink_init_framebuffer(screen, ctx->framebuffer, rp);
+   ctx->init_framebuffer(screen, ctx->framebuffer, rp);
    ctx->fb_changed = false;
    ctx->gfx_pipeline_state.render_pass = rp;
 }
