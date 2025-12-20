@@ -193,6 +193,20 @@ zink_is_parallel_shader_compilation_finished(struct pipe_screen *screen, void *s
    return finished;
 }
 
+static uint32_t
+hash_framebuffer_state(const void *key)
+{
+   struct zink_framebuffer_state* s = (struct zink_framebuffer_state*)key;
+   return _mesa_hash_data(key, offsetof(struct zink_framebuffer_state, attachments) + sizeof(s->attachments[0]) * s->num_attachments);
+}
+
+static bool
+equals_framebuffer_state(const void *a, const void *b)
+{
+   struct zink_framebuffer_state *s = (struct zink_framebuffer_state*)a;
+   return memcmp(a, b, offsetof(struct zink_framebuffer_state, attachments) + sizeof(s->attachments[0]) * s->num_attachments) == 0;
+}
+
 static VkDeviceSize
 get_video_mem(struct zink_screen *screen)
 {
@@ -2809,6 +2823,10 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
       /* determine if vis vram is roughly equal to total vram */
       if (biggest_vis_vram > biggest_vram * 0.9)
          screen->resizable_bar = true;
+   }
+
+   if (!screen->info.have_KHR_imageless_framebuffer) {
+      _mesa_hash_table_init(&screen->framebuffer_cache, screen, hash_framebuffer_state, equals_framebuffer_state);
    }
 
    if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
