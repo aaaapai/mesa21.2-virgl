@@ -68,7 +68,7 @@ static void initNativeWindowWrapper() {
             ALOGI("Successfully loaded libnativewindow.so");
             break;
         } else {
-            sNativeWindowHandle = dlopen(libPaths[i], RTLD_LAZY | RTLD_LOCAL);
+            sNativeWindowHandle = /*dlopen(libPaths[i], RTLD_LAZY | RTLD_LOCAL);*/ NULL;
             if (sNativeWindowHandle != NULL) {
               ALOGI("Successfully loaded %s", libPaths[i]);
               break;
