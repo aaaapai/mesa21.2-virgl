@@ -241,6 +241,7 @@ struct zink_tc_fence {
 
 /* a fence is actually a zink_batch_state, but these are split out for logical consistency */
 struct zink_fence {
+   VkFence fence;
    uint64_t batch_id;
    bool submitted;
    bool completed;
