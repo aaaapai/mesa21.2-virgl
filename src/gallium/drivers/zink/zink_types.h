@@ -579,6 +579,7 @@ struct zink_batch_state {
    unsigned submit_count;
 
    bool is_device_lost;
+   bool have_timelines;
    bool has_barriers;
 };
 
