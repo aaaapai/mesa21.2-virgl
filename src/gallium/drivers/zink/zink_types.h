@@ -1743,6 +1743,8 @@ struct zink_context {
    bool stencil_ref_changed : 1;
    bool rasterizer_discard_changed : 1;
    bool rp_tc_info_updated : 1;
+
+   bool have_timelines;
 };
 
 static inline struct zink_context *
