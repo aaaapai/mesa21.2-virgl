@@ -335,6 +335,8 @@ zink_destroy_surface(struct zink_screen *screen, struct pipe_surface *psurface)
    /* this surface is dead now */
    simple_mtx_lock(&res->obj->view_lock);
    /* imageviews are never destroyed directly to ensure lifetimes for in-use surfaces */
+      if (!screen->info.have_KHR_imageless_framebuffer)
+      surface_clear_fb_refs(screen, psurface);
    if (surface->is_swapchain) {
       for (unsigned i = 0; i < surface->swapchain_size; i++)
          util_dynarray_append(&res->obj->views, VkImageView, surface->swapchain[i]);

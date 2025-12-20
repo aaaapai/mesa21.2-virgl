@@ -59,8 +59,7 @@ import sys
 #
 #  - guard: adds a #if defined(`extension_name`)/#endif guard around the code generated for this Extension.
 EXTENSIONS = [
-    Extension("VK_KHR_maintenance1",
-        required=True),
+    Extension("VK_KHR_maintenance1"),
     Extension("VK_KHR_maintenance2"),
     Extension("VK_KHR_maintenance3"),
     Extension("VK_KHR_maintenance4", alias="maint4", features=True),
@@ -69,7 +68,7 @@ EXTENSIONS = [
     Extension("VK_KHR_vulkan_memory_model"),
     Extension("VK_KHR_pipeline_executable_properties", alias="pipestats", features=True),
     Extension("VK_KHR_external_semaphore_fd"),
-    Extension("VK_KHR_create_renderpass2", required=True),
+    Extension("VK_KHR_create_renderpass2"),
     Extension("VK_KHR_synchronization2",
               alias="sync2",
               features=True),
@@ -143,8 +142,7 @@ EXTENSIONS = [
     Extension("VK_KHR_sampler_ycbcr_conversion"),
     Extension("VK_KHR_imageless_framebuffer",
         alias="imgless",
-        features=True,
-        required=True),
+        features=True),
     Extension("VK_EXT_robustness2",
         alias="rb2",
         properties=True,
@@ -270,6 +268,7 @@ EXTENSIONS = [
         alias="demote",
         features=True,
         conditions=["$feats.shaderDemoteToHelperInvocation"]),
+    Extension("VK_KHR_android_surface"),
 ]
 
 # constructor: Versions(device_version(major, minor, patch), struct_version(major, minor))
@@ -702,11 +701,6 @@ if __name__ == "__main__":
             continue
 
         entry = registry.get_registry_entry(ext.name)
-
-        if entry.ext_type != "device":
-            error_count += 1
-            print("The extension {} is {} extension - expected a device extension.".format(ext.name, entry.ext_type))
-            continue
 
         if ext.has_features:
             if not (entry.features_struct and ext.physical_device_struct("Features") == entry.features_struct):

@@ -160,8 +160,16 @@ zink_context_destroy(struct pipe_context *pctx)
       util_dynarray_fini(&ctx->di.bindless[i].resident);
    }
 
-   hash_table_foreach(&ctx->framebuffer_cache, he)
-      zink_destroy_framebuffer(screen, he->data);
+   if (screen->info.have_KHR_imageless_framebuffer) {
+      hash_table_foreach(&ctx->framebuffer_cache, he)
+         zink_destroy_framebuffer(screen, he->data);
+   } else if (ctx->framebuffer) {
+      simple_mtx_lock(&screen->framebuffer_mtx);
+      struct hash_entry *entry = _mesa_hash_table_search(&screen->framebuffer_cache, &ctx->framebuffer->state);
+      if (zink_framebuffer_reference(screen, &ctx->framebuffer, NULL))
+         _mesa_hash_table_remove(&screen->framebuffer_cache, entry);
+      simple_mtx_unlock(&screen->framebuffer_mtx);
+   }
 
    hash_table_foreach(ctx->render_pass_cache, he)
       zink_destroy_render_pass(screen, he->data);
@@ -2598,9 +2606,31 @@ zink_batch_rp(struct zink_context *ctx)
    assert(!ctx->rp_changed);
    if (in_rp || !ctx->batch.in_rp)
       return; //dead swapchain or continued renderpass
+ 
    if (ctx->render_condition.query)
       zink_start_conditional_render(ctx);
    zink_clear_framebuffer(ctx, clear_buffers);
+   struct zink_framebuffer *fb = ctx->get_framebuffer(ctx);
+   struct zink_screen *screen = zink_screen(ctx->base.screen);
+   if (ctx->framebuffer && !screen->info.have_KHR_imageless_framebuffer) {
+      struct hash_entry *he = _mesa_hash_table_search(&screen->framebuffer_cache, &ctx->framebuffer->state);
+      if (ctx->framebuffer && !ctx->framebuffer->state.num_attachments) {
+         /* if this has no attachments then its lifetime has ended */
+         _mesa_hash_table_remove(&screen->framebuffer_cache, he);
+         he = NULL;
+         /* ensure an unflushed fb doesn't get destroyed by deferring it */
+         util_dynarray_append(&ctx->batch.state->dead_framebuffers, struct zink_framebuffer*, ctx->framebuffer);
+         ctx->framebuffer = NULL;
+      }
+      /* a framebuffer loses 1 ref every time we unset it;
+       * we do NOT add refs here, as the ref has already been added in
+       * get_framebuffer()
+       */
+      if (zink_framebuffer_reference(screen, &ctx->framebuffer, NULL) && he)
+         _mesa_hash_table_remove(&screen->framebuffer_cache, he);
+   }
+   ctx->fb_changed |= ctx->framebuffer != fb;
+   ctx->framebuffer = fb;
 }
 
 void
@@ -2877,7 +2907,10 @@ stall(struct zink_context *ctx)
 {
    struct zink_screen *screen = zink_screen(ctx->base.screen);
    sync_flush(ctx, zink_batch_state(ctx->last_fence));
-   zink_screen_timeline_wait(screen, ctx->last_fence->batch_id, PIPE_TIMEOUT_INFINITE);
+   if (ctx->have_timelines)
+      zink_screen_timeline_wait(screen, ctx->last_fence->batch_id, PIPE_TIMEOUT_INFINITE);
+   else
+      zink_vkfence_wait(screen, ctx->last_fence, PIPE_TIMEOUT_INFINITE);
    zink_batch_reset_all(ctx);
 }
 
@@ -3870,8 +3903,37 @@ zink_wait_on_batch(struct zink_context *ctx, uint64_t batch_id)
       batch_id = bs->fence.batch_id;
    }
    assert(batch_id);
-   if (!zink_screen_timeline_wait(zink_screen(ctx->base.screen), batch_id, UINT64_MAX))
-      check_device_lost(ctx);
+   if (ctx->have_timelines) {
+      if (!zink_screen_timeline_wait(zink_screen(ctx->base.screen), batch_id, UINT64_MAX))
+         check_device_lost(ctx);
+      return;
+   }
+   struct zink_fence *fence;
+
+   assert(ctx->last_fence);
+   if (batch_id == zink_batch_state(ctx->last_fence)->fence.batch_id)
+      fence = ctx->last_fence;
+   else {
+      for (bs = ctx->batch_states; bs; bs = bs->next) {
+         if (bs->fence.batch_id < batch_id)
+            continue;
+         if (!bs->fence.batch_id || bs->fence.batch_id > batch_id)
+            break;
+      }
+      if (!bs || bs->fence.batch_id != batch_id) {
+         /* if we can't find it, it either must have finished already or is on a different context */
+         if (!zink_screen_check_last_finished(zink_screen(ctx->base.screen), batch_id)) {
+            /* if it hasn't finished, it's on another context, so force a flush so there's something to wait on */
+            ctx->batch.has_work = true;
+            zink_fence_wait(&ctx->base);
+         }
+         return;
+      }
+      fence = &bs->fence;
+   }
+   assert(fence);
+   sync_flush(ctx, zink_batch_state(fence));
+   zink_vkfence_wait(zink_screen(ctx->base.screen), fence, PIPE_TIMEOUT_INFINITE);
 }
 
 bool
@@ -3885,10 +3947,35 @@ zink_check_batch_completion(struct zink_context *ctx, uint64_t batch_id)
    if (zink_screen_check_last_finished(zink_screen(ctx->base.screen), batch_id))
       return true;
 
-   bool success = zink_screen_timeline_wait(zink_screen(ctx->base.screen), batch_id, 0);
-   if (!success)
-      check_device_lost(ctx);
-   return success;
+   if (ctx->have_timelines) {
+      bool success = zink_screen_timeline_wait(zink_screen(ctx->base.screen), batch_id, 0);
+      if (!success)
+         check_device_lost(ctx);
+      return success;
+   }
+   struct zink_fence *fence;
+
+   if (ctx->last_fence && batch_id == zink_batch_state(ctx->last_fence)->fence.batch_id)
+      fence = ctx->last_fence;
+   else {
+      struct zink_batch_state *bs;
+      for (bs = ctx->batch_states; bs; bs = bs->next) {
+         if (bs->fence.batch_id < batch_id)
+            continue;
+         if (!bs->fence.batch_id || bs->fence.batch_id > batch_id)
+            break;
+      }
+      if (!bs || bs->fence.batch_id != batch_id) {
+         /* return compare against last_finished, since this has info from all contexts */
+         return zink_screen_check_last_finished(zink_screen(ctx->base.screen), batch_id);
+      }
+      fence = &bs->fence;
+   }
+   assert(fence);
+   if (zink_screen(ctx->base.screen)->threaded &&
+       !util_queue_fence_is_signalled(&zink_batch_state(fence)->flush_completed))
+      return false;
+   return zink_vkfence_wait(zink_screen(ctx->base.screen), fence, 0);
 }
 
 static void
@@ -4167,9 +4254,11 @@ zink_rebind_framebuffer(struct zink_context *ctx, struct zink_resource *res)
       return;
 
    zink_batch_no_rp(ctx);
-   struct zink_framebuffer *fb = zink_get_framebuffer(ctx);
-   ctx->fb_changed |= ctx->framebuffer != fb;
-   ctx->framebuffer = fb;
+   if (zink_screen(ctx->base.screen)->info.have_KHR_imageless_framebuffer) {
+      struct zink_framebuffer *fb = ctx->get_framebuffer(ctx);
+      ctx->fb_changed |= ctx->framebuffer != fb;
+      ctx->framebuffer = fb;
+   }
 }
 
 ALWAYS_INLINE static struct zink_resource *
@@ -4838,6 +4927,7 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
       goto fail;
 
    ctx->flags = flags;
+   ctx->have_timelines = screen->info.have_KHR_timeline_semaphore;
    ctx->pipeline_changed[0] = ctx->pipeline_changed[1] = true;
    ctx->gfx_pipeline_state.dirty = true;
    ctx->gfx_pipeline_state.dyn_state2.vertices_per_patch = 1;
@@ -4853,6 +4943,14 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 
    ctx->base.screen = pscreen;
    ctx->base.priv = priv;
+
+   if (screen->info.have_KHR_imageless_framebuffer) {
+      ctx->get_framebuffer = zink_get_framebuffer_imageless;
+      ctx->init_framebuffer = zink_init_framebuffer_imageless;
+   } else {
+      ctx->get_framebuffer = zink_get_framebuffer;
+      ctx->init_framebuffer = zink_init_framebuffer;
+   }
 
    ctx->base.destroy = zink_context_destroy;
    ctx->base.get_device_reset_status = zink_get_device_reset_status;
@@ -5013,6 +5111,7 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
       }
    }
 
+   ctx->have_timelines = screen->info.have_KHR_timeline_semaphore;
    zink_start_batch(ctx, &ctx->batch);
    if (!ctx->batch.state)
       goto fail;

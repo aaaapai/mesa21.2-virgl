@@ -693,10 +693,7 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       if (dri2_surf->base.ActiveRenderBuffer == EGL_SINGLE_BUFFER)
          dri2_surf->gralloc_usage |= dri2_dpy->front_rendering_usage;
 
-      if (ANativeWindow_setUsage(window, dri2_surf->gralloc_usage)) {
-         _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
-         goto cleanup_surface;
-      }
+      ANativeWindow_setUsage(window, dri2_surf->gralloc_usage);
    }
 
    config = dri2_get_dri_config(dri2_conf, type,
@@ -705,6 +702,9 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       _eglError(EGL_BAD_MATCH, "Unsupported surfacetype/colorspace configuration");
       goto cleanup_surface;
    }
+
+   if (dri2_dpy->kopper)
+        dri2_surf->window = window;
 
    if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
       goto cleanup_surface;
@@ -1498,8 +1498,9 @@ droid_load_driver(_EGLDisplay *disp, bool swrast)
 
    dri2_dpy->loader_extensions = droid_image_loader_extensions;
    if (!dri2_load_driver_dri3(disp)) {
-      goto error;
+      //goto error;
    }
+   dri2_dpy->kopper = dri2_dpy->driver_name && !strcmp(dri2_dpy->driver_name, "zink");
 #endif
 
    return true;

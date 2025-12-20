@@ -652,4 +652,7 @@ combine_u32_into_u64(uint32_t hi, uint32_t lo)
    return (((uint64_t) hi) << 32) | (((uint64_t) lo) & 0xffffffff);
 }
 
+void
+dri2_detect_swrast_kopper(_EGLDisplay *disp);
+
 #endif /* EGL_DRI2_INCLUDED */

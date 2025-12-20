@@ -49,7 +49,7 @@ zink_destroy_framebuffer(struct zink_screen *screen,
 }
 
 void
-zink_init_framebuffer(struct zink_screen *screen, struct zink_framebuffer *fb, struct zink_render_pass *rp)
+zink_init_framebuffer_imageless(struct zink_screen *screen, struct zink_framebuffer *fb, struct zink_render_pass *rp)
 {
    VkFramebuffer ret;
 
@@ -144,7 +144,7 @@ zink_use_dummy_attachments(const struct zink_context *ctx)
 }
 
 struct zink_framebuffer *
-zink_get_framebuffer(struct zink_context *ctx)
+zink_get_framebuffer_imageless(struct zink_context *ctx)
 {
    assert(zink_screen(ctx->base.screen)->info.have_KHR_imageless_framebuffer);
    bool have_zsbuf = ctx->fb_state.zsbuf && zink_is_zsbuf_used(ctx);
@@ -202,6 +202,92 @@ zink_get_framebuffer(struct zink_context *ctx)
    _mesa_hash_table_insert(&ctx->framebuffer_cache, &fb->state, fb);
 
    return fb;
+}
+
+void
+zink_init_framebuffer(struct zink_screen *screen, struct zink_framebuffer *fb, struct zink_render_pass *rp)
+{
+   VkFramebuffer ret;
+
+   if (fb->rp == rp)
+      return;
+
+   uint32_t hash = _mesa_hash_pointer(rp);
+
+   struct hash_entry *he = _mesa_hash_table_search_pre_hashed(&fb->objects, hash, rp);
+   if (he) {
+#if VK_USE_64_BIT_PTR_DEFINES
+      ret = (VkFramebuffer)he->data;
+#else
+      VkFramebuffer *ptr = he->data;
+      ret = *ptr;
+#endif
+      goto out;
+   }
+
+   assert(rp->state.num_cbufs + rp->state.have_zsbuf + rp->state.num_cresolves + rp->state.num_zsresolves == fb->state.num_attachments);
+
+   VkFramebufferCreateInfo fci = {0};
+   fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+   fci.renderPass = rp->render_pass;
+   fci.attachmentCount = fb->state.num_attachments;
+   fci.pAttachments = fb->state.attachments;
+   fci.width = fb->state.width;
+   fci.height = fb->state.height;
+   fci.layers = fb->state.layers + 1;
+
+   if (VKSCR(CreateFramebuffer)(screen->dev, &fci, NULL, &ret) != VK_SUCCESS)
+      return;
+#if VK_USE_64_BIT_PTR_DEFINES
+   _mesa_hash_table_insert_pre_hashed(&fb->objects, hash, rp, ret);
+#else
+   VkFramebuffer *ptr = ralloc(fb, VkFramebuffer);
+   if (!ptr) {
+      VKSCR(DestroyFramebuffer)(screen->dev, ret, NULL);
+      return;
+   }
+   *ptr = ret;
+   _mesa_hash_table_insert_pre_hashed(&fb->objects, hash, rp, ptr);
+#endif
+out:
+   fb->rp = rp;
+   fb->fb = ret;
+}
+
+static struct zink_framebuffer *
+create_framebuffer(struct zink_context *ctx,
+                   struct zink_framebuffer_state *state,
+                   struct pipe_surface **attachments)
+{
+   struct zink_screen *screen = zink_screen(ctx->base.screen);
+   struct zink_framebuffer *fb = rzalloc(NULL, struct zink_framebuffer);
+   if (!fb)
+      return NULL;
+
+   unsigned num_attachments = 0;
+   for (int i = 0; i < state->num_attachments; i++) {
+      struct zink_surface *surf;
+      if (state->attachments[i]) {
+         surf = zink_csurface(attachments[i]);
+         /* no ref! */
+         fb->surfaces[i] = attachments[i];
+         num_attachments++;
+         util_dynarray_append(&surf->framebuffer_refs, struct zink_framebuffer*, fb);
+      } else {
+         surf = zink_csurface(ctx->dummy_surface[util_logbase2_ceil(state->samples+1)]);
+         state->attachments[i] = surf->image_view;
+      }
+   }
+   pipe_reference_init(&fb->reference, 1 + num_attachments);
+
+   if (!_mesa_hash_table_init(&fb->objects, fb, _mesa_hash_pointer, _mesa_key_pointer_equal))
+      goto fail;
+   memcpy(&fb->state, state, sizeof(struct zink_framebuffer_state));
+
+   return fb;
+fail:
+   zink_destroy_framebuffer(screen, fb);
+   return NULL;
 }
 
 void
