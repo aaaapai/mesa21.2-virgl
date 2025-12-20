@@ -211,6 +211,9 @@ nir_setup_uniform_remap_tables(const struct gl_constants *consts,
    for (unsigned i = 0; i < prog->data->NumUniformStorage; i++) {
       struct gl_uniform_storage *uniform = &prog->data->UniformStorage[i];
 
+      if (uniform->hidden)
+         continue;
+
       if (uniform->is_shader_storage ||
           glsl_get_base_type(uniform->type) == GLSL_TYPE_SUBROUTINE)
          continue;
@@ -239,6 +242,9 @@ nir_setup_uniform_remap_tables(const struct gl_constants *consts,
 
    for (unsigned i = 0; i < prog->data->NumUniformStorage; i++) {
       struct gl_uniform_storage *uniform = &prog->data->UniformStorage[i];
+
+      if (uniform->hidden)
+         continue;
 
       if (uniform->is_shader_storage ||
           glsl_get_base_type(uniform->type) == GLSL_TYPE_SUBROUTINE)
@@ -382,6 +388,24 @@ nir_setup_uniform_remap_tables(const struct gl_constants *consts,
             p->sh.NumSubroutineUniformRemapTable;
          p->sh.NumSubroutineUniformRemapTable += entries;
       }
+   }
+
+   /* assign storage to hidden uniforms */
+   for (unsigned i = 0; i < prog->data->NumUniformStorage; i++) {
+      struct gl_uniform_storage *uniform = &prog->data->UniformStorage[i];
+
+      if (!uniform->hidden ||
+          glsl_get_base_type(uniform->type) == GLSL_TYPE_SUBROUTINE)
+         continue;
+
+      const unsigned entries =
+         MAX2(1, prog->data->UniformStorage[i].array_elements);
+
+      uniform->storage = &data[data_pos];
+
+      unsigned num_slots = glsl_get_component_slots(uniform->type);
+      for (unsigned k = 0; k < entries; k++)
+         data_pos += num_slots;
    }
 }
 
@@ -806,12 +830,6 @@ update_uniforms_shader_info(struct gl_shader_program *prog,
       /* Set image access qualifiers */
       enum gl_access_qualifier image_access =
          state->current_var->data.access;
-      const GLenum access =
-         (image_access & ACCESS_NON_WRITEABLE) ?
-         ((image_access & ACCESS_NON_READABLE) ? GL_NONE :
-                                                 GL_READ_ONLY) :
-         ((image_access & ACCESS_NON_READABLE) ? GL_WRITE_ONLY :
-                                                 GL_READ_WRITE);
 
       int image_index;
       if (state->current_var->data.bindless) {
@@ -826,7 +844,7 @@ update_uniforms_shader_info(struct gl_shader_program *prog,
 
          for (unsigned j = sh->Program->sh.NumBindlessImages;
               j < state->next_bindless_image_index; j++) {
-            sh->Program->sh.BindlessImages[j].access = access;
+            sh->Program->sh.BindlessImages[j].image_access = image_access;
          }
 
          sh->Program->sh.NumBindlessImages = state->next_bindless_image_index;
@@ -842,7 +860,7 @@ update_uniforms_shader_info(struct gl_shader_program *prog,
 
          for (unsigned i = image_index;
               i < MIN2(state->next_image_index, MAX_IMAGE_UNIFORMS); i++) {
-            sh->Program->sh.ImageAccess[i] = access;
+            sh->Program->sh.image_access[i] = image_access;
          }
       }
 
@@ -1517,7 +1535,7 @@ gl_nir_link_uniforms(const struct gl_constants *consts,
    /* Iterate through all linked shaders */
    struct nir_link_uniforms_state state = {0,};
 
-   if (!prog->data->spirv) {
+   if (!prog->data->spirv && !consts->DisableUniformArrayResize) {
       /* Gather information on uniform use */
       for (unsigned stage = 0; stage < MESA_SHADER_STAGES; stage++) {
          struct gl_linked_shader *sh = prog->_LinkedShaders[stage];

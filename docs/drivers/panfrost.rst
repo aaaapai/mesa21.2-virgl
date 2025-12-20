@@ -3,12 +3,13 @@ Panfrost
 
 The Panfrost driver stack includes an OpenGL ES implementation for Arm Mali
 GPUs based on the Midgard and Bifrost microarchitectures. It is **conformant**
-on Mali G52 but **non-conformant** on other GPUs. The following hardware is
-currently supported:
+on Mali-G52 and Mali-G57 but **non-conformant** on other GPUs. The following
+hardware is currently supported:
 
 =========  ============ ============ =======
 Product    Architecture OpenGL ES    OpenGL
 =========  ============ ============ =======
+Mali T620  Midgard (v4) 2.0          2.1
 Mali T720  Midgard (v4) 2.0          2.1
 Mali T760  Midgard (v5) 3.1          3.1
 Mali T820  Midgard (v5) 3.1          3.1
@@ -20,9 +21,10 @@ Mali G31   Bifrost (v7) 3.1          3.1
 Mali G51   Bifrost (v7) 3.1          3.1
 Mali G52   Bifrost (v7) 3.1          3.1
 Mali G76   Bifrost (v7) 3.1          3.1
+Mali G57   Valhall (v9) 3.1          3.1
 =========  ============ ============ =======
 
-Other Midgard and Bifrost chips (T604, T628, G71) are not yet supported.
+Other Midgard and Bifrost chips (T604, G71) are not yet supported.
 
 Older Mali chips based on the Utgard architecture (Mali 400, Mali 450) are
 supported in the Lima driver, not Panfrost. Lima is also available in Mesa.
@@ -41,7 +43,7 @@ it's easy to add support, see the commit ``cff7de4bb597e9`` as an example.
 LLVM is *not* required by Panfrost's compilers. LLVM support in Mesa can
 safely be disabled for most OpenGL ES users with Panfrost.
 
-Build like ``meson . build/ -Ddri-drivers= -Dvulkan-drivers=
+Build like ``meson . build/ -Dvulkan-drivers=
 -Dgallium-drivers=panfrost -Dllvm=disabled`` for a build directory
 ``build``.
 
@@ -52,8 +54,26 @@ Chat
 ----
 
 Panfrost developers and users hang out on IRC at ``#panfrost`` on OFTC. Note
-that registering and authenticating with `NickServ` is required to prevent
-spam. `Join the chat. <https://webchat.oftc.net/?channels=#panfrost>`_
+that registering and authenticating with ``NickServ`` is required to prevent
+spam. `Join the chat. <https://webchat.oftc.net/?channels=panfrost>`_
+
+Compressed texture support
+--------------------------
+
+In the driver, Panfrost supports ASTC, ETC, and all BCn formats (e.g. RGTC,
+S3TC, etc.) However, Panfrost depends on the hardware to support these formats
+efficiently.  All supported Mali architectures support these formats, but not
+every system-on-chip with a Mali GPU support all these formats. Many lower-end
+systems lack support for some BCn formats, which can cause problems when playing
+desktop games with Panfrost. To check whether this issue applies to your
+system-on-chip, Panfrost includes a ``panfrost_texfeatures`` tool to query
+supported formats.
+
+To use this tool, include the option ``-Dtools=panfrost`` when configuring Mesa.
+Then inside your Mesa build directory, the tool is located at
+``src/panfrost/tools/panfrost_texfeatures``. Copy it to your target device,
+set as executable as necessary, and run on the target device. A table of
+supported formats will be printed to standard output.
 
 drm-shim
 --------
@@ -69,7 +89,7 @@ Although Mali hardware is usually paired with an Arm CPU, Panfrost is portable C
 code and should work on any Linux machine. In particular, you can test the
 compiler on shader-db on an Intel desktop.
 
-To build Mesa with Panfrost drm-shim, configure meson with
+To build Mesa with Panfrost drm-shim, configure Meson with
 ``-Dgallium-drivers=panfrost`` and ``-Dtools=drm-shim``. See the above
 building section for a full invocation. The drm-shim binary will be built to
 ``build/src/panfrost/drm-shim/libpanfrost_noop_drm_shim.so``.
@@ -88,6 +108,7 @@ Mali-T720  Midgard (v4) 720
 Mali-T860  Midgard (v5) 860
 Mali-G72   Bifrost (v6) 6221
 Mali-G52   Bifrost (v7) 7212
+Mali-G57   Valhall (v9) 9093
 =========  ============ =======
 
 Additional GPU IDs are enumerated in the ``panfrost_model_list`` list in

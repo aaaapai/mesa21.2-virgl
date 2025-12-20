@@ -41,6 +41,7 @@ u_driconf_fill_st_options(struct st_config_options *options,
    query_bool_option(disable_blend_func_extended);
    query_bool_option(disable_arb_gpu_shader5);
    query_bool_option(disable_glsl_line_continuations);
+   query_bool_option(disable_uniform_array_resize);
    query_bool_option(force_compat_shaders);
    query_bool_option(force_glsl_extensions_warn);
    query_int_option(force_glsl_version);
@@ -64,6 +65,7 @@ u_driconf_fill_st_options(struct st_config_options *options,
    query_bool_option(glthread_nop_check_framebuffer_status);
    query_bool_option(ignore_map_unsynchronized);
    query_bool_option(force_gl_names_reuse);
+   query_bool_option(force_gl_map_buffer_synchronized);
    query_bool_option(transcode_etc);
    query_bool_option(transcode_astc);
    query_string_option(force_gl_vendor);

@@ -245,8 +245,6 @@ fd_hw_get_query_result(struct fd_context *ctx, struct fd_query *q, bool wait,
          p->accumulate_result(ctx, sampptr(period->start, i, ptr),
                               sampptr(period->end, i, ptr), result);
       }
-
-      fd_bo_cpu_fini(rsc->bo);
    }
 
    return true;
@@ -294,7 +292,7 @@ fd_hw_sample_init(struct fd_batch *batch, uint32_t size)
    struct fd_hw_sample *samp = slab_alloc_st(&batch->ctx->sample_pool);
    pipe_reference_init(&samp->reference, 1);
    samp->size = size;
-   debug_assert(util_is_power_of_two_or_zero(size));
+   assert(util_is_power_of_two_or_zero(size));
    batch->next_sample_offset = align(batch->next_sample_offset, size);
    samp->offset = batch->next_sample_offset;
    /* NOTE: slab_alloc_st() does not zero out the buffer: */

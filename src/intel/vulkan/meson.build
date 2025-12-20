@@ -18,6 +18,17 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+subdir('shaders')
+
+inc_anv = include_directories('.')
+
+anv_flags = [
+  no_override_init_args,
+  c_sse2_args,
+]
+
+anv_cpp_flags = []
+
 anv_entrypoints = custom_target(
   'anv_entrypoints',
   input : [vk_entrypoints_gen, vk_api_xml],
@@ -25,13 +36,30 @@ anv_entrypoints = custom_target(
   command : [
     prog_python, '@INPUT0@', '--xml', '@INPUT1@', '--proto', '--weak',
     '--out-h', '@OUTPUT0@', '--out-c', '@OUTPUT1@', '--prefix', 'anv',
-    '--device-prefix', 'gfx7', '--device-prefix', 'gfx75',
-    '--device-prefix', 'gfx8', '--device-prefix', 'gfx9',
-    '--device-prefix', 'gfx11', '--device-prefix', 'gfx12',
+    '--device-prefix', 'gfx9',
+    '--device-prefix', 'gfx11',
+    '--device-prefix', 'gfx12',
     '--device-prefix', 'gfx125',
+    '--device-prefix', 'doom64',
+    '--device-prefix', 'hitman3'
   ],
   depend_files : vk_entrypoints_gen_depend_files,
 )
+
+idep_anv_headers = declare_dependency(
+  sources : [anv_entrypoints[0]],
+  include_directories : inc_anv,
+)
+
+if with_intel_vk_rt
+  subdir('grl')
+  optional_libgrl = [libgrl]
+  anv_flags += '-DANV_SUPPORT_RT=1'
+else
+  idep_grl = null_dep
+  optional_libgrl = []
+  anv_flags += '-DANV_SUPPORT_RT=0'
+endif
 
 intel_icd = custom_target(
   'intel_icd',
@@ -76,32 +104,36 @@ anv_per_hw_ver_files = files(
   'genX_query.c',
   'genX_state.c',
 )
-foreach g : [['70', ['gfx7_cmd_buffer.c']], ['75', ['gfx7_cmd_buffer.c']],
-             ['80', ['gfx8_cmd_buffer.c']], ['90', ['gfx8_cmd_buffer.c']],
-             ['110', ['gfx8_cmd_buffer.c']], ['120', ['gfx8_cmd_buffer.c']],
+if with_intel_vk_rt
+  anv_per_hw_ver_files += files('genX_acceleration_structure.c',)
+endif
+
+foreach g : [['90', ['gfx8_cmd_buffer.c']],
+             ['110', ['gfx8_cmd_buffer.c']],
+             ['120', ['gfx8_cmd_buffer.c']],
              ['125', ['gfx8_cmd_buffer.c']]]
   _gfx_ver = g[0]
   libanv_per_hw_ver_libs += static_library(
     'anv_per_hw_ver@0@'.format(_gfx_ver),
-    [anv_per_hw_ver_files, g[1], anv_entrypoints[0]],
+    [anv_per_hw_ver_files, g[1], anv_entrypoints[0],
+     generated_draws_spv_h, generated_draws_count_spv_h],
     include_directories : [
       inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_compiler, inc_intel,
     ],
-    c_args : [
-      no_override_init_args, c_sse2_args,
-      '-DGFX_VERx10=@0@'.format(_gfx_ver),
-    ],
+    c_args : anv_flags + ['-DGFX_VERx10=@0@'.format(_gfx_ver)],
     gnu_symbol_visibility : 'hidden',
     dependencies : [
       dep_libdrm, dep_valgrind, idep_nir_headers, idep_genxml,
       idep_vulkan_util_headers, idep_vulkan_wsi_headers,
       idep_vulkan_runtime_headers, idep_intel_driver_ds_headers,
+      idep_grl,
     ],
   )
 endforeach
 
 libanv_files = files(
-  'anv_acceleration_structure.c',
+  'layers/anv_doom64.c',
+  'layers/anv_hitman3.c',
   'anv_allocator.c',
   'anv_android.h',
   'anv_batch_chain.c',
@@ -111,17 +143,18 @@ libanv_files = files(
   'anv_descriptor_set.c',
   'anv_device.c',
   'anv_formats.c',
+  'anv_generated_indirect_draws.c',
   'anv_genX.h',
   'anv_image.c',
   'anv_measure.c',
   'anv_measure.h',
   'anv_nir.h',
-  'anv_nir_add_base_work_group_id.c',
   'anv_nir_apply_pipeline_layout.c',
   'anv_nir_compute_push_layout.c',
   'anv_nir_lower_multiview.c',
   'anv_nir_lower_ubo_loads.c',
   'anv_nir_lower_ycbcr_textures.c',
+  'anv_nir_push_descriptor_analysis.c',
   'anv_perf.c',
   'anv_pipeline.c',
   'anv_pipeline_cache.c',
@@ -141,12 +174,6 @@ anv_deps = [
   idep_vulkan_runtime_headers,
   idep_vulkan_wsi_headers,
 ]
-anv_flags = [
-  no_override_init_args,
-  c_sse2_args,
-]
-
-anv_cpp_flags = []
 
 if with_platform_x11
   anv_deps += dep_xcb_dri3
@@ -172,7 +199,7 @@ libanv_common = static_library(
   'anv_common',
   [
     libanv_files, anv_entrypoints, sha1_h,
-    gen_xml_pack,
+    gen_xml_pack, float64_spv_h,
   ],
   include_directories : [
     inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_intel, inc_compiler,
@@ -181,7 +208,7 @@ libanv_common = static_library(
   c_args : anv_flags,
   cpp_args : anv_cpp_flags,
   gnu_symbol_visibility : 'hidden',
-  dependencies : anv_deps,
+  dependencies : anv_deps
 )
 
 libvulkan_intel = shared_library(
@@ -190,15 +217,15 @@ libvulkan_intel = shared_library(
   include_directories : [
     inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_intel, inc_compiler,
   ],
-  link_whole : [libanv_common, libanv_per_hw_ver_libs],
+  link_whole : [libanv_common, libanv_per_hw_ver_libs] + optional_libgrl,
   link_with : [
-    libintel_compiler, libintel_dev, libisl, libblorp, libintel_perf,
+    libintel_compiler, libisl, libblorp, libintel_perf,
   ],
   dependencies : [
     dep_thread, dep_dl, dep_m, anv_deps, idep_libintel_common,
     idep_nir, idep_genxml, idep_vulkan_util, idep_vulkan_wsi,
     idep_vulkan_runtime, idep_mesautil, idep_xmlconfig,
-    idep_intel_driver_ds,
+    idep_intel_driver_ds, idep_intel_dev,
   ],
   c_args : anv_flags,
   gnu_symbol_visibility : 'hidden',
@@ -228,13 +255,13 @@ if with_tests
     ],
     link_whole : libanv_common,
     link_with : [
-      libanv_per_hw_ver_libs, libintel_compiler, libintel_common, libintel_dev,
+      libanv_per_hw_ver_libs, libintel_compiler, libintel_common,
       libisl, libblorp, libintel_perf,
-    ],
+    ] + optional_libgrl,
     dependencies : [
       dep_thread, dep_dl, dep_m, anv_deps,
       idep_nir, idep_vulkan_util, idep_vulkan_wsi, idep_vulkan_runtime,
-      idep_mesautil,
+      idep_mesautil, idep_intel_dev,
     ],
     c_args : anv_flags,
     gnu_symbol_visibility : 'hidden',
@@ -253,7 +280,7 @@ if with_tests
         dependencies : [
           dep_libdrm, dep_thread, dep_m, dep_valgrind,
           idep_vulkan_util, idep_vulkan_wsi_headers,
-          idep_vulkan_runtime, idep_intel_driver_ds,
+          idep_vulkan_runtime, idep_intel_driver_ds, idep_intel_dev,
         ],
         include_directories : [
           inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_intel, inc_compiler,

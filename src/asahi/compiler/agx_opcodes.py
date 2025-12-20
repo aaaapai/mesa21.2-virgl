@@ -25,14 +25,20 @@ opcodes = {}
 immediates = {}
 enums = {}
 
+VARIABLE = ~0
+
 class Opcode(object):
-   def __init__(self, name, dests, srcs, imms, is_float, can_eliminate, encoding_16, encoding_32):
+   def __init__(self, name, dests, srcs, imms, is_float, can_eliminate,
+                can_reorder, encoding_16, encoding_32):
       self.name = name
-      self.dests = dests
-      self.srcs = srcs
+      self.dests = dests if dests != VARIABLE else 0
+      self.srcs = srcs if srcs != VARIABLE else 0
+      self.variable_srcs = (srcs == VARIABLE)
+      self.variable_dests = (dests == VARIABLE)
       self.imms = imms
       self.is_float = is_float
       self.can_eliminate = can_eliminate
+      self.can_reorder = can_reorder
       self.encoding_16 = encoding_16
       self.encoding_32 = encoding_32
 
@@ -57,11 +63,12 @@ class Encoding(object):
       if self.extensible:
          assert(length_long == length_short + (4 if length_short > 8 else 2))
 
-def op(name, encoding_32, dests = 1, srcs = 0, imms = [], is_float = False, can_eliminate = True, encoding_16 = None):
+def op(name, encoding_32, dests = 1, srcs = 0, imms = [], is_float = False,
+        can_eliminate = True, can_reorder = True, encoding_16 = None):
    encoding_16 = Encoding(encoding_16) if encoding_16 is not None else None
    encoding_32 = Encoding(encoding_32) if encoding_32 is not None else None
 
-   opcodes[name] = Opcode(name, dests, srcs, imms, is_float, can_eliminate, encoding_16, encoding_32)
+   opcodes[name] = Opcode(name, dests, srcs, imms, is_float, can_eliminate, can_reorder, encoding_16, encoding_32)
 
 def immediate(name, ctype = "uint32_t"):
    imm = Immediate(name, ctype)
@@ -82,19 +89,35 @@ INDEX = immediate("index")
 COMPONENT = immediate("component")
 CHANNELS = immediate("channels")
 TRUTH_TABLE = immediate("truth_table")
-ROUND = immediate("round")
+ROUND = immediate("round", "enum agx_round")
 SHIFT = immediate("shift")
 MASK = immediate("mask")
 BFI_MASK = immediate("bfi_mask")
 LOD_MODE = immediate("lod_mode", "enum agx_lod_mode")
-DIM = immediate("dim", "enum agx_dim")
+PIXEL_OFFSET = immediate("pixel_offset")
+
+DIM = enum("dim", {
+    0: '1d',
+    1: '1d_array',
+    2: '2d',
+    3: '2d_array',
+    4: '2d_ms',
+    5: '3d',
+    6: 'cube',
+    7: 'cube_array',
+    8: '2d_ms_array',
+})
+
+OFFSET = immediate("offset", "bool")
+SHADOW = immediate("shadow", "bool")
 SCOREBOARD = immediate("scoreboard")
-ICOND = immediate("icond")
-FCOND = immediate("fcond")
+ICOND = immediate("icond", "enum agx_icond")
+FCOND = immediate("fcond", "enum agx_fcond")
 NEST = immediate("nest")
 INVERT_COND = immediate("invert_cond")
 NEST = immediate("nest")
 TARGET = immediate("target", "agx_block *")
+ZS = immediate("zs")
 PERSPECTIVE = immediate("perspective", "bool")
 SR = enum("sr", {
    0:  'threadgroup_position_in_grid.x',
@@ -128,6 +151,13 @@ def funop(name, opcode):
       0x3F | L | (((1 << 14) - 1) << 28), 6, _),
       srcs = 1, is_float = True)
 
+def iunop(name, opcode):
+    assert(opcode < 4)
+    op(name, (0x3E | (opcode << 26),
+              0x7F | L | (((1 << 14) - 1) << 26),
+              6, _),
+       srcs = 1)
+
 # Listing of opcodes
 funop("floor",     0b000000)
 funop("srsqrt",    0b000001)
@@ -142,6 +172,10 @@ funop("sin_pt_2",  0b001110)
 funop("ceil",      0b010000)
 funop("trunc",     0b100000)
 funop("roundeven", 0b110000)
+
+iunop("bitrev",    0b01)
+iunop("popcount",  0b10)
+iunop("ffs",       0b11)
 
 op("fadd",
       encoding_16 = (0x26 | L, 0x3F | L, 6, _),
@@ -191,16 +225,31 @@ op("fcmpsel",
       encoding_32 = (0x02, 0x7F, 8, 10),
       srcs = 4, imms = [FCOND])
 
-# sources are coordinates, LOD, texture, sampler, offset
+# sources are coordinates, LOD, texture, sampler, shadow/offset
 # TODO: anything else?
 op("texture_sample",
-      encoding_32 = (0x32, 0x7F, 8, 10), # XXX WRONG SIZE
-      srcs = 5, imms = [DIM, LOD_MODE, MASK, SCOREBOARD])
+      encoding_32 = (0x31, 0x7F, 8, 10), # XXX WRONG SIZE
+      srcs = 5, imms = [DIM, LOD_MODE, MASK, SCOREBOARD, OFFSET, SHADOW])
+op("texture_load",
+      encoding_32 = (0x71, 0x7F, 8, 10), # XXX WRONG SIZE
+      srcs = 5, imms = [DIM, LOD_MODE, MASK, SCOREBOARD, OFFSET])
 
 # sources are base, index
 op("device_load",
       encoding_32 = (0x05, 0x7F, 6, 8),
-      srcs = 2, imms = [FORMAT, MASK, SCOREBOARD])
+      srcs = 2, imms = [FORMAT, MASK, SHIFT, SCOREBOARD], can_reorder = False)
+
+# sources are value, base, index
+# TODO: Consider permitting the short form
+op("device_store",
+      encoding_32 = (0x45 | (1 << 47), 0, 8, _),
+      dests = 0, srcs = 3, imms = [FORMAT, MASK, SHIFT, SCOREBOARD], can_eliminate = False)
+
+# sources are value, index
+# TODO: Consider permitting the short form
+op("uniform_store",
+      encoding_32 = ((0b111 << 27) | 0b1000101 | (1 << 47), 0, 8, _),
+      dests = 0, srcs = 2, can_eliminate = False)
 
 op("wait", (0x38, 0xFF, 2, _), dests = 0,
       can_eliminate = False, imms = [SCOREBOARD])
@@ -209,12 +258,16 @@ op("get_sr", (0x72, 0x7F | L, 4, _), dests = 1, imms = [SR])
 
 op("sample_mask", (0x7fc1, 0xffff, 6, _), dests = 0, srcs = 1, can_eliminate = False)
 
-# Essentially same encoding
-op("ld_tile", (0x49, 0x7F, 8, _), dests = 1, srcs = 0,
-      can_eliminate = False, imms = [FORMAT])
+# Sources: sample mask, combined depth/stencil
+op("zs_emit", (0x41, 0xFF | L, 4, _), dests = 0, srcs = 2,
+              can_eliminate = False, imms = [ZS])
 
-op("st_tile", (0x09, 0x7F, 8, _), dests = 0, srcs = 1,
-      can_eliminate = False, imms = [FORMAT])
+# Essentially same encoding. Last source is the sample mask
+op("ld_tile", (0x49, 0x7F, 8, _), dests = 1, srcs = 1,
+        imms = [FORMAT, MASK, PIXEL_OFFSET], can_reorder = False)
+
+op("st_tile", (0x09, 0x7F, 8, _), dests = 0, srcs = 2,
+      can_eliminate = False, imms = [FORMAT, MASK, PIXEL_OFFSET])
 
 for (name, exact) in [("any", 0xC000), ("none", 0xC200)]:
    op("jmp_exec_" + name, (exact, (1 << 16) - 1, 6, _), dests = 0, srcs = 0,
@@ -238,12 +291,38 @@ for is_float in [False, True]:
 
 op("bitop", (0x7E, 0x7F, 6, _), srcs = 2, imms = [TRUTH_TABLE])
 op("convert", (0x3E | L, 0x7F | L | (0x3 << 38), 6, _), srcs = 2, imms = [ROUND]) 
-op("ld_vary", (0x21, 0xBF, 8, _), srcs = 1, imms = [CHANNELS, PERSPECTIVE])
-op("ld_vary_flat", (0xA1, 0xBF, 8, _), srcs = 1, imms = [CHANNELS])
+op("iter", (0x21, 0xBF, 8, _), srcs = 2, imms = [CHANNELS, PERSPECTIVE])
+op("ldcf", (0xA1, 0xBF, 8, _), srcs = 1, imms = [CHANNELS])
 op("st_vary", None, dests = 0, srcs = 2, can_eliminate = False)
+op("no_varyings", (0x80000051, 0xFFFFFFFF, 4, _), dests = 0, can_eliminate = False)
 op("stop", (0x88, 0xFFFF, 2, _), dests = 0, can_eliminate = False)
 op("trap", (0x08, 0xFFFF, 2, _), dests = 0, can_eliminate = False)
 op("writeout", (0x48, 0xFF, 4, _), dests = 0, imms = [WRITEOUT], can_eliminate = False)
 
-op("p_combine", _, srcs = 4)
-op("p_extract", _, srcs = 1, imms = [COMPONENT])
+# Sources are the image and the offset within shared memory
+# TODO: Do we need the short encoding?
+op("block_image_store", (0xB1, 0xFF, 10, _), dests = 0, srcs = 2,
+   imms = [FORMAT, DIM], can_eliminate = False)
+
+# Convenient aliases.
+op("mov", _, srcs = 1)
+op("not", _, srcs = 1)
+op("xor", _, srcs = 2)
+op("and", _, srcs = 2)
+op("or", _, srcs = 2)
+
+# Indicates the logical end of the block, before final branches/control flow
+op("logical_end", _, dests = 0, srcs = 0, can_eliminate = False)
+
+op("collect", _, srcs = VARIABLE)
+op("split", _, srcs = 1, dests = VARIABLE)
+op("phi", _, srcs = VARIABLE)
+
+op("unit_test", _, dests = 0, srcs = 1, can_eliminate = False)
+
+# Like mov, but takes a register and can only appear at the start. Gauranteed
+# to be coalesced during RA, rather than lowered to a real move. 
+op("preload", _, srcs = 1)
+
+# Set the nesting counter. Lowers to mov r0l, x after RA.
+op("nest", _, dests = 0, srcs = 1, can_eliminate = False)

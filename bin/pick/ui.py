@@ -47,6 +47,13 @@ class RootWidget(urwid.Frame):
         super().__init__(*args, **kwargs)
         self.ui = ui
 
+
+class CommitList(urwid.ListBox):
+
+    def __init__(self, *args, ui: 'UI', **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ui = ui
+
     def keypress(self, size: int, key: str) -> typing.Optional[str]:
         if key == 'q':
             raise urwid.ExitMainLoop()
@@ -72,21 +79,36 @@ class CommitWidget(urwid.Text):
         self.commit = commit
 
     async def apply(self) -> None:
-        async with self.ui.git_lock:
-            result, err = await self.commit.apply(self.ui)
+        async with core.GIT_LOCK.write():
+            result, err = await self.commit.apply()
             if not result:
+                await self.ui.feedback(
+                    f'{self.commit.sha} ({self.commit.description}) failed to apply\n{err}')
                 self.ui.chp_failed(self, err)
             else:
+                await self.ui.feedback(
+                    f'{self.commit.sha} ({self.commit.description}) applied successfully')
+                await self.ui.check_new_commits(self.commit)
+                await self.ui.save()
+                await core.commit_state(amend=True)
+
                 self.ui.remove_commit(self)
 
     async def denominate(self) -> None:
-        async with self.ui.git_lock:
-            await self.commit.denominate(self.ui)
+        async with core.GIT_LOCK.write():
+            await self.commit.denominate()
+            await self.ui.save()
+            await core.commit_state(message=f'Mark {self.commit.sha} as denominated')
+            await self.ui.feedback(f'{self.commit.sha} ({self.commit.description}) denominated successfully')
             self.ui.remove_commit(self)
 
     async def backport(self) -> None:
-        async with self.ui.git_lock:
-            await self.commit.backport(self.ui)
+        async with core.GIT_LOCK.write():
+            await self.commit.backport()
+            await self.ui.check_new_commits(self.commit)
+            await self.ui.save()
+            await core.commit_state(message=f'Mark {self.commit.sha} as backported')
+            await self.ui.feedback(f'{self.commit.sha} ({self.commit.description}) marked as backported')
             self.ui.remove_commit(self)
 
     def keypress(self, size: int, key: str) -> typing.Optional[str]:
@@ -101,6 +123,23 @@ class CommitWidget(urwid.Text):
         return None
 
 
+class FocusAwareEdit(urwid.Edit):
+
+    """An Edit type that signals when it comes into and leaves focus."""
+
+    signals = urwid.Edit.signals + ['focus_changed']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__is_focus = False
+
+    def render(self, size: typing.Tuple[int], focus: bool = False) -> urwid.Canvas:
+        if focus != self.__is_focus:
+            self._emit("focus_changed", focus)
+            self.__is_focus = focus
+        return super().render(size, focus)
+
+
 @attr.s(slots=True)
 class UI:
 
@@ -112,6 +151,7 @@ class UI:
 
     commit_list: typing.List['urwid.Button'] = attr.ib(factory=lambda: urwid.SimpleFocusListWalker([]), init=False)
     feedback_box: typing.List['urwid.Text'] = attr.ib(factory=lambda: urwid.SimpleFocusListWalker([]), init=False)
+    notes: 'FocusAwareEdit' = attr.ib(factory=lambda: FocusAwareEdit('', multiline=True), init=False)
     header: 'urwid.Text' = attr.ib(factory=lambda: urwid.Text('Mesa Stable Picker', align='center'), init=False)
     body: 'urwid.Columns' = attr.ib(attr.Factory(lambda s: s._make_body(), True), init=False)
     footer: 'urwid.Columns' = attr.ib(attr.Factory(lambda s: s._make_footer(), True), init=False)
@@ -120,12 +160,37 @@ class UI:
 
     previous_commits: typing.List['core.Commit'] = attr.ib(factory=list, init=False)
     new_commits: typing.List['core.Commit'] = attr.ib(factory=list, init=False)
-    git_lock: asyncio.Lock = attr.ib(factory=asyncio.Lock, init=False)
+
+    def _get_current_commit(self) -> typing.Optional['core.Commit']:
+        entry = self.commit_list.get_focus()[0]
+        return entry.original_widget.commit if entry is not None else None
+
+    def _change_notes_cb(self) -> None:
+        commit = self._get_current_commit()
+        if commit and commit.notes:
+            self.notes.set_edit_text(commit.notes)
+        else:
+            self.notes.set_edit_text('')
+
+    def _change_notes_focus_cb(self, notes: 'FocusAwareEdit', focus: 'bool') -> 'None':
+        # in the case of coming into focus we don't want to do anything
+        if focus:
+            return
+        commit = self._get_current_commit()
+        if commit is None:
+            return
+        text: str = notes.get_edit_text()
+        if text != commit.notes:
+            asyncio.ensure_future(commit.update_notes(self, text))
 
     def _make_body(self) -> 'urwid.Columns':
-        commits = urwid.ListBox(self.commit_list)
+        commits = CommitList(self.commit_list, ui=self)
         feedback = urwid.ListBox(self.feedback_box)
-        return urwid.Columns([commits, feedback])
+        urwid.connect_signal(self.commit_list, 'modified', self._change_notes_cb)
+        notes = urwid.Filler(self.notes)
+        urwid.connect_signal(self.notes, 'focus_changed', self._change_notes_focus_cb)
+
+        return urwid.Columns([urwid.LineBox(commits), urwid.Pile([urwid.LineBox(notes), urwid.LineBox(feedback)])])
 
     def _make_footer(self) -> 'urwid.Columns':
         body = [
@@ -134,12 +199,12 @@ class UI:
             urwid.Text('[C]herry Pick'),
             urwid.Text('[D]enominate'),
             urwid.Text('[B]ackport'),
-            urwid.Text('[A]pply additional patch')
+            urwid.Text('[A]pply additional patch'),
         ]
         return urwid.Columns(body)
 
     def _make_root(self) -> 'RootWidget':
-        return RootWidget(self.body, self.header, self.footer, 'body', ui=self)
+        return RootWidget(self.body, urwid.LineBox(self.header), urwid.LineBox(self.footer), 'body', ui=self)
 
     def render(self) -> 'WidgetType':
         asyncio.ensure_future(self.update())
@@ -173,7 +238,18 @@ class UI:
             if commit.nominated and commit.resolution is core.Resolution.UNRESOLVED:
                 b = urwid.AttrMap(CommitWidget(self, commit), None, focus_map='reversed')
                 self.commit_list.append(b)
-        self.save()
+        await self.save()
+
+    async def check_new_commits(self, commit: core.Commit) -> None:
+        """After applying a commit, check for any new commits that affect that commit.
+
+        :param commit: _description_
+        """
+        new = await core.changes_commit(
+            commit, [c.base_widget.commit for c in self.commit_list])
+        if new:
+            # TODO: this will place them out of order
+            self.commit_list.extend([CommitWidget(self, c) for c in new])
 
     async def feedback(self, text: str) -> None:
         self.feedback_box.append(urwid.AttrMap(urwid.Text(text), None))
@@ -186,7 +262,7 @@ class UI:
                 del self.commit_list[i]
                 break
 
-    def save(self):
+    async def save(self) -> None:
         core.save(itertools.chain(self.new_commits, self.previous_commits))
 
     def add(self) -> None:
@@ -211,7 +287,8 @@ class UI:
             else:
                 raise RuntimeError(f"Couldn't find {sha}")
 
-            await commit.apply(self)
+            wid = CommitWidget(self, commit)
+            await wid.apply()
 
         q = urwid.Edit("Commit sha\n")
         ok_btn = urwid.Button('Ok')

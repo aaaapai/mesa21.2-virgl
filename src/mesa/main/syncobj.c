@@ -56,7 +56,7 @@
  */
 
 #include <inttypes.h>
-#include "glheader.h"
+#include "util/glheader.h"
 
 #include "context.h"
 #include "macros.h"
@@ -268,8 +268,8 @@ _mesa_DeleteSync(GLsync sync)
 }
 
 
-static GLsync
-fence_sync(struct gl_context *ctx, GLenum condition, GLbitfield flags)
+GLsync
+_mesa_fence_sync(struct gl_context *ctx, GLenum condition, GLbitfield flags)
 {
    struct gl_sync_object *syncObj;
 
@@ -308,7 +308,7 @@ GLsync GLAPIENTRY
 _mesa_FenceSync_no_error(GLenum condition, GLbitfield flags)
 {
    GET_CURRENT_CONTEXT(ctx);
-   return fence_sync(ctx, condition, flags);
+   return _mesa_fence_sync(ctx, condition, flags);
 }
 
 
@@ -329,7 +329,7 @@ _mesa_FenceSync(GLenum condition, GLbitfield flags)
       return 0;
    }
 
-   return fence_sync(ctx, condition, flags);
+   return _mesa_fence_sync(ctx, condition, flags);
 }
 
 
@@ -409,14 +409,17 @@ wait_sync(struct gl_context *ctx, struct gl_sync_object *syncObj,
 
    /* Nothing needs to be done here if the driver does not support async
     * flushes. */
-   if (!pipe->fence_server_sync)
+   if (!pipe->fence_server_sync) {
+      _mesa_unref_sync_object(ctx, syncObj, 1);
       return;
+   }
 
    /* If the fence doesn't exist, assume it's signalled. */
    simple_mtx_lock(&syncObj->mutex);
    if (!syncObj->fence) {
       simple_mtx_unlock(&syncObj->mutex);
       syncObj->StatusFlag = GL_TRUE;
+      _mesa_unref_sync_object(ctx, syncObj, 1);
       return;
    }
 

@@ -57,6 +57,7 @@ public:
    validation_test();
    virtual ~validation_test();
 
+   struct brw_isa_info isa;
    struct brw_codegen *p;
    struct intel_device_info devinfo;
 };
@@ -79,7 +80,9 @@ void validation_test::SetUp()
 
    intel_get_device_info_from_pci_id(devid, &devinfo);
 
-   brw_init_codegen(&devinfo, p, p);
+   brw_init_isa_info(&isa, &devinfo);
+
+   brw_init_codegen(&isa, p, p);
 }
 
 struct gfx_name {
@@ -90,22 +93,24 @@ struct gfx_name {
    }
 };
 
-INSTANTIATE_TEST_CASE_P(eu_assembly, validation_test,
-                        ::testing::ValuesIn(gfx_names),
-                        gfx_name());
+INSTANTIATE_TEST_SUITE_P(
+   eu_assembly, validation_test,
+   ::testing::ValuesIn(gfx_names),
+   gfx_name()
+);
 
 static bool
 validate(struct brw_codegen *p)
 {
    const bool print = getenv("TEST_DEBUG");
-   struct disasm_info *disasm = disasm_initialize(p->devinfo, NULL);
+   struct disasm_info *disasm = disasm_initialize(p->isa, NULL);
 
    if (print) {
       disasm_new_inst_group(disasm, 0);
       disasm_new_inst_group(disasm, p->next_insn_offset);
    }
 
-   bool ret = brw_validate_instructions(p->devinfo, p->store, 0,
+   bool ret = brw_validate_instructions(p->isa, p->store, 0,
                                         p->next_insn_offset, disasm);
 
    if (print) {
@@ -180,7 +185,7 @@ TEST_P(validation_test, opcode46)
     *              reserved on Gen 7
     *              "goto" on Gfx8+
     */
-   brw_next_insn(p, brw_opcode_decode(&devinfo, 46));
+   brw_next_insn(p, brw_opcode_decode(&isa, 46));
 
    if (devinfo.ver == 7) {
       EXPECT_FALSE(validate(p));
@@ -2582,7 +2587,7 @@ TEST_P(validation_test, qword_low_power_no_64bit_arf)
          brw_MUL(p, retype(inst[i].dst, inst[i].dst_type),
                     retype(inst[i].src, inst[i].src_type),
                     retype(zero, inst[i].src_type));
-         brw_inst_set_opcode(&devinfo, last_inst, inst[i].opcode);
+         brw_inst_set_opcode(&isa, last_inst, inst[i].opcode);
       }
       brw_inst_set_exec_size(&devinfo, last_inst, inst[i].exec_size);
       brw_inst_set_acc_wr_control(&devinfo, last_inst, inst[i].acc_wr);
@@ -2593,8 +2598,15 @@ TEST_P(validation_test, qword_low_power_no_64bit_arf)
       brw_inst_set_src0_width(&devinfo, last_inst, inst[i].src_width);
       brw_inst_set_src0_hstride(&devinfo, last_inst, inst[i].src_hstride);
 
+      /* Note: The Broadwell PRM also lists the restriction that destination
+       * of DWord multiplication cannot be the accumulator.
+       */
       if (devinfo.platform == INTEL_PLATFORM_CHV ||
-          intel_device_info_is_9lp(&devinfo)) {
+          intel_device_info_is_9lp(&devinfo) ||
+          (devinfo.ver == 8 &&
+           inst[i].opcode == BRW_OPCODE_MUL &&
+           brw_inst_dst_reg_file(&devinfo, last_inst) == BRW_ARCHITECTURE_REGISTER_FILE &&
+           brw_inst_dst_da_reg_nr(&devinfo, last_inst) != BRW_ARF_NULL)) {
          EXPECT_EQ(inst[i].expected_result, validate(p));
       } else {
          EXPECT_TRUE(validate(p));

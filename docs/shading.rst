@@ -2,7 +2,7 @@ Shading Language
 ================
 
 This page describes the features and status of Mesa's support for the
-`OpenGL Shading Language <https://opengl.org/documentation/glsl/>`__.
+`OpenGL Shading Language <https://www.khronos.org/opengl/wiki/OpenGL_Shading_Language>`__.
 
 .. _envvars:
 
@@ -13,7 +13,8 @@ The **MESA_GLSL** environment variable can be set to a comma-separated
 list of keywords to control some aspects of the GLSL compiler and shader
 execution. These are generally used for debugging.
 
--  **dump** - print GLSL shader code to stdout at link time
+-  **dump** - print GLSL shader code, IR, and NIR to stdout at link time
+-  **source** - print GLSL shader code to stdout at link time
 -  **log** - log all GLSL shaders to files. The filenames will be
    "shader_X.vert" or "shader_X.frag" where X the shader ID.
 -  **cache_info** - print debug information about shader cache
@@ -70,9 +71,9 @@ language.
 
 Several GLSL extensions are also supported:
 
--  GL_ARB_draw_buffers
--  GL_ARB_fragment_coord_conventions
--  GL_ARB_shader_bit_encoding
+-  :ext:`GL_ARB_draw_buffers`
+-  :ext:`GL_ARB_fragment_coord_conventions`
+-  :ext:`GL_ARB_shader_bit_encoding`
 
 Unsupported Features
 --------------------
@@ -94,7 +95,8 @@ Implementation Notes
 --------------------
 
 -  Shading language programs are compiled into low-level programs very
-   similar to those of GL_ARB_vertex/fragment_program.
+   similar to those of :ext:`GL_ARB_vertex_program` /
+   :ext:`GL_ARB_fragment_program`.
 -  All vector types (vec2, vec3, vec4, bvec2, etc) currently occupy full
    float[4] registers.
 -  Float constants and variables are packed so that up to four floats
@@ -141,7 +143,7 @@ After building Mesa, the compiler can be found at
 src/compiler/glsl/glsl_compiler
 
 Here's an example of using the compiler to compile a vertex shader and
-emit GL_ARB_vertex_program-style instructions:
+emit :ext:`GL_ARB_vertex_program`-style instructions:
 
 .. code-block:: console
 

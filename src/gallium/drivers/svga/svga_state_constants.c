@@ -1,6 +1,5 @@
-
 /**********************************************************
- * Copyright 2008-2009 VMware, Inc.  All rights reserved.
+ * Copyright 2008-2022 VMware, Inc.  All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -462,7 +461,7 @@ emit_const_range(struct svga_context *svga,
           */
          if (SVGA_DEBUG & DEBUG_CONSTS)
             debug_printf("%s %s %d: %f %f %f %f\n",
-                         __FUNCTION__,
+                         __func__,
                          shader == PIPE_SHADER_VERTEX ? "VERT" : "FRAG",
                          offset + i,
                          values[i][0],
@@ -481,7 +480,7 @@ emit_const_range(struct svga_context *svga,
 
             if (SVGA_DEBUG & DEBUG_CONSTS)
                debug_printf("%s %s %d: %f %f %f %f\n",
-                            __FUNCTION__,
+                            __func__,
                             shader == PIPE_SHADER_VERTEX ? "VERT" : "FRAG",
                             offset + j,
                             values[j][0],
@@ -605,7 +604,7 @@ emit_consts_vgpu9(struct svga_context *svga, enum pipe_shader_type shader)
       }
 
       assert(variant);
-      offset = variant->shader->info.file_max[TGSI_FILE_CONSTANT] + 1;
+      offset = variant->shader->info.constbuf0_num_uniforms;
       assert(count <= ARRAY_SIZE(extras));
 
       if (count > 0) {
@@ -858,7 +857,8 @@ emit_constbuf(struct svga_context *svga,
                                                   new_buf_size);
    }
    else if (dst_handle){
-      unsigned command = SVGA_3D_CMD_DX_SET_VS_CONSTANT_BUFFER_OFFSET + shader;
+      unsigned command = SVGA_3D_CMD_DX_SET_VS_CONSTANT_BUFFER_OFFSET +
+                            svga_shader_type(shader) - SVGA3D_SHADERTYPE_VS;
       ret = SVGA3D_vgpu10_SetConstantBufferOffset(svga->swc,
                                                   command,
                                                   slot, /* index */
@@ -1481,7 +1481,7 @@ update_rawbuf(struct svga_context *svga, uint64 dirty)
    };
 
    for (enum pipe_shader_type shader = PIPE_SHADER_VERTEX;
-        shader <= PIPE_SHADER_TESS_EVAL; shader++) {
+        shader < PIPE_SHADER_COMPUTE; shader++) {
       unsigned rawbuf_mask = svga->state.raw_constbufs[shader];
 
       update_rawbuf_mask(svga, shader);

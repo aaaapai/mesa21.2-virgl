@@ -28,7 +28,7 @@
 #ifdef ANDROID
 #define VN_MAX_API_VERSION VK_MAKE_VERSION(1, 1, VK_HEADER_VERSION)
 #else
-#define VN_MAX_API_VERSION VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION)
+#define VN_MAX_API_VERSION VK_MAKE_VERSION(1, 3, VK_HEADER_VERSION)
 #endif
 
 struct vn_instance {
@@ -40,6 +40,9 @@ struct vn_instance {
    struct vn_renderer *renderer;
 
    struct vn_renderer_shmem_pool reply_shmem_pool;
+
+   mtx_t ring_idx_mutex;
+   uint64_t ring_idx_used_mask;
 
    /* XXX staged features to be merged to core venus protocol */
    VkVenusExperimentalFeatures100000MESA experimental;
@@ -110,13 +113,6 @@ VkResult
 vn_instance_ring_submit(struct vn_instance *instance,
                         const struct vn_cs_encoder *cs);
 
-static inline void
-vn_instance_ring_wait(struct vn_instance *instance)
-{
-   struct vn_ring *ring = &instance->ring.ring;
-   vn_ring_wait_all(ring);
-}
-
 struct vn_instance_submit_command {
    /* empty command implies errors */
    struct vn_cs_encoder command;
@@ -177,6 +173,34 @@ vn_instance_cs_shmem_alloc(struct vn_instance *instance,
    mtx_unlock(&instance->cs_shmem.mutex);
 
    return shmem;
+}
+
+static inline int
+vn_instance_acquire_ring_idx(struct vn_instance *instance)
+{
+   mtx_lock(&instance->ring_idx_mutex);
+   int ring_idx = ffsll(~instance->ring_idx_used_mask) - 1;
+   if (ring_idx >= instance->renderer->info.max_timeline_count)
+      ring_idx = -1;
+   if (ring_idx > 0)
+      instance->ring_idx_used_mask |= (1ULL << (uint32_t)ring_idx);
+   mtx_unlock(&instance->ring_idx_mutex);
+
+   assert(ring_idx); /* never acquire the dedicated CPU ring */
+
+   /* returns -1 when no vacant rings */
+   return ring_idx;
+}
+
+static inline void
+vn_instance_release_ring_idx(struct vn_instance *instance, uint32_t ring_idx)
+{
+   assert(ring_idx > 0);
+
+   mtx_lock(&instance->ring_idx_mutex);
+   assert(instance->ring_idx_used_mask & (1ULL << ring_idx));
+   instance->ring_idx_used_mask &= ~(1ULL << ring_idx);
+   mtx_unlock(&instance->ring_idx_mutex);
 }
 
 #endif /* VN_INSTANCE_H */

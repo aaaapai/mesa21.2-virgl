@@ -60,28 +60,27 @@ fd_submit_ref(struct fd_submit *submit)
    return submit;
 }
 
-int
-fd_submit_flush(struct fd_submit *submit, int in_fence_fd,
-                struct fd_submit_fence *out_fence)
+struct fd_fence *
+fd_submit_flush(struct fd_submit *submit, int in_fence_fd, bool use_fence_fd)
 {
    submit->fence = fd_pipe_emit_fence(submit->pipe, submit->primary);
-   return submit->funcs->flush(submit, in_fence_fd, out_fence);
+   return submit->funcs->flush(submit, in_fence_fd, use_fence_fd);
 }
 
 struct fd_ringbuffer *
 fd_submit_new_ringbuffer(struct fd_submit *submit, uint32_t size,
                          enum fd_ringbuffer_flags flags)
 {
-   debug_assert(!(flags & _FD_RINGBUFFER_OBJECT));
+   assert(!(flags & _FD_RINGBUFFER_OBJECT));
    if (flags & FD_RINGBUFFER_STREAMING) {
-      debug_assert(!(flags & FD_RINGBUFFER_GROWABLE));
-      debug_assert(!(flags & FD_RINGBUFFER_PRIMARY));
+      assert(!(flags & FD_RINGBUFFER_GROWABLE));
+      assert(!(flags & FD_RINGBUFFER_PRIMARY));
    }
    struct fd_ringbuffer *ring =
          submit->funcs->new_ringbuffer(submit, size, flags);
 
    if (flags & FD_RINGBUFFER_PRIMARY) {
-      debug_assert(!submit->primary);
+      assert(!submit->primary);
       submit->primary = fd_ringbuffer_ref(ring);
    }
 

@@ -73,7 +73,7 @@ struct iris_syncobj;
 enum iris_memory_zone {
    IRIS_MEMZONE_SHADER,
    IRIS_MEMZONE_BINDER,
-   IRIS_MEMZONE_BINDLESS,
+   IRIS_MEMZONE_SCRATCH,
    IRIS_MEMZONE_SURFACE,
    IRIS_MEMZONE_DYNAMIC,
    IRIS_MEMZONE_OTHER,
@@ -84,13 +84,13 @@ enum iris_memory_zone {
 /* Intentionally exclude single buffer "zones" */
 #define IRIS_MEMZONE_COUNT (IRIS_MEMZONE_OTHER + 1)
 
-#define IRIS_BINDLESS_SIZE (8 * 1024 * 1024)
-#define IRIS_BINDER_ZONE_SIZE ((1ull << 30) - IRIS_BINDLESS_SIZE)
+#define IRIS_SCRATCH_ZONE_SIZE (8 * 1024 * 1024)
+#define IRIS_BINDER_ZONE_SIZE ((1ull << 30) - IRIS_SCRATCH_ZONE_SIZE)
 
 #define IRIS_MEMZONE_SHADER_START     (0ull * (1ull << 32))
 #define IRIS_MEMZONE_BINDER_START     (1ull * (1ull << 32))
-#define IRIS_MEMZONE_BINDLESS_START   (IRIS_MEMZONE_BINDER_START + IRIS_BINDER_ZONE_SIZE)
-#define IRIS_MEMZONE_SURFACE_START    (IRIS_MEMZONE_BINDLESS_START + IRIS_BINDLESS_SIZE)
+#define IRIS_MEMZONE_SCRATCH_START    IRIS_MEMZONE_BINDER_START
+#define IRIS_MEMZONE_SURFACE_START    (IRIS_MEMZONE_BINDER_START + IRIS_BINDER_ZONE_SIZE)
 #define IRIS_MEMZONE_DYNAMIC_START    (2ull * (1ull << 32))
 #define IRIS_MEMZONE_OTHER_START      (3ull * (1ull << 32))
 
@@ -285,6 +285,9 @@ struct iris_bo {
 
          /** Boolean of whether this buffer points into user memory */
          bool userptr;
+
+         /** Boolean of whether this buffer is protected (HW encryption) */
+         bool protected;
       } real;
       struct {
          struct pb_slab_entry entry;
@@ -293,12 +296,14 @@ struct iris_bo {
    };
 };
 
+#define BO_ALLOC_PLAIN       0
 #define BO_ALLOC_ZEROED      (1<<0)
 #define BO_ALLOC_COHERENT    (1<<1)
 #define BO_ALLOC_SMEM        (1<<2)
 #define BO_ALLOC_SCANOUT     (1<<3)
 #define BO_ALLOC_NO_SUBALLOC (1<<4)
 #define BO_ALLOC_LMEM        (1<<5)
+#define BO_ALLOC_PROTECTED   (1<<6)
 
 /**
  * Allocate a buffer object.
@@ -481,8 +486,7 @@ bool iris_bo_busy(struct iris_bo *bo);
  */
 int iris_bo_madvise(struct iris_bo *bo, int madv);
 
-struct iris_bufmgr *iris_bufmgr_get_for_fd(struct intel_device_info *devinfo,
-                                           int fd, bool bo_reuse);
+struct iris_bufmgr *iris_bufmgr_get_for_fd(int fd, bool bo_reuse);
 int iris_bufmgr_get_fd(struct iris_bufmgr *bufmgr);
 
 struct iris_bo *iris_bo_gem_create_from_name(struct iris_bufmgr *bufmgr,
@@ -491,15 +495,9 @@ struct iris_bo *iris_bo_gem_create_from_name(struct iris_bufmgr *bufmgr,
 
 void* iris_bufmgr_get_aux_map_context(struct iris_bufmgr *bufmgr);
 
-int iris_bo_wait(struct iris_bo *bo, int64_t timeout_ns);
-
-uint32_t iris_create_hw_context(struct iris_bufmgr *bufmgr);
+uint32_t iris_create_hw_context(struct iris_bufmgr *bufmgr, bool protected);
 uint32_t iris_clone_hw_context(struct iris_bufmgr *bufmgr, uint32_t ctx_id);
 int iris_kernel_context_get_priority(struct iris_bufmgr *bufmgr, uint32_t ctx_id);
-
-#define IRIS_CONTEXT_LOW_PRIORITY    ((I915_CONTEXT_MIN_USER_PRIORITY-1)/2)
-#define IRIS_CONTEXT_MEDIUM_PRIORITY (I915_CONTEXT_DEFAULT_PRIORITY)
-#define IRIS_CONTEXT_HIGH_PRIORITY   ((I915_CONTEXT_MAX_USER_PRIORITY+1)/2)
 
 void iris_hw_context_set_unrecoverable(struct iris_bufmgr *bufmgr,
                                        uint32_t ctx_id);
@@ -526,10 +524,6 @@ struct iris_bo *iris_bo_import_dmabuf(struct iris_bufmgr *bufmgr, int prime_fd);
  */
 int iris_bo_export_gem_handle_for_device(struct iris_bo *bo, int drm_fd,
                                          uint32_t *out_handle);
-
-uint32_t iris_bo_export_gem_handle(struct iris_bo *bo);
-
-int iris_reg_read(struct iris_bufmgr *bufmgr, uint32_t offset, uint64_t *out);
 
 /**
  * Returns the BO's address relative to the appropriate base address.
@@ -598,5 +592,9 @@ void iris_init_border_color_pool(struct iris_bufmgr *bufmgr,
 void iris_destroy_border_color_pool(struct iris_border_color_pool *pool);
 uint32_t iris_upload_border_color(struct iris_border_color_pool *pool,
                                   union pipe_color_union *color);
+
+uint64_t iris_bufmgr_vram_size(struct iris_bufmgr *bufmgr);
+uint64_t iris_bufmgr_sram_size(struct iris_bufmgr *bufmgr);
+const struct intel_device_info *iris_bufmgr_get_device_info(struct iris_bufmgr *bufmgr);
 
 #endif /* IRIS_BUFMGR_H */

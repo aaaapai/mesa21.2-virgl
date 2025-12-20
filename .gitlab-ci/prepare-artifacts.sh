@@ -10,7 +10,7 @@ rm -rf install/bin install/include
 
 # Strip the drivers in the artifacts to cut 80% of the artifacts size.
 if [ -n "$CROSS" ]; then
-    STRIP=`sed -n -E "s/strip\s*=\s*'(.*)'/\1/p" "$CROSS_FILE"`
+    STRIP=$(sed -n -E "s/strip\s*=\s*\[?'(.*)'\]?/\1/p" "$CROSS_FILE")
     if [ -z "$STRIP" ]; then
         echo "Failed to find strip command in cross file"
         exit 1
@@ -34,6 +34,7 @@ cp -Rp .gitlab-ci/fossilize-runner.sh install/
 cp -Rp .gitlab-ci/crosvm-init.sh install/
 cp -Rp .gitlab-ci/*.txt install/
 cp -Rp .gitlab-ci/report-flakes.py install/
+cp -Rp .gitlab-ci/valve install/
 cp -Rp .gitlab-ci/vkd3d-proton install/
 cp -Rp .gitlab-ci/*-runner.sh install/
 find . -path \*/ci/\*.txt \
@@ -47,12 +48,11 @@ mkdir -p artifacts/
 tar -cf artifacts/install.tar install
 cp -Rp .gitlab-ci/common artifacts/ci-common
 cp -Rp .gitlab-ci/lava artifacts/
-cp -Rp .gitlab-ci/valve artifacts/
+cp -Rp .gitlab-ci/b2c artifacts/
 
 if [ -n "$MINIO_ARTIFACT_NAME" ]; then
     # Pass needed files to the test stage
-    MINIO_ARTIFACT_NAME="$MINIO_ARTIFACT_NAME.tar.gz"
-    gzip -c artifacts/install.tar > ${MINIO_ARTIFACT_NAME}
-    ci-fairy minio login --token-file "${CI_JOB_JWT_FILE}"
-    ci-fairy minio cp ${MINIO_ARTIFACT_NAME} minio://${PIPELINE_ARTIFACTS_BASE}/${MINIO_ARTIFACT_NAME}
+    MINIO_ARTIFACT_NAME="$MINIO_ARTIFACT_NAME.tar.zst"
+    zstd artifacts/install.tar -o ${MINIO_ARTIFACT_NAME}
+    ci-fairy s3cp --token-file "${CI_JOB_JWT_FILE}" ${MINIO_ARTIFACT_NAME} https://${PIPELINE_ARTIFACTS_BASE}/${MINIO_ARTIFACT_NAME}
 fi

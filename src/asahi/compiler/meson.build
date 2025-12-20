@@ -23,11 +23,24 @@ libasahi_agx_files = files(
   'agx_compile.c',
   'agx_dce.c',
   'agx_liveness.c',
+  'agx_insert_waits.c',
+  'agx_nir_lower_address.c',
+  'agx_nir_lower_zs_emit.c',
+  'agx_nir_lower_texture.c',
+  'agx_nir_lower_load_mask.c',
+  'agx_nir_lower_ubo.c',
+  'agx_nir_opt_preamble.c',
+  'agx_lower_64bit.c',
+  'agx_lower_resinfo.c',
+  'agx_lower_parallel_copy.c',
+  'agx_lower_pseudo.c',
   'agx_pack.c',
   'agx_print.c',
+  'agx_opt_cse.c',
   'agx_optimizer.c',
   'agx_register_allocate.c',
   'agx_uniforms.c',
+  'agx_validate.c',
 )
 
 agx_opcodes_h = custom_target(
@@ -76,3 +89,25 @@ libasahi_compiler = static_library(
   gnu_symbol_visibility : 'hidden',
   build_by_default : false,
 )
+
+if with_tests
+  test(
+    'agx_tests',
+    executable(
+      'agx_tests',
+      files(
+         'test/test-minifloat.cpp',
+         'test/test-optimizer.cpp',
+         'test/test-lower-pseudo.cpp',
+         'test/test-lower-parallel-copy.cpp',
+      ),
+      c_args : [c_msvc_compat_args, no_override_init_args],
+      gnu_symbol_visibility : 'hidden',
+      include_directories : [inc_include, inc_src, inc_mesa],
+      dependencies: [idep_gtest, idep_nir, idep_agx_opcodes_h, idep_agx_builder_h],
+      link_with : [libasahi_compiler],
+    ),
+    suite : ['asahi'],
+    protocol : gtest_test_protocol,
+  )
+endif

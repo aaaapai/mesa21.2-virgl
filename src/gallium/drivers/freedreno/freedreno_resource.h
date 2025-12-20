@@ -217,8 +217,10 @@ resource_busy(struct fd_resource *rsc, unsigned op)
 
 int __fd_resource_wait(struct fd_context *ctx, struct fd_resource *rsc,
                        unsigned op, const char *func);
-#define fd_resource_wait(ctx, rsc, op)                                         \
-   __fd_resource_wait(ctx, rsc, op, __func__)
+#define fd_resource_wait(ctx, rsc, op) ({                                      \
+   MESA_TRACE_FUNC();                                                          \
+   __fd_resource_wait(ctx, rsc, op, __func__);                                 \
+})
 
 static inline void
 fd_resource_lock(struct fd_resource *rsc)
@@ -244,7 +246,7 @@ fd_resource_set_usage(struct pipe_resource *prsc, enum fd_dirty_3d_state usage)
    if (likely(rsc->dirty & usage))
       return;
    fd_resource_lock(rsc);
-   rsc->dirty |= usage;
+   or_mask(rsc->dirty, usage);
    fd_resource_unlock(rsc);
 }
 
@@ -259,6 +261,7 @@ struct fd_transfer {
    struct threaded_transfer b;
    struct pipe_resource *staging_prsc;
    struct pipe_box staging_box;
+   void *upload_ptr;
 };
 
 static inline struct fd_transfer *
@@ -295,7 +298,7 @@ static inline uint32_t
 fd_resource_offset(struct fd_resource *rsc, unsigned level, unsigned layer)
 {
    uint32_t offset = fdl_surface_offset(&rsc->layout, level, layer);
-   debug_assert(offset < fd_bo_size(rsc->bo));
+   assert(offset < fd_bo_size(rsc->bo));
    return offset;
 }
 
@@ -303,7 +306,7 @@ static inline uint32_t
 fd_resource_ubwc_offset(struct fd_resource *rsc, unsigned level, unsigned layer)
 {
    uint32_t offset = fdl_ubwc_offset(&rsc->layout, level, layer);
-   debug_assert(offset < fd_bo_size(rsc->bo));
+   assert(offset < fd_bo_size(rsc->bo));
    return offset;
 }
 
@@ -312,7 +315,7 @@ static inline bool
 fd_resource_level_linear(const struct pipe_resource *prsc, int level)
 {
    struct fd_screen *screen = fd_screen(prsc->screen);
-   debug_assert(!is_a3xx(screen));
+   assert(!is_a3xx(screen));
 
    return fdl_level_linear(&fd_resource_const(prsc)->layout, level);
 }
@@ -339,7 +342,7 @@ fd_resource_ubwc_enabled(struct fd_resource *rsc, int level)
  * most of the time)
  */
 static inline unsigned
-fd_resource_nr_samples(struct pipe_resource *prsc)
+fd_resource_nr_samples(const struct pipe_resource *prsc)
 {
    return MAX2(1, prsc->nr_samples);
 }

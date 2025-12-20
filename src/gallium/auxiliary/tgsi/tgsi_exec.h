@@ -73,17 +73,18 @@ extern "C" {
   */
 union tgsi_exec_channel
 {
+   alignas(16)
    float    f[TGSI_QUAD_SIZE];
    int      i[TGSI_QUAD_SIZE];
    unsigned u[TGSI_QUAD_SIZE];
-} ALIGN16;
+};
 
 /**
   * A vector[RGBA] of channels[4 pixels]
   */
-struct ALIGN16 tgsi_exec_vector
+struct tgsi_exec_vector
 {
-   union tgsi_exec_channel xyzw[TGSI_NUM_CHANNELS];
+   alignas(16) union tgsi_exec_channel xyzw[TGSI_NUM_CHANNELS];
 };
 
 /**
@@ -286,10 +287,11 @@ typedef void (* apply_sample_offset_func)(
 /**
  * Run-time virtual machine state for executing TGSI shader.
  */
-struct ALIGN16 tgsi_exec_machine
+struct tgsi_exec_machine
 {
    /* Total = program temporaries + internal temporaries
     */
+   alignas(16)
    struct tgsi_exec_vector       Temps[TGSI_EXEC_NUM_TEMPS];
 
    unsigned                       ImmsReserved;
@@ -446,7 +448,7 @@ tgsi_exec_get_shader_param(enum pipe_shader_cap param)
       return TGSI_EXEC_MAX_INPUT_ATTRIBS;
    case PIPE_SHADER_CAP_MAX_OUTPUTS:
       return 32;
-   case PIPE_SHADER_CAP_MAX_CONST_BUFFER_SIZE:
+   case PIPE_SHADER_CAP_MAX_CONST_BUFFER0_SIZE:
       return TGSI_EXEC_MAX_CONST_BUFFER_SIZE;
    case PIPE_SHADER_CAP_MAX_CONST_BUFFERS:
       return PIPE_MAX_CONSTANT_BUFFERS;
@@ -485,9 +487,6 @@ tgsi_exec_get_shader_param(enum pipe_shader_cap param)
    case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
       return 1;
    case PIPE_SHADER_CAP_DROUND_SUPPORTED:
-   case PIPE_SHADER_CAP_TGSI_FMA_SUPPORTED:
-   case PIPE_SHADER_CAP_LOWER_IF_THRESHOLD:
-   case PIPE_SHADER_CAP_TGSI_SKIP_MERGE_REGISTERS:
    case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
    case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
       return 0;
@@ -495,9 +494,6 @@ tgsi_exec_get_shader_param(enum pipe_shader_cap param)
       return PIPE_MAX_SHADER_BUFFERS;
    case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
       return PIPE_MAX_SHADER_IMAGES;
-
-   case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
-      return 32;
    }
    /* if we get here, we missed a shader cap above (and should have seen
     * a compiler warning.)

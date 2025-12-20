@@ -55,12 +55,13 @@ static void
 emit_common_so_memcpy(struct anv_batch *batch, struct anv_device *device,
                       const struct intel_l3_config *l3_config)
 {
-#if GFX_VER >= 8
    anv_batch_emit(batch, GENX(3DSTATE_VF_INSTANCING), vfi) {
       vfi.InstancingEnable = false;
       vfi.VertexElementIndex = 0;
    }
    anv_batch_emit(batch, GENX(3DSTATE_VF_SGVS), sgvs);
+#if GFX_VER >= 11
+   anv_batch_emit(batch, GENX(3DSTATE_VF_SGVS_2), sgvs);
 #endif
 
    /* Disable all shader stages */
@@ -71,19 +72,29 @@ emit_common_so_memcpy(struct anv_batch *batch, struct anv_device *device,
    anv_batch_emit(batch, GENX(3DSTATE_GS), gs);
    anv_batch_emit(batch, GENX(3DSTATE_PS), gs);
 
+#if GFX_VERx10 >= 125
+   /* Disable Mesh, we can't have this and streamout enabled at the same
+    * time.
+    */
+   if (device->info->has_mesh_shading) {
+      anv_batch_emit(batch, GENX(3DSTATE_MESH_CONTROL), mesh);
+      anv_batch_emit(batch, GENX(3DSTATE_TASK_CONTROL), task);
+   }
+
+   /* Wa_16013994831 - Disable preemption during streamout. */
+   if (intel_device_info_is_dg2(device->info))
+      genX(batch_set_preemption)(batch, false);
+#endif
+
    anv_batch_emit(batch, GENX(3DSTATE_SBE), sbe) {
       sbe.VertexURBEntryReadOffset = 1;
       sbe.NumberofSFOutputAttributes = 1;
       sbe.VertexURBEntryReadLength = 1;
-#if GFX_VER >= 8
       sbe.ForceVertexURBEntryReadLength = true;
       sbe.ForceVertexURBEntryReadOffset = true;
-#endif
 
-#if GFX_VER >= 9
       for (unsigned i = 0; i < 32; i++)
          sbe.AttributeActiveComponentFormat[i] = ACF_XYZW;
-#endif
    }
 
    /* Emit URB setup.  We tell it that the VS is active because we want it to
@@ -100,11 +111,9 @@ emit_common_so_memcpy(struct anv_batch *batch, struct anv_device *device,
    anv_batch_emit(batch, GENX(3DSTATE_PRIMITIVE_REPLICATION), pr);
 #endif
 
-#if GFX_VER >= 8
    anv_batch_emit(batch, GENX(3DSTATE_VF_TOPOLOGY), topo) {
       topo.PrimitiveTopologyType = _3DPRIM_POINTLIST;
    }
-#endif
 
    anv_batch_emit(batch, GENX(3DSTATE_VF_STATISTICS), vf) {
       vf.StatisticsEnable = false;
@@ -141,11 +150,7 @@ emit_so_memcpy(struct anv_batch *batch, struct anv_device *device,
 #if GFX_VER >= 12
          .L3BypassDisable = true,
 #endif
-#if (GFX_VER >= 8)
          .BufferSize = size,
-#else
-         .EndAddress = anv_address_add(src, size - 1),
-#endif
       });
 
    dw = anv_batch_emitn(batch, 3, GENX(3DSTATE_VERTEX_ELEMENTS));
@@ -162,6 +167,17 @@ emit_so_memcpy(struct anv_batch *batch, struct anv_device *device,
       });
 
 
+   /* Wa_16011411144:
+    *
+    * SW must insert a PIPE_CONTROL cmd before and after the
+    * 3dstate_so_buffer_index_0/1/2/3 states to ensure so_buffer_index_*
+    * state is not combined with other state changes.
+    */
+   if (intel_needs_workaround(device->info, 16011411144)) {
+      anv_batch_emit(batch, GENX(PIPE_CONTROL), pc)
+         pc.CommandStreamerStallEnable = true;
+   }
+
    anv_batch_emit(batch, GENX(3DSTATE_SO_BUFFER), sob) {
 #if GFX_VER < 12
       sob.SOBufferIndex = 0;
@@ -172,15 +188,9 @@ emit_so_memcpy(struct anv_batch *batch, struct anv_device *device,
       sob.MOCS = anv_mocs(device, dst.bo, 0),
       sob.SurfaceBaseAddress = dst;
 
-#if GFX_VER >= 8
       sob.SOBufferEnable = true;
       sob.SurfaceSize = size / 4 - 1;
-#else
-      sob.SurfacePitch = bs;
-      sob.SurfaceEndAddress = anv_address_add(dst, size);
-#endif
 
-#if GFX_VER >= 8
       /* As SOL writes out data, it updates the SO_WRITE_OFFSET registers with
        * the end position of the stream.  We need to reset this value to 0 at
        * the beginning of the run or else SOL will start at the offset from
@@ -188,16 +198,13 @@ emit_so_memcpy(struct anv_batch *batch, struct anv_device *device,
        */
       sob.StreamOffsetWriteEnable = true;
       sob.StreamOffset = 0;
-#endif
    }
 
-#if GFX_VER <= 7
-   /* The hardware can do this for us on BDW+ (see above) */
-   anv_batch_emit(batch, GENX(MI_LOAD_REGISTER_IMM), load) {
-      load.RegisterOffset = GENX(SO_WRITE_OFFSET0_num);
-      load.DataDWord = 0;
+   if (intel_needs_workaround(device->info, 16011411144)) {
+      /* Wa_16011411144: also CS_STALL after touching SO_BUFFER change */
+      anv_batch_emit(batch, GENX(PIPE_CONTROL), pc)
+         pc.CommandStreamerStallEnable = true;
    }
-#endif
 
    dw = anv_batch_emitn(batch, 5, GENX(3DSTATE_SO_DECL_LIST),
                         .StreamtoBufferSelects0 = (1 << 0),
@@ -211,27 +218,34 @@ emit_so_memcpy(struct anv_batch *batch, struct anv_device *device,
          },
       });
 
+#if GFX_VERx10 == 125
+      /* Wa_14015946265: Send PC with CS stall after SO_DECL. */
+      anv_batch_emit(batch, GENX(PIPE_CONTROL), pc) {
+         pc.CommandStreamerStallEnable = true;
+      }
+#endif
+
    anv_batch_emit(batch, GENX(3DSTATE_STREAMOUT), so) {
       so.SOFunctionEnable = true;
       so.RenderingDisable = true;
       so.Stream0VertexReadOffset = 0;
       so.Stream0VertexReadLength = DIV_ROUND_UP(32, 64);
-#if GFX_VER >= 8
       so.Buffer0SurfacePitch = bs;
-#else
-      so.SOBufferEnable0 = true;
-#endif
    }
 
    anv_batch_emit(batch, GENX(3DPRIMITIVE), prim) {
       prim.VertexAccessType         = SEQUENTIAL;
-      prim.PrimitiveTopologyType    = _3DPRIM_POINTLIST;
       prim.VertexCountPerInstance   = size / bs;
       prim.StartVertexLocation      = 0;
       prim.InstanceCount            = 1;
       prim.StartInstanceLocation    = 0;
       prim.BaseVertexLocation       = 0;
    }
+
+#if GFX_VERx10 == 125
+   genX(batch_emit_dummy_post_sync_op)(batch, device, _3DPRIM_POINTLIST,
+                                       size / bs);
+#endif
 }
 
 void
@@ -244,18 +258,11 @@ genX(emit_so_memcpy_init)(struct anv_memcpy_state *state,
    state->batch = batch;
    state->device = device;
 
-   const struct intel_l3_config *cfg = intel_get_default_l3_config(&device->info);
+   const struct intel_l3_config *cfg = intel_get_default_l3_config(device->info);
    genX(emit_l3_config)(batch, device, cfg);
+   genX(emit_pipeline_select)(batch, _3D);
 
-   anv_batch_emit(batch, GENX(PIPELINE_SELECT), ps) {
-#if GFX_VER >= 9
-      ps.MaskBits = GFX_VER >= 12 ? 0x13 : 3;
-      ps.MediaSamplerDOPClockGateEnable = GFX_VER >= 12;
-#endif
-      ps.PipelineSelection = _3D;
-   }
-
-   emit_common_so_memcpy(batch, device, device->l3_config);
+   emit_common_so_memcpy(batch, device, cfg);
 }
 
 void
@@ -263,6 +270,9 @@ genX(emit_so_memcpy_fini)(struct anv_memcpy_state *state)
 {
    genX(emit_apply_pipe_flushes)(state->batch, state->device, _3D,
                                  ANV_PIPE_END_OF_PIPE_SYNC_BIT);
+
+   if (intel_device_info_is_dg2(state->device->info))
+      genX(batch_set_preemption)(state->batch, true);
 
    anv_batch_emit(state->batch, GENX(MI_BATCH_BUFFER_END), end);
 
@@ -275,8 +285,7 @@ genX(emit_so_memcpy)(struct anv_memcpy_state *state,
                      struct anv_address dst, struct anv_address src,
                      uint32_t size)
 {
-   if (GFX_VER >= 8 && GFX_VER <= 9 &&
-       !anv_use_relocations(state->device->physical) &&
+   if (GFX_VER == 9 &&
        anv_gfx8_9_vb_cache_range_needs_workaround(&state->vb_bound,
                                                   &state->vb_dirty,
                                                   src, size)) {
@@ -299,11 +308,17 @@ genX(cmd_buffer_so_memcpy)(struct anv_cmd_buffer *cmd_buffer,
 
    if (!cmd_buffer->state.current_l3_config) {
       const struct intel_l3_config *cfg =
-         intel_get_default_l3_config(&cmd_buffer->device->info);
+         intel_get_default_l3_config(cmd_buffer->device->info);
       genX(cmd_buffer_config_l3)(cmd_buffer, cfg);
    }
 
+#if GFX_VER == 9
    genX(cmd_buffer_set_binding_for_gfx8_vb_flush)(cmd_buffer, 32, src, size);
+#endif
+
+   /* Wa_14015814527 */
+   genX(apply_task_urb_workaround)(cmd_buffer);
+
    genX(cmd_buffer_apply_pipe_flushes)(cmd_buffer);
 
    genX(flush_pipeline_select_3d)(cmd_buffer);
@@ -312,8 +327,16 @@ genX(cmd_buffer_so_memcpy)(struct anv_cmd_buffer *cmd_buffer,
                          cmd_buffer->state.current_l3_config);
    emit_so_memcpy(&cmd_buffer->batch, cmd_buffer->device, dst, src, size);
 
+#if GFX_VER == 9
    genX(cmd_buffer_update_dirty_vbs_for_gfx8_vb_flush)(cmd_buffer, SEQUENTIAL,
                                                        1ull << 32);
+#endif
 
-   cmd_buffer->state.gfx.dirty |= ANV_CMD_DIRTY_PIPELINE;
+   /* Invalidate pipeline, xfb (for 3DSTATE_SO_BUFFER) & raster discard (for
+    * 3DSTATE_STREAMOUT).
+    */
+   cmd_buffer->state.gfx.dirty |= (ANV_CMD_DIRTY_PIPELINE |
+                                   ANV_CMD_DIRTY_XFB_ENABLE);
+   BITSET_SET(cmd_buffer->vk.dynamic_graphics_state.dirty,
+              MESA_VK_DYNAMIC_RS_RASTERIZER_DISCARD_ENABLE);
 }

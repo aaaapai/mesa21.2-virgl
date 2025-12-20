@@ -115,21 +115,22 @@ float_to_half_impl(nir_builder *b, nir_ssa_def *src, nir_rounding_mode mode)
          break;
       case nir_rounding_mode_ru:
          /* Negative becomes max float, positive becomes inf */
-         overflowed_fp16 = nir_bcsel(b, nir_i2b1(b, sign), nir_imm_int(b, 0x7BFF), nir_imm_int(b, 0x7C00));
+         overflowed_fp16 = nir_bcsel(b, nir_i2b(b, sign), nir_imm_int(b, 0x7BFF), nir_imm_int(b, 0x7C00));
          break;
       case nir_rounding_mode_rd:
          /* Negative becomes inf, positive becomes max float */
-         overflowed_fp16 = nir_bcsel(b, nir_i2b1(b, sign), nir_imm_int(b, 0x7C00), nir_imm_int(b, 0x7BFF));
+         overflowed_fp16 = nir_bcsel(b, nir_i2b(b, sign), nir_imm_int(b, 0x7C00), nir_imm_int(b, 0x7BFF));
          break;
       default: unreachable("Should've been handled already");
       }
       nir_push_else(b, NULL);
    }
 
+   nir_ssa_def *zero = nir_imm_int(b, 0);
+
    nir_push_if(b, nir_ige(b, abs, nir_imm_int(b, 113 << 23)));
 
    /* FP16 will be normal */
-   nir_ssa_def *zero = nir_imm_int(b, 0);
    nir_ssa_def *value = nir_ior(b,
                                 nir_ishl(b,
                                          nir_isub(b,
@@ -158,12 +159,12 @@ float_to_half_impl(nir_builder *b, nir_ssa_def *src, nir_rounding_mode mode)
    nir_ssa_def *underflowed_fp16 = zero;
    if (mode == nir_rounding_mode_ru ||
        mode == nir_rounding_mode_rd) {
-      nir_push_if(b, nir_i2b1(b, abs));
+      nir_push_if(b, nir_i2b(b, abs));
 
       if (mode == nir_rounding_mode_ru)
-         underflowed_fp16 = nir_bcsel(b, nir_i2b1(b, sign), zero, one);
+         underflowed_fp16 = nir_bcsel(b, nir_i2b(b, sign), zero, one);
       else
-         underflowed_fp16 = nir_bcsel(b, nir_i2b1(b, sign), one, zero);
+         underflowed_fp16 = nir_bcsel(b, nir_i2b(b, sign), one, zero);
 
       nir_push_else(b, NULL);
       nir_pop_if(b, NULL);

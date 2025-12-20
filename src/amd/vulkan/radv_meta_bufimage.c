@@ -29,9 +29,6 @@
  * Compute queue: implementation also of buffer->image, image->image, and image clear.
  */
 
-/* GFX9 needs to use a 3D sampler to access 3D resources, so the shader has the options
- * for that.
- */
 static nir_shader *
 build_nir_itob_compute_shader(struct radv_device *dev, bool is_3d)
 {
@@ -53,7 +50,7 @@ build_nir_itob_compute_shader(struct radv_device *dev, bool is_3d)
    nir_ssa_def *global_id = get_global_ids(&b, is_3d ? 3 : 2);
 
    nir_ssa_def *offset =
-      nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 0), .range = 16);
+      nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 0), .range = is_3d ? 12 : 8);
    nir_ssa_def *stride = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 12), .range = 16);
 
    nir_ssa_def *img_coord = nir_iadd(&b, global_id, offset);
@@ -63,7 +60,7 @@ build_nir_itob_compute_shader(struct radv_device *dev, bool is_3d)
    tex->sampler_dim = dim;
    tex->op = nir_texop_txf;
    tex->src[0].src_type = nir_tex_src_coord;
-   tex->src[0].src = nir_src_for_ssa(nir_channels(&b, img_coord, is_3d ? 0x7 : 0x3));
+   tex->src[0].src = nir_src_for_ssa(nir_trim_vector(&b, img_coord, 2 + is_3d));
    tex->src[1].src_type = nir_tex_src_lod;
    tex->src[1].src = nir_src_for_ssa(nir_imm_int(&b, 0));
    tex->src[2].src_type = nir_tex_src_texture_deref;
@@ -97,10 +94,7 @@ radv_device_init_meta_itob_state(struct radv_device *device)
 {
    VkResult result;
    nir_shader *cs = build_nir_itob_compute_shader(device, false);
-   nir_shader *cs_3d = NULL;
-
-   if (device->physical_device->rad_info.chip_class >= GFX9)
-      cs_3d = build_nir_itob_compute_shader(device, true);
+   nir_shader *cs_3d = build_nir_itob_compute_shader(device, true);
 
    /*
     * two descriptors one for the image being sampled
@@ -160,35 +154,34 @@ radv_device_init_meta_itob_state(struct radv_device *device)
       .layout = device->meta_state.itob.img_p_layout,
    };
 
-   result = radv_CreateComputePipelines(radv_device_to_handle(device),
-                                        radv_pipeline_cache_to_handle(&device->meta_state.cache), 1,
-                                        &vk_pipeline_info, NULL, &device->meta_state.itob.pipeline);
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), device->meta_state.cache,
+                                         &vk_pipeline_info, NULL, &device->meta_state.itob.pipeline,
+                                         true);
    if (result != VK_SUCCESS)
       goto fail;
 
-   if (device->physical_device->rad_info.chip_class >= GFX9) {
-      VkPipelineShaderStageCreateInfo pipeline_shader_stage_3d = {
-         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-         .module = vk_shader_module_handle_from_nir(cs_3d),
-         .pName = "main",
-         .pSpecializationInfo = NULL,
-      };
+   VkPipelineShaderStageCreateInfo pipeline_shader_stage_3d = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+      .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+      .module = vk_shader_module_handle_from_nir(cs_3d),
+      .pName = "main",
+      .pSpecializationInfo = NULL,
+   };
 
-      VkComputePipelineCreateInfo vk_pipeline_info_3d = {
-         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-         .stage = pipeline_shader_stage_3d,
-         .flags = 0,
-         .layout = device->meta_state.itob.img_p_layout,
-      };
+   VkComputePipelineCreateInfo vk_pipeline_info_3d = {
+      .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+      .stage = pipeline_shader_stage_3d,
+      .flags = 0,
+      .layout = device->meta_state.itob.img_p_layout,
+   };
 
-      result = radv_CreateComputePipelines(
-         radv_device_to_handle(device), radv_pipeline_cache_to_handle(&device->meta_state.cache), 1,
-         &vk_pipeline_info_3d, NULL, &device->meta_state.itob.pipeline_3d);
-      if (result != VK_SUCCESS)
-         goto fail;
-      ralloc_free(cs_3d);
-   }
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), device->meta_state.cache,
+                                         &vk_pipeline_info_3d, NULL,
+                                         &device->meta_state.itob.pipeline_3d, true);
+   if (result != VK_SUCCESS)
+      goto fail;
+
+   ralloc_free(cs_3d);
    ralloc_free(cs);
 
    return VK_SUCCESS;
@@ -205,11 +198,10 @@ radv_device_finish_meta_itob_state(struct radv_device *device)
 
    radv_DestroyPipelineLayout(radv_device_to_handle(device), state->itob.img_p_layout,
                               &state->alloc);
-   radv_DestroyDescriptorSetLayout(radv_device_to_handle(device), state->itob.img_ds_layout,
-                                   &state->alloc);
+   device->vk.dispatch_table.DestroyDescriptorSetLayout(radv_device_to_handle(device),
+                                                        state->itob.img_ds_layout, &state->alloc);
    radv_DestroyPipeline(radv_device_to_handle(device), state->itob.pipeline, &state->alloc);
-   if (device->physical_device->rad_info.chip_class >= GFX9)
-      radv_DestroyPipeline(radv_device_to_handle(device), state->itob.pipeline_3d, &state->alloc);
+   radv_DestroyPipeline(radv_device_to_handle(device), state->itob.pipeline_3d, &state->alloc);
 }
 
 static nir_shader *
@@ -234,7 +226,7 @@ build_nir_btoi_compute_shader(struct radv_device *dev, bool is_3d)
    nir_ssa_def *global_id = get_global_ids(&b, is_3d ? 3 : 2);
 
    nir_ssa_def *offset =
-      nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 0), .range = 16);
+      nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 0), .range = is_3d ? 12 : 8);
    nir_ssa_def *stride = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 12), .range = 16);
 
    nir_ssa_def *pos_x = nir_channel(&b, global_id, 0);
@@ -281,9 +273,7 @@ radv_device_init_meta_btoi_state(struct radv_device *device)
 {
    VkResult result;
    nir_shader *cs = build_nir_btoi_compute_shader(device, false);
-   nir_shader *cs_3d = NULL;
-   if (device->physical_device->rad_info.chip_class >= GFX9)
-      cs_3d = build_nir_btoi_compute_shader(device, true);
+   nir_shader *cs_3d = build_nir_btoi_compute_shader(device, true);
    /*
     * two descriptors one for the image being sampled
     * one for the buffer being written.
@@ -342,33 +332,32 @@ radv_device_init_meta_btoi_state(struct radv_device *device)
       .layout = device->meta_state.btoi.img_p_layout,
    };
 
-   result = radv_CreateComputePipelines(radv_device_to_handle(device),
-                                        radv_pipeline_cache_to_handle(&device->meta_state.cache), 1,
-                                        &vk_pipeline_info, NULL, &device->meta_state.btoi.pipeline);
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), device->meta_state.cache,
+                                         &vk_pipeline_info, NULL, &device->meta_state.btoi.pipeline,
+                                         true);
    if (result != VK_SUCCESS)
       goto fail;
 
-   if (device->physical_device->rad_info.chip_class >= GFX9) {
-      VkPipelineShaderStageCreateInfo pipeline_shader_stage_3d = {
-         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-         .module = vk_shader_module_handle_from_nir(cs_3d),
-         .pName = "main",
-         .pSpecializationInfo = NULL,
-      };
+   VkPipelineShaderStageCreateInfo pipeline_shader_stage_3d = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+      .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+      .module = vk_shader_module_handle_from_nir(cs_3d),
+      .pName = "main",
+      .pSpecializationInfo = NULL,
+   };
 
-      VkComputePipelineCreateInfo vk_pipeline_info_3d = {
-         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-         .stage = pipeline_shader_stage_3d,
-         .flags = 0,
-         .layout = device->meta_state.btoi.img_p_layout,
-      };
+   VkComputePipelineCreateInfo vk_pipeline_info_3d = {
+      .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+      .stage = pipeline_shader_stage_3d,
+      .flags = 0,
+      .layout = device->meta_state.btoi.img_p_layout,
+   };
 
-      result = radv_CreateComputePipelines(
-         radv_device_to_handle(device), radv_pipeline_cache_to_handle(&device->meta_state.cache), 1,
-         &vk_pipeline_info_3d, NULL, &device->meta_state.btoi.pipeline_3d);
-      ralloc_free(cs_3d);
-   }
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), device->meta_state.cache,
+                                         &vk_pipeline_info_3d, NULL,
+                                         &device->meta_state.btoi.pipeline_3d, true);
+
+   ralloc_free(cs_3d);
    ralloc_free(cs);
 
    return VK_SUCCESS;
@@ -385,8 +374,8 @@ radv_device_finish_meta_btoi_state(struct radv_device *device)
 
    radv_DestroyPipelineLayout(radv_device_to_handle(device), state->btoi.img_p_layout,
                               &state->alloc);
-   radv_DestroyDescriptorSetLayout(radv_device_to_handle(device), state->btoi.img_ds_layout,
-                                   &state->alloc);
+   device->vk.dispatch_table.DestroyDescriptorSetLayout(radv_device_to_handle(device),
+                                                        state->btoi.img_ds_layout, &state->alloc);
    radv_DestroyPipeline(radv_device_to_handle(device), state->btoi.pipeline, &state->alloc);
    radv_DestroyPipeline(radv_device_to_handle(device), state->btoi.pipeline_3d, &state->alloc);
 }
@@ -411,8 +400,8 @@ build_nir_btoi_r32g32b32_compute_shader(struct radv_device *dev)
 
    nir_ssa_def *global_id = get_global_ids(&b, 2);
 
-   nir_ssa_def *offset = nir_load_push_constant(&b, 2, 32, nir_imm_int(&b, 0), .range = 16);
-   nir_ssa_def *pitch = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 8), .range = 16);
+   nir_ssa_def *offset = nir_load_push_constant(&b, 2, 32, nir_imm_int(&b, 0), .range = 8);
+   nir_ssa_def *pitch = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 8), .range = 12);
    nir_ssa_def *stride = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 12), .range = 16);
 
    nir_ssa_def *pos_x = nir_channel(&b, global_id, 0);
@@ -518,9 +507,9 @@ radv_device_init_meta_btoi_r32g32b32_state(struct radv_device *device)
       .layout = device->meta_state.btoi_r32g32b32.img_p_layout,
    };
 
-   result = radv_CreateComputePipelines(
-      radv_device_to_handle(device), radv_pipeline_cache_to_handle(&device->meta_state.cache), 1,
-      &vk_pipeline_info, NULL, &device->meta_state.btoi_r32g32b32.pipeline);
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), device->meta_state.cache,
+                                         &vk_pipeline_info, NULL,
+                                         &device->meta_state.btoi_r32g32b32.pipeline, true);
 
 fail:
    ralloc_free(cs);
@@ -534,8 +523,8 @@ radv_device_finish_meta_btoi_r32g32b32_state(struct radv_device *device)
 
    radv_DestroyPipelineLayout(radv_device_to_handle(device), state->btoi_r32g32b32.img_p_layout,
                               &state->alloc);
-   radv_DestroyDescriptorSetLayout(radv_device_to_handle(device),
-                                   state->btoi_r32g32b32.img_ds_layout, &state->alloc);
+   device->vk.dispatch_table.DestroyDescriptorSetLayout(
+      radv_device_to_handle(device), state->btoi_r32g32b32.img_ds_layout, &state->alloc);
    radv_DestroyPipeline(radv_device_to_handle(device), state->btoi_r32g32b32.pipeline,
                         &state->alloc);
 }
@@ -564,9 +553,9 @@ build_nir_itoi_compute_shader(struct radv_device *dev, bool is_3d, int samples)
    nir_ssa_def *global_id = get_global_ids(&b, is_3d ? 3 : 2);
 
    nir_ssa_def *src_offset =
-      nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 0), .range = 24);
+      nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 0), .range = is_3d ? 12 : 8);
    nir_ssa_def *dst_offset =
-      nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 12), .range = 24);
+      nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 12), .range = is_3d ? 24 : 20);
 
    nir_ssa_def *src_coord = nir_iadd(&b, global_id, src_offset);
    nir_ssa_def *input_img_deref = &nir_build_deref_var(&b, input_img)->dest.ssa;
@@ -581,7 +570,7 @@ build_nir_itoi_compute_shader(struct radv_device *dev, bool is_3d, int samples)
       tex->sampler_dim = dim;
       tex->op = is_multisampled ? nir_texop_txf_ms : nir_texop_txf;
       tex->src[0].src_type = nir_tex_src_coord;
-      tex->src[0].src = nir_src_for_ssa(nir_channels(&b, src_coord, is_3d ? 0x7 : 0x3));
+      tex->src[0].src = nir_src_for_ssa(nir_trim_vector(&b, src_coord, 2 + is_3d));
       tex->src[1].src_type = nir_tex_src_lod;
       tex->src[1].src = nir_src_for_ssa(nir_imm_int(&b, 0));
       tex->src[2].src_type = nir_tex_src_texture_deref;
@@ -634,9 +623,8 @@ create_itoi_pipeline(struct radv_device *device, int samples, VkPipeline *pipeli
       .layout = state->itoi.img_p_layout,
    };
 
-   result = radv_CreateComputePipelines(radv_device_to_handle(device),
-                                        radv_pipeline_cache_to_handle(&state->cache), 1,
-                                        &vk_pipeline_info, NULL, pipeline);
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), state->cache,
+                                         &vk_pipeline_info, NULL, pipeline, true);
    ralloc_free(cs);
    return result;
 }
@@ -695,29 +683,27 @@ radv_device_init_meta_itoi_state(struct radv_device *device)
          goto fail;
    }
 
-   if (device->physical_device->rad_info.chip_class >= GFX9) {
-      nir_shader *cs_3d = build_nir_itoi_compute_shader(device, true, 1);
+   nir_shader *cs_3d = build_nir_itoi_compute_shader(device, true, 1);
 
-      VkPipelineShaderStageCreateInfo pipeline_shader_stage_3d = {
-         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-         .module = vk_shader_module_handle_from_nir(cs_3d),
-         .pName = "main",
-         .pSpecializationInfo = NULL,
-      };
+   VkPipelineShaderStageCreateInfo pipeline_shader_stage_3d = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+      .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+      .module = vk_shader_module_handle_from_nir(cs_3d),
+      .pName = "main",
+      .pSpecializationInfo = NULL,
+   };
 
-      VkComputePipelineCreateInfo vk_pipeline_info_3d = {
-         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-         .stage = pipeline_shader_stage_3d,
-         .flags = 0,
-         .layout = device->meta_state.itoi.img_p_layout,
-      };
+   VkComputePipelineCreateInfo vk_pipeline_info_3d = {
+      .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+      .stage = pipeline_shader_stage_3d,
+      .flags = 0,
+      .layout = device->meta_state.itoi.img_p_layout,
+   };
 
-      result = radv_CreateComputePipelines(
-         radv_device_to_handle(device), radv_pipeline_cache_to_handle(&device->meta_state.cache), 1,
-         &vk_pipeline_info_3d, NULL, &device->meta_state.itoi.pipeline_3d);
-      ralloc_free(cs_3d);
-   }
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), device->meta_state.cache,
+                                         &vk_pipeline_info_3d, NULL,
+                                         &device->meta_state.itoi.pipeline_3d, true);
+   ralloc_free(cs_3d);
 
    return VK_SUCCESS;
 fail:
@@ -731,15 +717,14 @@ radv_device_finish_meta_itoi_state(struct radv_device *device)
 
    radv_DestroyPipelineLayout(radv_device_to_handle(device), state->itoi.img_p_layout,
                               &state->alloc);
-   radv_DestroyDescriptorSetLayout(radv_device_to_handle(device), state->itoi.img_ds_layout,
-                                   &state->alloc);
+   device->vk.dispatch_table.DestroyDescriptorSetLayout(radv_device_to_handle(device),
+                                                        state->itoi.img_ds_layout, &state->alloc);
 
    for (uint32_t i = 0; i < MAX_SAMPLES_LOG2; ++i) {
       radv_DestroyPipeline(radv_device_to_handle(device), state->itoi.pipeline[i], &state->alloc);
    }
 
-   if (device->physical_device->rad_info.chip_class >= GFX9)
-      radv_DestroyPipeline(radv_device_to_handle(device), state->itoi.pipeline_3d, &state->alloc);
+   radv_DestroyPipeline(radv_device_to_handle(device), state->itoi.pipeline_3d, &state->alloc);
 }
 
 static nir_shader *
@@ -762,7 +747,7 @@ build_nir_itoi_r32g32b32_compute_shader(struct radv_device *dev)
 
    nir_ssa_def *global_id = get_global_ids(&b, 2);
 
-   nir_ssa_def *src_offset = nir_load_push_constant(&b, 3, 32, nir_imm_int(&b, 0), .range = 24);
+   nir_ssa_def *src_offset = nir_load_push_constant(&b, 3, 32, nir_imm_int(&b, 0), .range = 12);
    nir_ssa_def *dst_offset = nir_load_push_constant(&b, 3, 32, nir_imm_int(&b, 12), .range = 24);
 
    nir_ssa_def *src_stride = nir_channel(&b, src_offset, 2);
@@ -876,9 +861,9 @@ radv_device_init_meta_itoi_r32g32b32_state(struct radv_device *device)
       .layout = device->meta_state.itoi_r32g32b32.img_p_layout,
    };
 
-   result = radv_CreateComputePipelines(
-      radv_device_to_handle(device), radv_pipeline_cache_to_handle(&device->meta_state.cache), 1,
-      &vk_pipeline_info, NULL, &device->meta_state.itoi_r32g32b32.pipeline);
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), device->meta_state.cache,
+                                         &vk_pipeline_info, NULL,
+                                         &device->meta_state.itoi_r32g32b32.pipeline, true);
 
 fail:
    ralloc_free(cs);
@@ -892,8 +877,8 @@ radv_device_finish_meta_itoi_r32g32b32_state(struct radv_device *device)
 
    radv_DestroyPipelineLayout(radv_device_to_handle(device), state->itoi_r32g32b32.img_p_layout,
                               &state->alloc);
-   radv_DestroyDescriptorSetLayout(radv_device_to_handle(device),
-                                   state->itoi_r32g32b32.img_ds_layout, &state->alloc);
+   device->vk.dispatch_table.DestroyDescriptorSetLayout(
+      radv_device_to_handle(device), state->itoi_r32g32b32.img_ds_layout, &state->alloc);
    radv_DestroyPipeline(radv_device_to_handle(device), state->itoi_r32g32b32.pipeline,
                         &state->alloc);
 }
@@ -917,7 +902,7 @@ build_nir_cleari_compute_shader(struct radv_device *dev, bool is_3d, int samples
 
    nir_ssa_def *global_id = get_global_ids(&b, 2);
 
-   nir_ssa_def *clear_val = nir_load_push_constant(&b, 4, 32, nir_imm_int(&b, 0), .range = 20);
+   nir_ssa_def *clear_val = nir_load_push_constant(&b, 4, 32, nir_imm_int(&b, 0), .range = 16);
    nir_ssa_def *layer = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 16), .range = 20);
 
    nir_ssa_def *comps[4];
@@ -956,9 +941,8 @@ create_cleari_pipeline(struct radv_device *device, int samples, VkPipeline *pipe
       .layout = device->meta_state.cleari.img_p_layout,
    };
 
-   result = radv_CreateComputePipelines(radv_device_to_handle(device),
-                                        radv_pipeline_cache_to_handle(&device->meta_state.cache), 1,
-                                        &vk_pipeline_info, NULL, pipeline);
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), device->meta_state.cache,
+                                         &vk_pipeline_info, NULL, pipeline, true);
    ralloc_free(cs);
    return result;
 }
@@ -1011,30 +995,28 @@ radv_device_init_meta_cleari_state(struct radv_device *device)
          goto fail;
    }
 
-   if (device->physical_device->rad_info.chip_class >= GFX9) {
-      nir_shader *cs_3d = build_nir_cleari_compute_shader(device, true, 1);
+   nir_shader *cs_3d = build_nir_cleari_compute_shader(device, true, 1);
 
-      /* compute shader */
-      VkPipelineShaderStageCreateInfo pipeline_shader_stage_3d = {
-         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-         .module = vk_shader_module_handle_from_nir(cs_3d),
-         .pName = "main",
-         .pSpecializationInfo = NULL,
-      };
+   /* compute shader */
+   VkPipelineShaderStageCreateInfo pipeline_shader_stage_3d = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+      .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+      .module = vk_shader_module_handle_from_nir(cs_3d),
+      .pName = "main",
+      .pSpecializationInfo = NULL,
+   };
 
-      VkComputePipelineCreateInfo vk_pipeline_info_3d = {
-         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-         .stage = pipeline_shader_stage_3d,
-         .flags = 0,
-         .layout = device->meta_state.cleari.img_p_layout,
-      };
+   VkComputePipelineCreateInfo vk_pipeline_info_3d = {
+      .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+      .stage = pipeline_shader_stage_3d,
+      .flags = 0,
+      .layout = device->meta_state.cleari.img_p_layout,
+   };
 
-      result = radv_CreateComputePipelines(
-         radv_device_to_handle(device), radv_pipeline_cache_to_handle(&device->meta_state.cache), 1,
-         &vk_pipeline_info_3d, NULL, &device->meta_state.cleari.pipeline_3d);
-      ralloc_free(cs_3d);
-   }
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), device->meta_state.cache,
+                                         &vk_pipeline_info_3d, NULL,
+                                         &device->meta_state.cleari.pipeline_3d, true);
+   ralloc_free(cs_3d);
 
    return VK_SUCCESS;
 fail:
@@ -1048,8 +1030,8 @@ radv_device_finish_meta_cleari_state(struct radv_device *device)
 
    radv_DestroyPipelineLayout(radv_device_to_handle(device), state->cleari.img_p_layout,
                               &state->alloc);
-   radv_DestroyDescriptorSetLayout(radv_device_to_handle(device), state->cleari.img_ds_layout,
-                                   &state->alloc);
+   device->vk.dispatch_table.DestroyDescriptorSetLayout(radv_device_to_handle(device),
+                                                        state->cleari.img_ds_layout, &state->alloc);
 
    for (uint32_t i = 0; i < MAX_SAMPLES_LOG2; ++i) {
       radv_DestroyPipeline(radv_device_to_handle(device), state->cleari.pipeline[i], &state->alloc);
@@ -1073,7 +1055,7 @@ build_nir_cleari_r32g32b32_compute_shader(struct radv_device *dev)
 
    nir_ssa_def *global_id = get_global_ids(&b, 2);
 
-   nir_ssa_def *clear_val = nir_load_push_constant(&b, 3, 32, nir_imm_int(&b, 0), .range = 16);
+   nir_ssa_def *clear_val = nir_load_push_constant(&b, 3, 32, nir_imm_int(&b, 0), .range = 12);
    nir_ssa_def *stride = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 12), .range = 16);
 
    nir_ssa_def *global_x = nir_channel(&b, global_id, 0);
@@ -1149,9 +1131,9 @@ radv_device_init_meta_cleari_r32g32b32_state(struct radv_device *device)
       .layout = device->meta_state.cleari_r32g32b32.img_p_layout,
    };
 
-   result = radv_CreateComputePipelines(
-      radv_device_to_handle(device), radv_pipeline_cache_to_handle(&device->meta_state.cache), 1,
-      &vk_pipeline_info, NULL, &device->meta_state.cleari_r32g32b32.pipeline);
+   result = radv_compute_pipeline_create(radv_device_to_handle(device), device->meta_state.cache,
+                                         &vk_pipeline_info, NULL,
+                                         &device->meta_state.cleari_r32g32b32.pipeline, true);
 
 fail:
    ralloc_free(cs);
@@ -1165,8 +1147,8 @@ radv_device_finish_meta_cleari_r32g32b32_state(struct radv_device *device)
 
    radv_DestroyPipelineLayout(radv_device_to_handle(device), state->cleari_r32g32b32.img_p_layout,
                               &state->alloc);
-   radv_DestroyDescriptorSetLayout(radv_device_to_handle(device),
-                                   state->cleari_r32g32b32.img_ds_layout, &state->alloc);
+   device->vk.dispatch_table.DestroyDescriptorSetLayout(
+      radv_device_to_handle(device), state->cleari_r32g32b32.img_ds_layout, &state->alloc);
    radv_DestroyPipeline(radv_device_to_handle(device), state->cleari_r32g32b32.pipeline,
                         &state->alloc);
 }
@@ -1190,58 +1172,39 @@ radv_device_init_meta_bufimage_state(struct radv_device *device)
 
    result = radv_device_init_meta_itob_state(device);
    if (result != VK_SUCCESS)
-      goto fail_itob;
+      return result;
 
    result = radv_device_init_meta_btoi_state(device);
    if (result != VK_SUCCESS)
-      goto fail_btoi;
+      return result;
 
    result = radv_device_init_meta_btoi_r32g32b32_state(device);
    if (result != VK_SUCCESS)
-      goto fail_btoi_r32g32b32;
+      return result;
 
    result = radv_device_init_meta_itoi_state(device);
    if (result != VK_SUCCESS)
-      goto fail_itoi;
+      return result;
 
    result = radv_device_init_meta_itoi_r32g32b32_state(device);
    if (result != VK_SUCCESS)
-      goto fail_itoi_r32g32b32;
+      return result;
 
    result = radv_device_init_meta_cleari_state(device);
    if (result != VK_SUCCESS)
-      goto fail_cleari;
+      return result;
 
    result = radv_device_init_meta_cleari_r32g32b32_state(device);
    if (result != VK_SUCCESS)
-      goto fail_cleari_r32g32b32;
+      return result;
 
    return VK_SUCCESS;
-fail_cleari_r32g32b32:
-   radv_device_finish_meta_cleari_r32g32b32_state(device);
-fail_cleari:
-   radv_device_finish_meta_cleari_state(device);
-fail_itoi_r32g32b32:
-   radv_device_finish_meta_itoi_r32g32b32_state(device);
-fail_itoi:
-   radv_device_finish_meta_itoi_state(device);
-fail_btoi_r32g32b32:
-   radv_device_finish_meta_btoi_r32g32b32_state(device);
-fail_btoi:
-   radv_device_finish_meta_btoi_state(device);
-fail_itob:
-   radv_device_finish_meta_itob_state(device);
-   return result;
 }
 
 static void
 create_iview(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_surf *surf,
              struct radv_image_view *iview, VkFormat format, VkImageAspectFlagBits aspects)
 {
-   VkImageViewType view_type = cmd_buffer->device->physical_device->rad_info.chip_class < GFX9
-                                  ? VK_IMAGE_VIEW_TYPE_2D
-                                  : radv_meta_get_view_type(surf->image);
-
    if (format == VK_FORMAT_UNDEFINED)
       format = surf->format;
 
@@ -1249,7 +1212,7 @@ create_iview(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_surf *s
                         &(VkImageViewCreateInfo){
                            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
                            .image = radv_image_to_handle(surf->image),
-                           .viewType = view_type,
+                           .viewType = radv_meta_get_view_type(surf->image),
                            .format = format,
                            .subresourceRange = {.aspectMask = aspects,
                                                 .baseMipLevel = surf->level,
@@ -1257,7 +1220,7 @@ create_iview(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_surf *s
                                                 .baseArrayLayer = surf->layer,
                                                 .layerCount = 1},
                         },
-                        &(struct radv_image_view_extra_create_info){
+                        0, &(struct radv_image_view_extra_create_info){
                            .disable_compression = surf->disable_compression,
                         });
 }
@@ -1284,24 +1247,24 @@ create_buffer_from_image(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_bl
    struct radv_device *device = cmd_buffer->device;
    struct radv_device_memory mem;
 
-   radv_device_memory_init(&mem, device, surf->image->bo);
+   radv_device_memory_init(&mem, device, surf->image->bindings[0].bo);
 
-   radv_CreateBuffer(radv_device_to_handle(device),
-                     &(VkBufferCreateInfo){
-                        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                        .flags = 0,
-                        .size = surf->image->size,
-                        .usage = usage,
-                        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                     },
-                     NULL, buffer);
+   radv_create_buffer(device,
+                      &(VkBufferCreateInfo){
+                         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                         .flags = 0,
+                         .size = surf->image->size,
+                         .usage = usage,
+                         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                      },
+                      NULL, buffer, true);
 
    radv_BindBufferMemory2(radv_device_to_handle(device), 1,
                           (VkBindBufferMemoryInfo[]){{
                              .sType = VK_STRUCTURE_TYPE_BIND_BUFFER_MEMORY_INFO,
                              .buffer = *buffer,
                              .memory = radv_device_memory_to_handle(&mem),
-                             .memoryOffset = surf->image->offset,
+                             .memoryOffset = surf->image->bindings[0].offset,
                           }});
 
    radv_device_memory_finish(&mem);
@@ -1338,13 +1301,99 @@ create_bview_for_r32g32b32(struct radv_cmd_buffer *cmd_buffer, struct radv_buffe
                          });
 }
 
+/* GFX9+ has an issue where the HW does not calculate mipmap degradations
+ * for block-compressed images correctly (see the comment in
+ * radv_image_view_init). Some texels are unaddressable and cannot be copied
+ * to/from by a compute shader. Here we will perform a buffer copy to copy the
+ * texels that the hardware missed.
+ *
+ * GFX10 will not use this workaround because it can be fixed by adjusting its
+ * image view descriptors instead.
+ */
+static void
+fixup_gfx9_cs_copy(struct radv_cmd_buffer *cmd_buffer,
+                   const struct radv_meta_blit2d_buffer *buf_bsurf,
+                   const struct radv_meta_blit2d_surf *img_bsurf,
+                   const struct radv_meta_blit2d_rect *rect, bool to_image)
+{
+   const unsigned mip_level = img_bsurf->level;
+   const struct radv_image *image = img_bsurf->image;
+   const struct radeon_surf *surf = &image->planes[0].surface;
+   const struct radv_device *device = cmd_buffer->device;
+   const struct radeon_info *rad_info = &device->physical_device->rad_info;
+   struct ac_addrlib *addrlib = device->ws->get_addrlib(device->ws);
+
+   /* GFX10 will use a different workaround unless this is not a 2D image */
+   if (rad_info->gfx_level < GFX9 ||
+       (rad_info->gfx_level >= GFX10 && image->vk.image_type == VK_IMAGE_TYPE_2D) ||
+       image->vk.mip_levels == 1 || !vk_format_is_block_compressed(image->vk.format))
+      return;
+
+   /* The physical extent of the base mip */
+   VkExtent2D hw_base_extent = {surf->u.gfx9.base_mip_width, surf->u.gfx9.base_mip_height};
+
+   /* The hardware-calculated extent of the selected mip
+    * (naive divide-by-two integer math)
+    */
+   VkExtent2D hw_mip_extent = {radv_minify(hw_base_extent.width, mip_level),
+                               radv_minify(hw_base_extent.height, mip_level)};
+
+   /* The actual extent we want to copy */
+   VkExtent2D mip_extent = {rect->width, rect->height};
+
+   VkOffset2D mip_offset = {to_image ? rect->dst_x : rect->src_x,
+                            to_image ? rect->dst_y : rect->src_y};
+
+   if (hw_mip_extent.width >= mip_offset.x + mip_extent.width &&
+       hw_mip_extent.height >= mip_offset.y + mip_extent.height)
+      return;
+
+   if (!to_image) {
+      /* If we are writing to a buffer, then we need to wait for the compute
+       * shader to finish because it may write over the unaddressable texels
+       * while we're fixing them. If we're writing to an image, we do not need
+       * to wait because the compute shader cannot write to those texels
+       */
+      cmd_buffer->state.flush_bits |=
+         RADV_CMD_FLAG_CS_PARTIAL_FLUSH | RADV_CMD_FLAG_INV_L2 | RADV_CMD_FLAG_INV_VCACHE;
+   }
+
+   for (uint32_t y = 0; y < mip_extent.width; y++) {
+      uint32_t coordY = y + mip_offset.y;
+      /* If the default copy algorithm (done previously) has already seen this
+       * scanline, then we can bias the starting X coordinate over to skip the
+       * region already copied by the default copy.
+       */
+      uint32_t x = (coordY < hw_mip_extent.height) ? hw_mip_extent.width : 0;
+      for (; x < mip_extent.width; x++) {
+         uint32_t coordX = x + mip_offset.x;
+         uint64_t addr = ac_surface_addr_from_coord(addrlib, rad_info, surf, &image->info,
+                                                    mip_level, coordX, coordY, img_bsurf->layer,
+                                                    image->vk.image_type == VK_IMAGE_TYPE_3D);
+         struct radeon_winsys_bo *img_bo = image->bindings[0].bo;
+         struct radeon_winsys_bo *mem_bo = buf_bsurf->buffer->bo;
+         const uint64_t img_offset = image->bindings[0].offset + addr;
+         /* buf_bsurf->offset already includes the layer offset */
+         const uint64_t mem_offset = buf_bsurf->buffer->offset +
+                                     buf_bsurf->offset +
+                                     y * buf_bsurf->pitch * surf->bpe +
+                                     x * surf->bpe;
+         if (to_image) {
+            radv_copy_buffer(cmd_buffer, mem_bo, img_bo, mem_offset, img_offset, surf->bpe);
+         } else {
+            radv_copy_buffer(cmd_buffer, img_bo, mem_bo, img_offset, mem_offset, surf->bpe);
+         }
+      }
+   }
+}
+
 static unsigned
 get_image_stride_for_r32g32b32(struct radv_cmd_buffer *cmd_buffer,
                                struct radv_meta_blit2d_surf *surf)
 {
    unsigned stride;
 
-   if (cmd_buffer->device->physical_device->rad_info.chip_class >= GFX9) {
+   if (cmd_buffer->device->physical_device->rad_info.gfx_level >= GFX9) {
       stride = surf->image->planes[0].surface.u.gfx9.surf_pitch;
    } else {
       stride = surf->image->planes[0].surface.u.legacy.level[0].nblk_x * 3;
@@ -1400,7 +1449,7 @@ radv_meta_image_to_buffer(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_b
    create_bview(cmd_buffer, dst->buffer, dst->offset, dst->format, &dst_view);
    itob_bind_descriptors(cmd_buffer, &src_view, &dst_view);
 
-   if (device->physical_device->rad_info.chip_class >= GFX9 && src->image->type == VK_IMAGE_TYPE_3D)
+   if (src->image->vk.image_type == VK_IMAGE_TYPE_3D)
       pipeline = cmd_buffer->device->meta_state.itob.pipeline_3d;
 
    radv_CmdBindPipeline(radv_cmd_buffer_to_handle(cmd_buffer), VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -1413,6 +1462,7 @@ radv_meta_image_to_buffer(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_b
                             16, push_constants);
 
       radv_unaligned_dispatch(cmd_buffer, rects[r].width, rects[r].height, 1);
+      fixup_gfx9_cs_copy(cmd_buffer, dst, src, &rects[r], false);
    }
 
    radv_image_view_finish(&src_view);
@@ -1539,9 +1589,9 @@ radv_meta_buffer_to_image_cs(struct radv_cmd_buffer *cmd_buffer,
    struct radv_buffer_view src_view;
    struct radv_image_view dst_view;
 
-   if (dst->image->vk_format == VK_FORMAT_R32G32B32_UINT ||
-       dst->image->vk_format == VK_FORMAT_R32G32B32_SINT ||
-       dst->image->vk_format == VK_FORMAT_R32G32B32_SFLOAT) {
+   if (dst->image->vk.format == VK_FORMAT_R32G32B32_UINT ||
+       dst->image->vk.format == VK_FORMAT_R32G32B32_SINT ||
+       dst->image->vk.format == VK_FORMAT_R32G32B32_SFLOAT) {
       radv_meta_buffer_to_image_cs_r32g32b32(cmd_buffer, src, dst, num_rects, rects);
       return;
    }
@@ -1550,7 +1600,7 @@ radv_meta_buffer_to_image_cs(struct radv_cmd_buffer *cmd_buffer,
    create_iview(cmd_buffer, dst, &dst_view, VK_FORMAT_UNDEFINED, dst->aspect_mask);
    btoi_bind_descriptors(cmd_buffer, &src_view, &dst_view);
 
-   if (device->physical_device->rad_info.chip_class >= GFX9 && dst->image->type == VK_IMAGE_TYPE_3D)
+   if (dst->image->vk.image_type == VK_IMAGE_TYPE_3D)
       pipeline = cmd_buffer->device->meta_state.btoi.pipeline_3d;
    radv_CmdBindPipeline(radv_cmd_buffer_to_handle(cmd_buffer), VK_PIPELINE_BIND_POINT_COMPUTE,
                         pipeline);
@@ -1567,6 +1617,7 @@ radv_meta_buffer_to_image_cs(struct radv_cmd_buffer *cmd_buffer,
                             16, push_constants);
 
       radv_unaligned_dispatch(cmd_buffer, rects[r].width, rects[r].height, 1);
+      fixup_gfx9_cs_copy(cmd_buffer, src, dst, &rects[r], true);
    }
 
    radv_image_view_finish(&dst_view);
@@ -1711,9 +1762,9 @@ radv_meta_image_to_image_cs(struct radv_cmd_buffer *cmd_buffer, struct radv_meta
       unsigned aspect_mask = 1u << i;
       VkFormat depth_format = 0;
       if (aspect_mask == VK_IMAGE_ASPECT_STENCIL_BIT)
-         depth_format = vk_format_stencil_only(dst->image->vk_format);
+         depth_format = vk_format_stencil_only(dst->image->vk.format);
       else if (aspect_mask == VK_IMAGE_ASPECT_DEPTH_BIT)
-         depth_format = vk_format_depth_only(dst->image->vk_format);
+         depth_format = vk_format_depth_only(dst->image->vk.format);
 
       create_iview(cmd_buffer, src, &src_view, depth_format, aspect_mask);
       create_iview(cmd_buffer, dst, &dst_view, depth_format, aspect_mask);
@@ -1721,8 +1772,8 @@ radv_meta_image_to_image_cs(struct radv_cmd_buffer *cmd_buffer, struct radv_meta
       itoi_bind_descriptors(cmd_buffer, &src_view, &dst_view);
 
       VkPipeline pipeline = cmd_buffer->device->meta_state.itoi.pipeline[samples_log2];
-      if (device->physical_device->rad_info.chip_class >= GFX9 &&
-          (src->image->type == VK_IMAGE_TYPE_3D || dst->image->type == VK_IMAGE_TYPE_3D))
+      if (src->image->vk.image_type == VK_IMAGE_TYPE_3D ||
+          dst->image->vk.image_type == VK_IMAGE_TYPE_3D)
          pipeline = cmd_buffer->device->meta_state.itoi.pipeline_3d;
       radv_CmdBindPipeline(radv_cmd_buffer_to_handle(cmd_buffer), VK_PIPELINE_BIND_POINT_COMPUTE,
                            pipeline);
@@ -1849,7 +1900,7 @@ radv_meta_clear_image_cs(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_bl
    cleari_bind_descriptors(cmd_buffer, &dst_iview);
 
    VkPipeline pipeline = cmd_buffer->device->meta_state.cleari.pipeline[samples_log2];
-   if (device->physical_device->rad_info.chip_class >= GFX9 && dst->image->type == VK_IMAGE_TYPE_3D)
+   if (dst->image->vk.image_type == VK_IMAGE_TYPE_3D)
       pipeline = cmd_buffer->device->meta_state.cleari.pipeline_3d;
 
    radv_CmdBindPipeline(radv_cmd_buffer_to_handle(cmd_buffer), VK_PIPELINE_BIND_POINT_COMPUTE,

@@ -305,7 +305,7 @@ ir3_nir_lower_preamble(nir_shader *nir, struct ir3_shader_variant *v)
 
    /* First, lower load/store_preamble. */  
    const struct ir3_const_state *const_state = ir3_const_state(v);
-   unsigned preamble_base = v->shader->num_reserved_user_consts * 4 +
+   unsigned preamble_base = v->num_reserved_user_consts * 4 +
       const_state->ubo_state.size / 4;
    unsigned preamble_size = const_state->preamble_size * 4;
 
@@ -335,7 +335,7 @@ ir3_nir_lower_preamble(nir_shader *nir, struct ir3_shader_variant *v)
                              .base = offset);
 
          if (dest->bit_size == 1) {
-            new_dest = nir_i2b1(b, new_dest);
+            new_dest = nir_i2b(b, new_dest);
          } else if (dest->bit_size != 32) {
             assert(dest->bit_size == 16);
             if (all_uses_float(dest, true)) {

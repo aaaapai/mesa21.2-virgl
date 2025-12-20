@@ -30,14 +30,19 @@
 #include "hwdef/rogue_hw_utils.h"
 #include "pvr_bo.h"
 #include "pvr_csb.h"
+#include "pvr_debug.h"
+#include "pvr_csb_enum_helpers.h"
+#include "pvr_debug.h"
 #include "pvr_job_common.h"
 #include "pvr_job_context.h"
 #include "pvr_job_render.h"
 #include "pvr_pds.h"
 #include "pvr_private.h"
 #include "pvr_rogue_fw.h"
+#include "pvr_types.h"
 #include "pvr_winsys.h"
 #include "util/compiler.h"
+#include "util/format/format_utils.h"
 #include "util/macros.h"
 #include "util/u_math.h"
 #include "vk_alloc.h"
@@ -144,6 +149,8 @@ VkResult pvr_free_list_create(struct pvr_device *device,
                               struct pvr_free_list *parent_free_list,
                               struct pvr_free_list **const free_list_out)
 {
+   const struct pvr_device_runtime_info *runtime_info =
+      &device->pdevice->dev_runtime_info;
    struct pvr_winsys_free_list *parent_ws_free_list =
       parent_free_list ? parent_free_list->ws_free_list : NULL;
    const uint64_t bo_flags = PVR_BO_ALLOC_FLAG_GPU_UNCACHED |
@@ -201,8 +208,8 @@ VkResult pvr_free_list_create(struct pvr_device *device,
    /* Make sure the 'max' size doesn't exceed what the firmware supports and
     * adjust the other sizes accordingly.
     */
-   if (max_size > ROGUE_FREE_LIST_MAX_SIZE) {
-      max_size = ROGUE_FREE_LIST_MAX_SIZE;
+   if (max_size > runtime_info->max_free_list_size) {
+      max_size = runtime_info->max_free_list_size;
       assert(align64(max_size, size_alignment) == max_size);
    }
 
@@ -367,12 +374,12 @@ pvr_rt_get_isp_region_size(struct pvr_device *device,
 {
    const struct pvr_device_info *dev_info = &device->pdevice->dev_info;
    uint64_t rgn_size =
-      mtile_info->tiles_per_mtile_x * mtile_info->tiles_per_mtile_y;
+      (uint64_t)mtile_info->tiles_per_mtile_x * mtile_info->tiles_per_mtile_y;
 
    if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {
       uint32_t version;
 
-      rgn_size *= mtile_info->mtiles_x * mtile_info->mtiles_y;
+      rgn_size *= (uint64_t)mtile_info->mtiles_x * mtile_info->mtiles_y;
 
       if (PVR_FEATURE_VALUE(dev_info,
                             simple_parameter_format_version,
@@ -437,8 +444,8 @@ static VkResult pvr_rt_vheap_rtc_data_init(struct pvr_device *device,
    rt_dataset->vheap_dev_addr = rt_dataset->vheap_rtc_bo->vma->dev_addr;
 
    if (rtc_size > 0) {
-      rt_dataset->rtc_dev_addr.addr =
-         rt_dataset->vheap_dev_addr.addr + vheap_size;
+      rt_dataset->rtc_dev_addr =
+         PVR_DEV_ADDR_OFFSET(rt_dataset->vheap_dev_addr, vheap_size);
    } else {
       rt_dataset->rtc_dev_addr = PVR_DEV_ADDR_INVALID;
    }
@@ -473,7 +480,7 @@ pvr_rt_get_tail_ptr_stride_size(const struct pvr_device *device,
    max_num_mtiles = MAX2(util_next_power_of_two64(num_mtiles_x),
                          util_next_power_of_two64(num_mtiles_y));
 
-   size = max_num_mtiles * max_num_mtiles;
+   size = (uint64_t)max_num_mtiles * max_num_mtiles;
 
    if (PVR_FEATURE_VALUE(&device->pdevice->dev_info,
                          simple_parameter_format_version,
@@ -570,7 +577,7 @@ static void pvr_rt_get_region_headers_stride_size(
 {
    const struct pvr_device_info *dev_info = &device->pdevice->dev_info;
    const uint32_t rgn_header_size = rogue_get_region_header_size(dev_info);
-   uint32_t rgn_headers_size;
+   uint64_t rgn_headers_size;
    uint32_t num_tiles_x;
    uint32_t num_tiles_y;
    uint32_t group_size;
@@ -584,8 +591,10 @@ static void pvr_rt_get_region_headers_stride_size(
    num_tiles_x = mtile_info->mtiles_x * mtile_info->tiles_per_mtile_x;
    num_tiles_y = mtile_info->mtiles_y * mtile_info->tiles_per_mtile_y;
 
-   rgn_headers_size =
-      (num_tiles_x / group_size) * (num_tiles_y / group_size) * rgn_header_size;
+   rgn_headers_size = (uint64_t)num_tiles_x / group_size;
+   /* Careful here. We want the division to happen first. */
+   rgn_headers_size *= num_tiles_y / group_size;
+   rgn_headers_size *= rgn_header_size;
 
    if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {
       rgn_headers_size =
@@ -642,19 +651,19 @@ pvr_rt_mta_mlist_data_init(struct pvr_device *device,
    for (uint32_t i = 0; i < num_rt_datas; i++) {
       if (mta_size != 0) {
          rt_dataset->rt_datas[i].mta_dev_addr = dev_addr;
-         dev_addr.addr += mta_size;
+         dev_addr = PVR_DEV_ADDR_OFFSET(dev_addr, mta_size);
       } else {
          rt_dataset->rt_datas[i].mta_dev_addr = PVR_DEV_ADDR_INVALID;
       }
    }
 
-   dev_addr.addr =
-      rt_dataset->mta_mlist_bo->vma->dev_addr.addr + rt_datas_mta_size;
+   dev_addr = PVR_DEV_ADDR_OFFSET(rt_dataset->mta_mlist_bo->vma->dev_addr,
+                                  rt_datas_mta_size);
 
    for (uint32_t i = 0; i < num_rt_datas; i++) {
       if (mlist_size != 0) {
          rt_dataset->rt_datas[i].mlist_dev_addr = dev_addr;
-         dev_addr.addr += mlist_size;
+         dev_addr = PVR_DEV_ADDR_OFFSET(dev_addr, mlist_size);
       } else {
          rt_dataset->rt_datas[i].mlist_dev_addr = PVR_DEV_ADDR_INVALID;
       }
@@ -704,7 +713,7 @@ pvr_rt_rgn_headers_data_init(struct pvr_device *device,
 
    for (uint32_t i = 0; i < num_rt_datas; i++) {
       rt_dataset->rt_datas[i].rgn_headers_dev_addr = dev_addr;
-      dev_addr.addr += rgn_headers_size;
+      dev_addr = PVR_DEV_ADDR_OFFSET(dev_addr, rgn_headers_size);
    }
 
    return VK_SUCCESS;
@@ -1048,6 +1057,8 @@ pvr_render_target_dataset_create(struct pvr_device *device,
                                  uint32_t layers,
                                  struct pvr_rt_dataset **const rt_dataset_out)
 {
+   struct pvr_device_runtime_info *runtime_info =
+      &device->pdevice->dev_runtime_info;
    const struct pvr_device_info *dev_info = &device->pdevice->dev_info;
    struct pvr_winsys_rt_dataset_create_info rt_dataset_create_info;
    struct pvr_rt_mtile_info mtile_info;
@@ -1081,8 +1092,8 @@ pvr_render_target_dataset_create(struct pvr_device *device,
     * details.
     */
    result = pvr_free_list_create(device,
-                                 rogue_get_min_free_list_size(dev_info),
-                                 rogue_get_min_free_list_size(dev_info),
+                                 runtime_info->min_free_list_size,
+                                 runtime_info->min_free_list_size,
                                  0 /* grow_size */,
                                  0 /* grow_threshold */,
                                  rt_dataset->global_free_list,
@@ -1158,30 +1169,33 @@ void pvr_render_target_dataset_destroy(struct pvr_rt_dataset *rt_dataset)
    vk_free(&device->vk.alloc, rt_dataset);
 }
 
-static void
-pvr_render_job_ws_geometry_state_init(struct pvr_render_ctx *ctx,
-                                      struct pvr_render_job *job,
-                                      struct pvr_winsys_geometry_state *state)
+static void pvr_geom_state_stream_init(struct pvr_render_ctx *ctx,
+                                       struct pvr_render_job *job,
+                                       struct pvr_winsys_geometry_state *state)
 {
    const struct pvr_device_info *dev_info = &ctx->device->pdevice->dev_info;
 
-   /* FIXME: Should this just be done unconditionally? The firmware will just
-    * ignore the value anyway.
-    */
-   if (PVR_HAS_QUIRK(dev_info, 56279)) {
-      pvr_csb_pack (&state->regs.pds_ctrl, CR_PDS_CTRL, value) {
-         value.max_num_vdm_tasks = rogue_get_max_num_vdm_pds_tasks(dev_info);
-      }
-   } else {
-      state->regs.pds_ctrl = 0;
-   }
+   uint32_t *stream_ptr = (uint32_t *)state->fw_stream;
 
-   pvr_csb_pack (&state->regs.ppp_ctrl, CR_PPP_CTRL, value) {
+   pvr_csb_pack ((uint64_t *)stream_ptr, CR_VDM_CTRL_STREAM_BASE, value) {
+      value.addr = job->ctrl_stream_addr;
+   }
+   stream_ptr += pvr_cmd_length(CR_VDM_CTRL_STREAM_BASE);
+
+   pvr_csb_pack ((uint64_t *)stream_ptr,
+                 CR_TPU_BORDER_COLOUR_TABLE_VDM,
+                 value) {
+      value.border_colour_table_address = job->border_colour_table_addr;
+   }
+   stream_ptr += pvr_cmd_length(CR_TPU_BORDER_COLOUR_TABLE_VDM);
+
+   pvr_csb_pack (stream_ptr, CR_PPP_CTRL, value) {
       value.wclampen = true;
       value.fixed_point_format = 1;
    }
+   stream_ptr += pvr_cmd_length(CR_PPP_CTRL);
 
-   pvr_csb_pack (&state->regs.te_psg, CR_TE_PSG, value) {
+   pvr_csb_pack (stream_ptr, CR_TE_PSG, value) {
       value.completeonterminate = job->geometry_terminate;
 
       value.region_stride = job->rt_dataset->rgn_headers_stride /
@@ -1189,40 +1203,71 @@ pvr_render_job_ws_geometry_state_init(struct pvr_render_ctx *ctx,
 
       value.forcenewstate = PVR_HAS_QUIRK(dev_info, 52942);
    }
-
-   /* The set up of CR_TPU must be identical to
-    * pvr_render_job_ws_fragment_state_init().
-    */
-   pvr_csb_pack (&state->regs.tpu, CR_TPU, value) {
-      value.tag_cem_4k_face_packing = true;
-   }
-
-   pvr_csb_pack (&state->regs.tpu_border_colour_table,
-                 CR_TPU_BORDER_COLOUR_TABLE_VDM,
-                 value) {
-      value.border_colour_table_address = job->border_colour_table_addr;
-   }
-
-   pvr_csb_pack (&state->regs.vdm_ctrl_stream_base,
-                 CR_VDM_CTRL_STREAM_BASE,
-                 value) {
-      value.addr = job->ctrl_stream_addr;
-   }
+   stream_ptr += pvr_cmd_length(CR_TE_PSG);
 
    /* Set up the USC common size for the context switch resume/load program
     * (ctx->ctx_switch.programs[i].sr->pds_load_program), which was created
     * as part of the render context.
     */
-   pvr_csb_pack (&state->regs.vdm_ctx_resume_task0_size,
-                 VDMCTRL_PDS_STATE0,
-                 value) {
+   pvr_csb_pack (stream_ptr, VDMCTRL_PDS_STATE0, value) {
       /* Calculate the size in bytes. */
       const uint16_t shared_registers_size = job->max_shared_registers * 4;
 
       value.usc_common_size =
          DIV_ROUND_UP(shared_registers_size,
                       PVRX(VDMCTRL_PDS_STATE0_USC_COMMON_SIZE_UNIT_SIZE));
-   };
+   }
+   stream_ptr += pvr_cmd_length(VDMCTRL_PDS_STATE0);
+
+   /* Set up view_idx to 0 */
+   *stream_ptr = 0;
+   stream_ptr++;
+
+   state->fw_stream_len = (uint8_t *)stream_ptr - state->fw_stream;
+   assert(state->fw_stream_len <= ARRAY_SIZE(state->fw_stream));
+}
+
+static void
+pvr_geom_state_stream_ext_init(struct pvr_render_ctx *ctx,
+                               struct pvr_render_job *job,
+                               struct pvr_winsys_geometry_state *state)
+{
+   const struct pvr_device_info *dev_info = &ctx->device->pdevice->dev_info;
+
+   uint32_t *ext_stream_ptr = (uint32_t *)state->fw_ext_stream;
+   uint32_t *header0_ptr;
+
+   header0_ptr = ext_stream_ptr;
+   ext_stream_ptr += pvr_cmd_length(FW_STREAM_EXTHDR_GEOM0);
+
+   pvr_csb_pack (header0_ptr, FW_STREAM_EXTHDR_GEOM0, header0) {
+      if (PVR_HAS_QUIRK(dev_info, 49927)) {
+         header0.has_brn49927 = true;
+
+         /* The set up of CR_TPU must be identical to
+          * pvr_render_job_ws_fragment_state_stream_ext_init().
+          */
+         pvr_csb_pack (ext_stream_ptr, CR_TPU, value) {
+            value.tag_cem_4k_face_packing = true;
+         }
+         ext_stream_ptr += pvr_cmd_length(CR_TPU);
+      }
+   }
+
+   state->fw_ext_stream_len = (uint8_t *)ext_stream_ptr - state->fw_ext_stream;
+   assert(state->fw_ext_stream_len <= ARRAY_SIZE(state->fw_ext_stream));
+
+   if ((*header0_ptr & PVRX(FW_STREAM_EXTHDR_DATA_MASK)) == 0)
+      state->fw_ext_stream_len = 0;
+}
+
+static void
+pvr_render_job_ws_geometry_state_init(struct pvr_render_ctx *ctx,
+                                      struct pvr_render_job *job,
+                                      struct pvr_winsys_geometry_state *state)
+{
+   pvr_geom_state_stream_init(ctx, job, state);
+   pvr_geom_state_stream_ext_init(ctx, job, state);
 
    state->flags = 0;
 
@@ -1288,175 +1333,220 @@ pvr_get_isp_num_tiles_xy(const struct pvr_device_info *dev_info,
    }
 }
 
-static void
-pvr_render_job_ws_fragment_state_init(struct pvr_render_ctx *ctx,
-                                      struct pvr_render_job *job,
-                                      struct pvr_winsys_fragment_state *state)
+static void pvr_frag_state_stream_init(struct pvr_render_ctx *ctx,
+                                       struct pvr_render_job *job,
+                                       struct pvr_winsys_fragment_state *state)
 {
-   const struct pvr_device_info *dev_info = &ctx->device->pdevice->dev_info;
-   enum PVRX(CR_ISP_AA_MODE_TYPE) isp_aa_mode;
+   const struct pvr_physical_device *const pdevice = ctx->device->pdevice;
+   const struct pvr_device_runtime_info *dev_runtime_info =
+      &pdevice->dev_runtime_info;
+   const struct pvr_device_info *dev_info = &pdevice->dev_info;
+   const enum PVRX(CR_ISP_AA_MODE_TYPE)
+      isp_aa_mode = pvr_cr_isp_aa_mode_type(job->samples);
+
+   uint32_t *stream_ptr = (uint32_t *)state->fw_stream;
+   enum PVRX(CR_ZLOADFORMAT_TYPE) zload_format;
+   uint32_t pixel_ctl;
    uint32_t isp_ctl;
-
-   /* FIXME: what to do when job->run_frag is false? */
-
-   switch (job->samples) {
-   case 1:
-      isp_aa_mode = PVRX(CR_ISP_AA_MODE_TYPE_AA_NONE);
-      break;
-   case 2:
-      isp_aa_mode = PVRX(CR_ISP_AA_MODE_TYPE_AA_2X);
-      break;
-   case 3:
-      isp_aa_mode = PVRX(CR_ISP_AA_MODE_TYPE_AA_4X);
-      break;
-   case 8:
-      isp_aa_mode = PVRX(CR_ISP_AA_MODE_TYPE_AA_8X);
-      break;
-   default:
-      unreachable("Unsupported number of samples");
-   }
 
    /* FIXME: pass in the number of samples rather than isp_aa_mode? */
    pvr_setup_tiles_in_flight(dev_info,
+                             dev_runtime_info,
                              isp_aa_mode,
                              job->pixel_output_width,
                              false,
                              job->max_tiles_in_flight,
                              &isp_ctl,
-                             &state->regs.usc_pixel_output_ctrl);
+                             &pixel_ctl);
 
-   pvr_csb_pack (&state->regs.isp_ctl, CR_ISP_CTL, value) {
+   pvr_csb_pack ((uint64_t *)stream_ptr, CR_ISP_SCISSOR_BASE, value) {
+      value.addr = job->scissor_table_addr;
+   }
+   stream_ptr += pvr_cmd_length(CR_ISP_SCISSOR_BASE);
+
+   pvr_csb_pack ((uint64_t *)stream_ptr, CR_ISP_DBIAS_BASE, value) {
+      value.addr = job->depth_bias_table_addr;
+   }
+   stream_ptr += pvr_cmd_length(CR_ISP_DBIAS_BASE);
+
+   pvr_csb_pack ((uint64_t *)stream_ptr, CR_ISP_OCLQRY_BASE, value) {
+      value.addr = PVR_DEV_ADDR_INVALID;
+   }
+   stream_ptr += pvr_cmd_length(CR_ISP_OCLQRY_BASE);
+
+   /* FIXME: Some additional set up needed to support depth/stencil load/store
+    * operations.
+    */
+   pvr_csb_pack ((uint64_t *)stream_ptr, CR_ISP_ZLSCTL, value) {
+      if (job->has_depth_attachment) {
+         uint32_t aligned_width =
+            ALIGN_POT(job->ds.physical_width, ROGUE_IPF_TILE_SIZE_PIXELS);
+         uint32_t aligned_height =
+            ALIGN_POT(job->ds.physical_height, ROGUE_IPF_TILE_SIZE_PIXELS);
+
+         pvr_get_isp_num_tiles_xy(dev_info,
+                                  job->samples,
+                                  aligned_width,
+                                  aligned_height,
+                                  &value.zlsextent_x_z,
+                                  &value.zlsextent_y_z);
+         value.zlsextent_x_z -= 1;
+         value.zlsextent_y_z -= 1;
+
+         if (job->ds.memlayout == PVR_MEMLAYOUT_TWIDDLED) {
+            value.loadtwiddled = true;
+            value.storetwiddled = true;
+         }
+
+         switch (job->ds.vk_format) {
+         case VK_FORMAT_D16_UNORM:
+            value.zloadformat = PVRX(CR_ZLOADFORMAT_TYPE_16BITINT);
+            value.zstoreformat = PVRX(CR_ZSTOREFORMAT_TYPE_16BITINT);
+            break;
+
+         case VK_FORMAT_D32_SFLOAT:
+            value.zloadformat = PVRX(CR_ZLOADFORMAT_TYPE_F32Z);
+            value.zstoreformat = PVRX(CR_ZSTOREFORMAT_TYPE_F32Z);
+            break;
+
+         case VK_FORMAT_D24_UNORM_S8_UINT:
+            value.zloadformat = PVRX(CR_ZLOADFORMAT_TYPE_24BITINT);
+            value.zstoreformat = PVRX(CR_ZSTOREFORMAT_TYPE_24BITINT);
+            break;
+
+         default:
+            unreachable("Unsupported depth format");
+         }
+
+         zload_format = value.zloadformat;
+      } else {
+         zload_format = PVRX(CR_ZLOADFORMAT_TYPE_F32Z);
+      }
+   }
+   stream_ptr += pvr_cmd_length(CR_ISP_ZLSCTL);
+
+   pvr_csb_pack ((uint64_t *)stream_ptr, CR_ISP_ZLOAD_BASE, value) {
+      if (job->has_depth_attachment)
+         value.addr = job->ds.addr;
+   }
+   stream_ptr += pvr_cmd_length(CR_ISP_ZLOAD_BASE);
+
+   pvr_csb_pack ((uint64_t *)stream_ptr, CR_ISP_STENCIL_LOAD_BASE, value) {
+      if (job->has_stencil_attachment) {
+         value.addr = job->ds.addr;
+
+         /* This should be set iff we only have a stencil attachment; all
+          * currently supported formats with a stencil component also contain
+          * depth.
+          */
+         value.enable = false;
+      }
+   }
+   stream_ptr += pvr_cmd_length(CR_ISP_STENCIL_LOAD_BASE);
+
+   *(uint64_t *)stream_ptr = 0;
+   stream_ptr += 2U;
+
+   STATIC_ASSERT(ARRAY_SIZE(job->pbe_reg_words) == 8U);
+   STATIC_ASSERT(ARRAY_SIZE(job->pbe_reg_words[0]) == 3U);
+   STATIC_ASSERT(sizeof(job->pbe_reg_words[0][0]) == sizeof(uint64_t));
+   memcpy(stream_ptr, job->pbe_reg_words, sizeof(job->pbe_reg_words));
+   stream_ptr += 8U * 3U * 2U;
+
+   pvr_csb_pack ((uint64_t *)stream_ptr,
+                 CR_TPU_BORDER_COLOUR_TABLE_PDM,
+                 value) {
+      value.border_colour_table_address = job->border_colour_table_addr;
+   }
+   stream_ptr += pvr_cmd_length(CR_TPU_BORDER_COLOUR_TABLE_PDM);
+
+   STATIC_ASSERT(ARRAY_SIZE(job->pds_bgnd_reg_values) == 3U);
+   STATIC_ASSERT(sizeof(job->pds_bgnd_reg_values[0]) == sizeof(uint64_t));
+   memcpy(stream_ptr,
+          job->pds_bgnd_reg_values,
+          sizeof(job->pds_bgnd_reg_values));
+   stream_ptr += 3U * 2U;
+
+   /* Set pds_pr_bgnd array to 0 */
+   memset(stream_ptr, 0, 3U * sizeof(uint64_t));
+   stream_ptr += 3U * 2U;
+
+   /* Set usc_clear_register array to 0 */
+   memset(stream_ptr, 0, 8U * sizeof(uint32_t));
+   stream_ptr += 8U;
+
+   *stream_ptr = pixel_ctl;
+   stream_ptr++;
+
+   pvr_csb_pack (stream_ptr, CR_ISP_BGOBJDEPTH, value) {
+      const float depth_clear = job->ds_clear_value.depth;
+
+      /* This is valid even when we don't have a depth attachment because:
+       *  - zload_format is set to a sensible default above, and
+       *  - job->depth_clear_value is set to a sensible default in that case.
+       */
+      switch (zload_format) {
+      case PVRX(CR_ZLOADFORMAT_TYPE_F32Z):
+         value.value = fui(depth_clear);
+         break;
+
+      case PVRX(CR_ZLOADFORMAT_TYPE_16BITINT):
+         value.value = _mesa_float_to_unorm(depth_clear, 16);
+         break;
+
+      case PVRX(CR_ZLOADFORMAT_TYPE_24BITINT):
+         value.value = _mesa_float_to_unorm(depth_clear, 24);
+         break;
+
+      default:
+         unreachable("Unsupported depth format");
+      }
+   }
+   stream_ptr += pvr_cmd_length(CR_ISP_BGOBJDEPTH);
+
+   pvr_csb_pack (stream_ptr, CR_ISP_BGOBJVALS, value) {
+      value.enablebgtag = job->enable_bg_tag;
+
+      value.mask = true;
+
+      if (job->has_stencil_attachment &&
+          job->ds.vk_format != VK_FORMAT_D24_UNORM_S8_UINT) {
+         unreachable("Unsupported stencil format");
+      }
+
+      value.stencil = job->ds_clear_value.stencil & 0xFF;
+   }
+   stream_ptr += pvr_cmd_length(CR_ISP_BGOBJVALS);
+
+   pvr_csb_pack (stream_ptr, CR_ISP_AA, value) {
+      value.mode = isp_aa_mode;
+   }
+   stream_ptr += pvr_cmd_length(CR_ISP_AA);
+
+   pvr_csb_pack (stream_ptr, CR_ISP_CTL, value) {
       value.sample_pos = true;
 
       /* FIXME: There are a number of things that cause this to be set, this
        * is just one of them.
        */
       value.process_empty_tiles = job->process_empty_tiles;
-   }
 
+      /* For integer depth formats we'll convert the specified floating point
+       * depth bias values and specify them as integers. In this mode a depth
+       * bias factor of 1.0 equates to 1 ULP of increase to the depth value.
+       */
+      value.dbias_is_int = PVR_HAS_ERN(dev_info, 42307) &&
+                           (job->ds.vk_format == VK_FORMAT_D16_UNORM ||
+                            job->ds.vk_format == VK_FORMAT_D24_UNORM_S8_UINT);
+   }
    /* FIXME: When pvr_setup_tiles_in_flight() is refactored it might be
     * possible to fully pack CR_ISP_CTL above rather than having to OR in part
     * of the value.
     */
-   state->regs.isp_ctl |= isp_ctl;
+   *stream_ptr |= isp_ctl;
+   stream_ptr += pvr_cmd_length(CR_ISP_CTL);
 
-   pvr_csb_pack (&state->regs.isp_aa, CR_ISP_AA, value) {
-      value.mode = isp_aa_mode;
-   }
-
-   /* The set up of CR_TPU must be identical to
-    * pvr_render_job_ws_geometry_state_init().
-    */
-   pvr_csb_pack (&state->regs.tpu, CR_TPU, value) {
-      value.tag_cem_4k_face_packing = true;
-   }
-
-   if (PVR_HAS_FEATURE(dev_info, cluster_grouping) &&
-       PVR_HAS_FEATURE(dev_info, slc_mcu_cache_controls) &&
-       rogue_get_num_phantoms(dev_info) > 1 && job->frag_uses_atomic_ops) {
-      /* Each phantom has its own MCU, so atomicity can only be guaranteed
-       * when all work items are processed on the same phantom. This means we
-       * need to disable all USCs other than those of the first phantom, which
-       * has 4 clusters. Note that we only need to do this for atomic
-       * operations in fragment shaders, since hardware prevents the TA to run
-       * on more than one phantom anyway.
-       */
-      state->regs.pixel_phantom = 0xF;
-   } else {
-      state->regs.pixel_phantom = 0;
-   }
-
-   pvr_csb_pack (&state->regs.isp_bgobjvals, CR_ISP_BGOBJVALS, value) {
-      value.enablebgtag = job->enable_bg_tag;
-
-      value.mask = true;
-
-      /* FIXME: Hard code this for now as we don't currently support any
-       * stencil image formats.
-       */
-      value.stencil = 0xFF;
-   }
-
-   pvr_csb_pack (&state->regs.isp_bgobjdepth, CR_ISP_BGOBJDEPTH, value) {
-      /* FIXME: This is suitable for the single depth format the driver
-       * currently supports, but may need updating to handle other depth
-       * formats.
-       */
-      value.value = fui(job->depth_clear_value);
-   }
-
-   /* FIXME: Some additional set up needed to support depth and stencil
-    * load/store operations.
-    */
-   pvr_csb_pack (&state->regs.isp_zlsctl, CR_ISP_ZLSCTL, value) {
-      uint32_t aligned_width =
-         ALIGN_POT(job->depth_physical_width, ROGUE_IPF_TILE_SIZE_PIXELS);
-      uint32_t aligned_height =
-         ALIGN_POT(job->depth_physical_height, ROGUE_IPF_TILE_SIZE_PIXELS);
-
-      pvr_get_isp_num_tiles_xy(dev_info,
-                               job->samples,
-                               aligned_width,
-                               aligned_height,
-                               &value.zlsextent_x_z,
-                               &value.zlsextent_y_z);
-      value.zlsextent_x_z -= 1;
-      value.zlsextent_y_z -= 1;
-
-      if (job->depth_memlayout == PVR_MEMLAYOUT_TWIDDLED) {
-         value.loadtwiddled = true;
-         value.storetwiddled = true;
-      }
-
-      /* FIXME: This is suitable for the single depth format the driver
-       * currently supports, but may need updating to handle other depth
-       * formats.
-       */
-      assert(job->depth_vk_format == VK_FORMAT_D32_SFLOAT);
-      value.zloadformat = PVRX(CR_ZLOADFORMAT_TYPE_F32Z);
-      value.zstoreformat = PVRX(CR_ZSTOREFORMAT_TYPE_F32Z);
-   }
-
-   if (PVR_HAS_FEATURE(dev_info, zls_subtile)) {
-      pvr_csb_pack (&state->regs.isp_zls_pixels, CR_ISP_ZLS_PIXELS, value) {
-         value.x = job->depth_stride - 1;
-         value.y = job->depth_height - 1;
-      }
-   } else {
-      state->regs.isp_zls_pixels = 0;
-   }
-
-   pvr_csb_pack (&state->regs.isp_zload_store_base, CR_ISP_ZLOAD_BASE, value) {
-      value.addr = job->depth_addr;
-   }
-
-   pvr_csb_pack (&state->regs.isp_stencil_load_store_base,
-                 CR_ISP_STENCIL_LOAD_BASE,
-                 value) {
-      value.addr = job->stencil_addr;
-
-      /* FIXME: May need to set value.enable to true. */
-   }
-
-   pvr_csb_pack (&state->regs.tpu_border_colour_table,
-                 CR_TPU_BORDER_COLOUR_TABLE_PDM,
-                 value) {
-      value.border_colour_table_address = job->border_colour_table_addr;
-   }
-
-   state->regs.isp_oclqry_base = 0;
-
-   pvr_csb_pack (&state->regs.isp_dbias_base, CR_ISP_DBIAS_BASE, value) {
-      value.addr = job->depth_bias_table_addr;
-   }
-
-   pvr_csb_pack (&state->regs.isp_scissor_base, CR_ISP_SCISSOR_BASE, value) {
-      value.addr = job->scissor_table_addr;
-   }
-
-   pvr_csb_pack (&state->regs.event_pixel_pds_info,
-                 CR_EVENT_PIXEL_PDS_INFO,
-                 value) {
+   pvr_csb_pack (stream_ptr, CR_EVENT_PIXEL_PDS_INFO, value) {
       value.const_size =
          DIV_ROUND_UP(ctx->device->pixel_event_data_size_in_dwords,
                       PVRX(CR_EVENT_PIXEL_PDS_INFO_CONST_SIZE_UNIT_SIZE));
@@ -1465,39 +1555,123 @@ pvr_render_job_ws_fragment_state_init(struct pvr_render_ctx *ctx,
          DIV_ROUND_UP(PVR_STATE_PBE_DWORDS,
                       PVRX(CR_EVENT_PIXEL_PDS_INFO_USC_SR_SIZE_UNIT_SIZE));
    }
+   stream_ptr += pvr_cmd_length(CR_EVENT_PIXEL_PDS_INFO);
 
-   pvr_csb_pack (&state->regs.event_pixel_pds_data,
-                 CR_EVENT_PIXEL_PDS_DATA,
-                 value) {
-      value.addr.addr = job->pds_pixel_event_data_offset;
+   if (PVR_HAS_FEATURE(dev_info, cluster_grouping)) {
+      uint32_t pixel_phantom = 0;
+
+      if (PVR_HAS_FEATURE(dev_info, slc_mcu_cache_controls) &&
+          dev_runtime_info->num_phantoms > 1 && job->frag_uses_atomic_ops) {
+         /* Each phantom has its own MCU, so atomicity can only be guaranteed
+          * when all work items are processed on the same phantom. This means
+          * we need to disable all USCs other than those of the first
+          * phantom, which has 4 clusters. Note that we only need to do this
+          * for atomic operations in fragment shaders, since hardware
+          * prevents the TA to run on more than one phantom anyway.
+          */
+         pixel_phantom = 0xF;
+      }
+
+      *stream_ptr = pixel_phantom;
+      stream_ptr++;
    }
 
-   STATIC_ASSERT(ARRAY_SIZE(state->regs.pbe_word) ==
-                 ARRAY_SIZE(job->pbe_reg_words));
-   STATIC_ASSERT(ARRAY_SIZE(state->regs.pbe_word[0]) ==
-                 ARRAY_SIZE(job->pbe_reg_words[0]));
+   /* Set up view_idx to 0 */
+   *stream_ptr = 0;
+   stream_ptr++;
 
-   for (uint32_t i = 0; i < ARRAY_SIZE(job->pbe_reg_words); i++) {
-      state->regs.pbe_word[i][0] = job->pbe_reg_words[i][0];
-      state->regs.pbe_word[i][1] = job->pbe_reg_words[i][1];
-      state->regs.pbe_word[i][2] = job->pbe_reg_words[i][2];
+   pvr_csb_pack (stream_ptr, CR_EVENT_PIXEL_PDS_DATA, value) {
+      value.addr = PVR_DEV_ADDR(job->pds_pixel_event_data_offset);
+   }
+   stream_ptr += pvr_cmd_length(CR_EVENT_PIXEL_PDS_DATA);
+
+   if (PVR_HAS_FEATURE(dev_info, gpu_multicore_support)) {
+      pvr_finishme(
+         "Emit isp_oclqry_stride when feature gpu_multicore_support is present");
+      *stream_ptr = 0;
+      stream_ptr++;
    }
 
-   STATIC_ASSERT(__same_type(state->regs.pds_bgnd, job->pds_bgnd_reg_values));
-   typed_memcpy(state->regs.pds_bgnd,
-                job->pds_bgnd_reg_values,
-                ARRAY_SIZE(state->regs.pds_bgnd));
+   if (PVR_HAS_FEATURE(dev_info, zls_subtile)) {
+      pvr_csb_pack (stream_ptr, CR_ISP_ZLS_PIXELS, value) {
+         if (job->has_depth_attachment) {
+            value.x = job->ds.stride - 1;
+            value.y = job->ds.height - 1;
+         }
+      }
+      stream_ptr += pvr_cmd_length(CR_ISP_ZLS_PIXELS);
+   }
 
-   memset(state->regs.pds_pr_bgnd, 0, sizeof(state->regs.pds_pr_bgnd));
+   /* zls_stride */
+   *stream_ptr = job->has_depth_attachment ? job->ds.layer_size : 0;
+   stream_ptr++;
 
-   /* FIXME: Merge geometry and fragment flags into a single flags member? */
+   /* sls_stride */
+   *stream_ptr = job->has_stencil_attachment ? job->ds.layer_size : 0;
+   stream_ptr++;
+
+   if (PVR_HAS_FEATURE(dev_info, gpu_multicore_support)) {
+      pvr_finishme(
+         "Emit execute_count when feature gpu_multicore_support is present");
+      *stream_ptr = 0;
+      stream_ptr++;
+   }
+
+   state->fw_stream_len = (uint8_t *)stream_ptr - state->fw_stream;
+   assert(state->fw_stream_len <= ARRAY_SIZE(state->fw_stream));
+}
+
+static void
+pvr_frag_state_stream_ext_init(struct pvr_render_ctx *ctx,
+                               struct pvr_render_job *job,
+                               struct pvr_winsys_fragment_state *state)
+{
+   const struct pvr_device_info *dev_info = &ctx->device->pdevice->dev_info;
+
+   uint32_t *ext_stream_ptr = (uint32_t *)state->fw_ext_stream;
+   uint32_t *header0_ptr;
+
+   header0_ptr = ext_stream_ptr;
+   ext_stream_ptr += pvr_cmd_length(FW_STREAM_EXTHDR_FRAG0);
+
+   pvr_csb_pack (header0_ptr, FW_STREAM_EXTHDR_FRAG0, header0) {
+      if (PVR_HAS_QUIRK(dev_info, 49927)) {
+         header0.has_brn49927 = true;
+
+         /* The set up of CR_TPU must be identical to
+          * pvr_render_job_ws_geometry_state_stream_ext_init().
+          */
+         pvr_csb_pack (ext_stream_ptr, CR_TPU, value) {
+            value.tag_cem_4k_face_packing = true;
+         }
+         ext_stream_ptr += pvr_cmd_length(CR_TPU);
+      }
+   }
+
+   state->fw_ext_stream_len = (uint8_t *)ext_stream_ptr - state->fw_ext_stream;
+   assert(state->fw_ext_stream_len <= ARRAY_SIZE(state->fw_ext_stream));
+
+   if ((*header0_ptr & PVRX(FW_STREAM_EXTHDR_DATA_MASK)) == 0)
+      state->fw_ext_stream_len = 0;
+}
+
+static void
+pvr_render_job_ws_fragment_state_init(struct pvr_render_ctx *ctx,
+                                      struct pvr_render_job *job,
+                                      struct pvr_winsys_fragment_state *state)
+{
+   /* FIXME: what to do when job->run_frag is false? */
+
+   pvr_frag_state_stream_init(ctx, job, state);
+   pvr_frag_state_stream_ext_init(ctx, job, state);
+
    /* FIXME: move to its own function? */
    state->flags = 0;
 
-   if (job->depth_addr.addr)
+   if (job->has_depth_attachment)
       state->flags |= PVR_WINSYS_FRAG_FLAG_DEPTH_BUFFER_PRESENT;
 
-   if (job->stencil_addr.addr)
+   if (job->has_stencil_attachment)
       state->flags |= PVR_WINSYS_FRAG_FLAG_STENCIL_BUFFER_PRESENT;
 
    if (job->disable_compute_overlap)
@@ -1506,17 +1680,17 @@ pvr_render_job_ws_fragment_state_init(struct pvr_render_ctx *ctx,
    if (job->frag_uses_atomic_ops)
       state->flags |= PVR_WINSYS_FRAG_FLAG_SINGLE_CORE;
 
-   state->zls_stride = job->depth_layer_size;
-   state->sls_stride = job->depth_layer_size;
+   if (job->get_vis_results)
+      state->flags |= PVR_WINSYS_FRAG_FLAG_GET_VIS_RESULTS;
 }
 
 static void pvr_render_job_ws_submit_info_init(
    struct pvr_render_ctx *ctx,
    struct pvr_render_job *job,
-   const struct pvr_winsys_job_bo *bos,
-   uint32_t bo_count,
-   const VkSemaphore *semaphores,
-   uint32_t semaphore_count,
+   struct vk_sync *barrier_geom,
+   struct vk_sync *barrier_frag,
+   struct vk_sync **waits,
+   uint32_t wait_count,
    uint32_t *stage_flags,
    struct pvr_winsys_render_submit_info *submit_info)
 {
@@ -1530,32 +1704,26 @@ static void pvr_render_job_ws_submit_info_init(
 
    submit_info->run_frag = job->run_frag;
 
-   submit_info->bos = bos;
-   submit_info->bo_count = bo_count;
+   submit_info->barrier_geom = barrier_geom;
+   submit_info->barrier_frag = barrier_frag;
 
-   submit_info->semaphores = semaphores;
-   submit_info->semaphore_count = semaphore_count;
+   submit_info->waits = waits;
+   submit_info->wait_count = wait_count;
    submit_info->stage_flags = stage_flags;
-
-   /* FIXME: add WSI image bos. */
 
    pvr_render_job_ws_geometry_state_init(ctx, job, &submit_info->geometry);
    pvr_render_job_ws_fragment_state_init(ctx, job, &submit_info->fragment);
-
-   /* These values are expected to match. */
-   assert(submit_info->geometry.regs.tpu == submit_info->fragment.regs.tpu);
 }
 
-VkResult
-pvr_render_job_submit(struct pvr_render_ctx *ctx,
-                      struct pvr_render_job *job,
-                      const struct pvr_winsys_job_bo *bos,
-                      uint32_t bo_count,
-                      const VkSemaphore *semaphores,
-                      uint32_t semaphore_count,
-                      uint32_t *stage_flags,
-                      struct pvr_winsys_syncobj **const syncobj_geom_out,
-                      struct pvr_winsys_syncobj **const syncobj_frag_out)
+VkResult pvr_render_job_submit(struct pvr_render_ctx *ctx,
+                               struct pvr_render_job *job,
+                               struct vk_sync *barrier_geom,
+                               struct vk_sync *barrier_frag,
+                               struct vk_sync **waits,
+                               uint32_t wait_count,
+                               uint32_t *stage_flags,
+                               struct vk_sync *signal_sync_geom,
+                               struct vk_sync *signal_sync_frag)
 {
    struct pvr_rt_dataset *rt_dataset = job->rt_dataset;
    struct pvr_winsys_render_submit_info submit_info;
@@ -1564,17 +1732,32 @@ pvr_render_job_submit(struct pvr_render_ctx *ctx,
 
    pvr_render_job_ws_submit_info_init(ctx,
                                       job,
-                                      bos,
-                                      bo_count,
-                                      semaphores,
-                                      semaphore_count,
+                                      barrier_geom,
+                                      barrier_frag,
+                                      waits,
+                                      wait_count,
                                       stage_flags,
                                       &submit_info);
 
+   if (PVR_IS_DEBUG_SET(DUMP_CONTROL_STREAM)) {
+      /* FIXME: This isn't an ideal method of accessing the information we
+       * need, but it's considered good enough for a debug code path. It can be
+       * streamlined and made more correct if/when pvr_render_job becomes a
+       * subclass of pvr_sub_cmd.
+       */
+      const struct pvr_sub_cmd *sub_cmd =
+         container_of(job, const struct pvr_sub_cmd, gfx.job);
+
+      pvr_csb_dump(&sub_cmd->gfx.control_stream,
+                   submit_info.frame_num,
+                   submit_info.job_num);
+   }
+
    result = device->ws->ops->render_submit(ctx->ws_ctx,
                                            &submit_info,
-                                           syncobj_geom_out,
-                                           syncobj_frag_out);
+                                           &device->pdevice->dev_info,
+                                           signal_sync_geom,
+                                           signal_sync_frag);
    if (result != VK_SUCCESS)
       return result;
 

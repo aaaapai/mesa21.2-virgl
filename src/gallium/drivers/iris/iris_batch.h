@@ -85,7 +85,6 @@ struct iris_batch {
 
    uint32_t ctx_id;
    uint32_t exec_flags;
-   bool has_engines_context;
 
    /** A list of all BOs referenced by this batch */
    struct iris_bo **exec_bos;
@@ -138,14 +137,12 @@ struct iris_batch {
    struct iris_batch *other_batches[IRIS_BATCH_COUNT - 1];
    unsigned num_other_batches;
 
-   struct {
-      /**
-       * Set of struct brw_bo * that have been rendered to within this
-       * batchbuffer and would need flushing before being used from another
-       * cache domain that isn't coherent with it (i.e. the sampler).
-       */
-      struct hash_table *render;
-   } cache;
+   /**
+    * Table containing struct iris_bo * that have been accessed within this
+    * batchbuffer and would need flushing before being used with a different
+    * aux mode.
+    */
+   struct hash_table *bo_aux_modes;
 
    struct intel_batch_decode_ctx decoder;
    struct hash_table_u64 *state_sizes;
@@ -197,7 +194,7 @@ struct iris_batch {
    struct u_trace trace;
 
    /** Batch wrapper structure for perfetto */
-   struct intel_ds_queue *ds;
+   struct intel_ds_queue ds;
 };
 
 void iris_init_batches(struct iris_context *ice, int priority);
@@ -253,7 +250,7 @@ iris_get_command_space(struct iris_batch *batch, unsigned bytes)
 {
    if (!batch->begin_trace_recorded) {
       batch->begin_trace_recorded = true;
-      trace_intel_begin_batch(&batch->trace, batch);
+      trace_intel_begin_batch(&batch->trace);
    }
    iris_require_command_space(batch, bytes);
    void *map = batch->map_next;
@@ -358,7 +355,7 @@ static inline void
 iris_batch_mark_flush_sync(struct iris_batch *batch,
                            enum iris_domain access)
 {
-   const struct intel_device_info *devinfo = &batch->screen->devinfo;
+   const struct intel_device_info *devinfo = batch->screen->devinfo;
 
    if (iris_domain_is_l3_coherent(devinfo, access))
       batch->l3_coherent_seqnos[access] = batch->next_seqno - 1;
@@ -375,7 +372,7 @@ static inline void
 iris_batch_mark_invalidate_sync(struct iris_batch *batch,
                                 enum iris_domain access)
 {
-   const struct intel_device_info *devinfo = &batch->screen->devinfo;
+   const struct intel_device_info *devinfo = batch->screen->devinfo;
 
    for (unsigned i = 0; i < NUM_IRIS_DOMAINS; i++) {
       if (i == access)
@@ -429,7 +426,7 @@ iris_batch_name_to_string(enum iris_batch_name name);
 
 #define iris_foreach_batch(ice, batch)                \
    for (struct iris_batch *batch = &ice->batches[0];  \
-        batch <= &ice->batches[((struct iris_screen *)ice->ctx.screen)->devinfo.ver >= 12 ? IRIS_BATCH_BLITTER : IRIS_BATCH_COMPUTE]; \
+        batch <= &ice->batches[((struct iris_screen *)ice->ctx.screen)->devinfo->ver >= 12 ? IRIS_BATCH_BLITTER : IRIS_BATCH_COMPUTE]; \
         ++batch)
 
 #endif

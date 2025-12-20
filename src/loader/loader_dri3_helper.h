@@ -111,7 +111,6 @@ struct loader_dri3_vtable {
    __DRIcontext *(*get_dri_context)(struct loader_dri3_drawable *);
    __DRIscreen *(*get_dri_screen)(void);
    void (*flush_drawable)(struct loader_dri3_drawable *, unsigned);
-   void (*show_fps)(struct loader_dri3_drawable *, uint64_t);
 };
 
 #define LOADER_DRI3_NUM_BUFFERS (1 + LOADER_DRI3_MAX_BACK)
@@ -173,6 +172,8 @@ struct loader_dri3_drawable {
    bool first_init;
    bool adaptive_sync;
    bool adaptive_sync_active;
+   bool block_on_depleted_buffers;
+   bool queries_buffer_age;
    int swap_interval;
 
    struct loader_dri3_extensions *ext;
@@ -293,4 +294,40 @@ loader_dri3_swapbuffer_barrier(struct loader_dri3_drawable *draw);
 
 void
 loader_dri3_close_screen(__DRIscreen *dri_screen);
+
+struct loader_dri3_crtc_info {
+   xcb_randr_crtc_t id;
+   xcb_timestamp_t timestamp;
+
+   int16_t x, y;
+   uint16_t width, height;
+
+   unsigned refresh_numerator;
+   unsigned refresh_denominator;
+};
+
+struct loader_dri3_screen_resources {
+   mtx_t mtx;
+
+   xcb_connection_t *conn;
+   xcb_screen_t *screen;
+
+   xcb_timestamp_t config_timestamp;
+
+   /* Number of CRTCs with an active mode set */
+   unsigned num_crtcs;
+   struct loader_dri3_crtc_info *crtcs;
+};
+
+void
+loader_dri3_init_screen_resources(struct loader_dri3_screen_resources *res,
+                                  xcb_connection_t *conn,
+                                  xcb_screen_t *screen);
+bool
+loader_dri3_update_screen_resources(struct loader_dri3_screen_resources *res);
+
+void
+loader_dri3_destroy_screen_resources(struct loader_dri3_screen_resources *res);
+
+
 #endif

@@ -35,7 +35,7 @@
 #include "glapi.h"
 #include "glxclient.h"
 #include "indirect.h"
-#include "util/debug.h"
+#include "util/u_debug.h"
 
 #ifndef GLX_USE_APPLEGL
 
@@ -100,40 +100,15 @@ SendMakeCurrentRequest(Display * dpy, GLXContextID gc_id,
       req->oldContextTag = gc_tag;
    }
    else {
-      struct glx_display *priv = __glXInitialize(dpy);
+      xGLXMakeContextCurrentReq *req;
 
-      /* If the server can support the GLX 1.3 version, we should
-       * perfer that.  Not only that, some servers support GLX 1.3 but
-       * not the SGI extension.
-       */
-
-      if (priv->minorVersion >= 3) {
-         xGLXMakeContextCurrentReq *req;
-
-         GetReq(GLXMakeContextCurrent, req);
-         req->reqType = opcode;
-         req->glxCode = X_GLXMakeContextCurrent;
-         req->drawable = draw;
-         req->readdrawable = read;
-         req->context = gc_id;
-         req->oldContextTag = gc_tag;
-      }
-      else {
-         xGLXVendorPrivateWithReplyReq *vpreq;
-         xGLXMakeCurrentReadSGIReq *req;
-
-         GetReqExtra(GLXVendorPrivateWithReply,
-                     sz_xGLXMakeCurrentReadSGIReq -
-                     sz_xGLXVendorPrivateWithReplyReq, vpreq);
-         req = (xGLXMakeCurrentReadSGIReq *) vpreq;
-         req->reqType = opcode;
-         req->glxCode = X_GLXVendorPrivateWithReply;
-         req->vendorCode = X_GLXvop_MakeCurrentReadSGI;
-         req->drawable = draw;
-         req->readable = read;
-         req->context = gc_id;
-         req->oldContextTag = gc_tag;
-      }
+      GetReq(GLXMakeContextCurrent, req);
+      req->reqType = opcode;
+      req->glxCode = X_GLXMakeContextCurrent;
+      req->drawable = draw;
+      req->readdrawable = read;
+      req->context = gc_id;
+      req->oldContextTag = gc_tag;
    }
 
    ret = _XReply(dpy, (xReply *) &reply, 0, False);
@@ -338,7 +313,7 @@ indirect_create_context_attribs(struct glx_screen *psc,
       return NULL;
    }
    gc->client_state_private = state;
-   state->NoDrawArraysProtocol = env_var_as_boolean("LIBGL_NO_DRAWARRAYS", false);
+   state->NoDrawArraysProtocol = debug_get_bool_option("LIBGL_NO_DRAWARRAYS", false);
 
    /*
     ** Create a temporary buffer to hold GLX rendering commands.  The size

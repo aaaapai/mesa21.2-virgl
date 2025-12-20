@@ -472,6 +472,9 @@ class ISA(object):
             self.leafs.setdefault(b.name, []).append(b)
 
     def validate_isa(self):
+        # We only support multiples of 32 bits for now
+        assert self.bitsize % 32 == 0
+
         # Do one-time fixups
         # Remove non-leaf nodes from the leafs table:
         for name, bitsets in list(self.leafs.items()):
@@ -551,14 +554,14 @@ class ISA(object):
 
         return ', '.join(parts)
 
-    def split_bits(self, value):
-        ''' Split `value` into a list of 32-bit integers '''
-        mask, parts = (1 << 32) - 1, []
-        words = self.bitsize / 32
+    def split_bits(self, value, bitsize):
+        ''' Split `value` into a list of bitsize-bit integers '''
+        mask, parts = (1 << bitsize) - 1, []
+        words = self.bitsize / bitsize
 
         while value:
             parts.append(hex(value & mask))
-            value >>= 32
+            value >>= bitsize
 
         # Add 'missing' words
         while len(parts) < words:

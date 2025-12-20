@@ -27,7 +27,6 @@
 
 #include "ac_llvm_build.h"
 #include "c11/threads.h"
-#include "gallivm/lp_bld_misc.h"
 #include "util/bitscan.h"
 #include "util/u_math.h"
 #include <llvm-c/Core.h>
@@ -62,6 +61,8 @@ static void ac_init_llvm_target(void)
       "-structurizecfg-skip-uniform-regions",
 #endif
    };
+
+   ac_reset_llvm_all_options_occurences();
    LLVMParseCommandLineOptions(ARRAY_SIZE(argv), argv, NULL);
 }
 
@@ -88,7 +89,7 @@ void ac_init_llvm_once(void)
 #endif
 }
 
-static LLVMTargetRef ac_get_llvm_target(const char *triple)
+LLVMTargetRef ac_get_llvm_target(const char *triple)
 {
    LLVMTargetRef target = NULL;
    char *err_message = NULL;
@@ -152,9 +153,9 @@ const char *ac_get_llvm_processor_name(enum radeon_family family)
    case CHIP_RAVEN2:
    case CHIP_RENOIR:
       return "gfx909";
-   case CHIP_ARCTURUS:
+   case CHIP_MI100:
       return "gfx908";
-   case CHIP_ALDEBARAN:
+   case CHIP_MI200:
       return "gfx90a";
    case CHIP_NAVI10:
       return "gfx1010";
@@ -162,20 +163,29 @@ const char *ac_get_llvm_processor_name(enum radeon_family family)
       return "gfx1011";
    case CHIP_NAVI14:
       return "gfx1012";
-   case CHIP_SIENNA_CICHLID:
+   case CHIP_NAVI21:
       return "gfx1030";
-   case CHIP_NAVY_FLOUNDER:
+   case CHIP_NAVI22:
       return LLVM_VERSION_MAJOR >= 12 ? "gfx1031" : "gfx1030";
-   case CHIP_DIMGREY_CAVEFISH:
+   case CHIP_NAVI23:
       return LLVM_VERSION_MAJOR >= 12 ? "gfx1032" : "gfx1030";
    case CHIP_VANGOGH:
       return LLVM_VERSION_MAJOR >= 12 ? "gfx1033" : "gfx1030";
-   case CHIP_BEIGE_GOBY:
+   case CHIP_NAVI24:
       return LLVM_VERSION_MAJOR >= 13 ? "gfx1034" : "gfx1030";
-   case CHIP_YELLOW_CARP:
+   case CHIP_REMBRANDT:
       return LLVM_VERSION_MAJOR >= 13 ? "gfx1035" : "gfx1030";
    case CHIP_GFX1036: /* TODO: LLVM 15 doesn't support this yet */
       return "gfx1030";
+   case CHIP_GFX1100:
+      return "gfx1100";
+   case CHIP_GFX1101:
+      return "gfx1101";
+   case CHIP_GFX1102:
+      return "gfx1102";
+   case CHIP_GFX1103_R1:
+   case CHIP_GFX1103_R2:
+      return "gfx1103";
    default:
       return "";
    }
@@ -189,10 +199,17 @@ static LLVMTargetMachineRef ac_create_target_machine(enum radeon_family family,
    assert(family >= CHIP_TAHITI);
    const char *triple = (tm_options & AC_TM_SUPPORTS_SPILL) ? "amdgcn-mesa-mesa3d" : "amdgcn--";
    LLVMTargetRef target = ac_get_llvm_target(triple);
+   const char *name = ac_get_llvm_processor_name(family);
 
    LLVMTargetMachineRef tm =
-      LLVMCreateTargetMachine(target, triple, ac_get_llvm_processor_name(family), "", level,
+      LLVMCreateTargetMachine(target, triple, name, "", level,
                               LLVMRelocDefault, LLVMCodeModelDefault);
+
+   if (!ac_is_llvm_processor_supported(tm, name)) {
+      LLVMDisposeTargetMachine(tm);
+      fprintf(stderr, "amd: LLVM doesn't support %s, bailing out...\n", name);
+      return NULL;
+   }
 
    if (out_triple)
       *out_triple = triple;
@@ -232,55 +249,16 @@ static LLVMPassManagerRef ac_create_passmgr(LLVMTargetLibraryInfoRef target_libr
    return passmgr;
 }
 
-static const char *attr_to_str(enum ac_func_attr attr)
+LLVMAttributeRef ac_get_llvm_attribute(LLVMContextRef ctx, const char *str)
 {
-   switch (attr) {
-   case AC_FUNC_ATTR_ALWAYSINLINE:
-      return "alwaysinline";
-   case AC_FUNC_ATTR_INREG:
-      return "inreg";
-   case AC_FUNC_ATTR_NOALIAS:
-      return "noalias";
-   case AC_FUNC_ATTR_NOUNWIND:
-      return "nounwind";
-   case AC_FUNC_ATTR_READNONE:
-      return "readnone";
-   case AC_FUNC_ATTR_READONLY:
-      return "readonly";
-   case AC_FUNC_ATTR_WRITEONLY:
-      return "writeonly";
-   case AC_FUNC_ATTR_INACCESSIBLE_MEM_ONLY:
-      return "inaccessiblememonly";
-   case AC_FUNC_ATTR_CONVERGENT:
-      return "convergent";
-   default:
-      fprintf(stderr, "Unhandled function attribute: %x\n", attr);
-      return 0;
-   }
+   return LLVMCreateEnumAttribute(ctx, LLVMGetEnumAttributeKindForName(str, strlen(str)), 0);
 }
 
 void ac_add_function_attr(LLVMContextRef ctx, LLVMValueRef function, int attr_idx,
-                          enum ac_func_attr attr)
+                          const char *attr)
 {
-   const char *attr_name = attr_to_str(attr);
-   unsigned kind_id = LLVMGetEnumAttributeKindForName(attr_name, strlen(attr_name));
-   LLVMAttributeRef llvm_attr = LLVMCreateEnumAttribute(ctx, kind_id, 0);
-
-   if (LLVMIsAFunction(function))
-      LLVMAddAttributeAtIndex(function, attr_idx, llvm_attr);
-   else
-      LLVMAddCallSiteAttribute(function, attr_idx, llvm_attr);
-}
-
-void ac_add_func_attributes(LLVMContextRef ctx, LLVMValueRef function, unsigned attrib_mask)
-{
-   attrib_mask |= AC_FUNC_ATTR_NOUNWIND;
-   attrib_mask &= ~AC_FUNC_ATTR_LEGACY;
-
-   while (attrib_mask) {
-      enum ac_func_attr attr = 1u << u_bit_scan(&attrib_mask);
-      ac_add_function_attr(ctx, function, -1, attr);
-   }
+   assert(LLVMIsAFunction(function));
+   LLVMAddAttributeAtIndex(function, attr_idx, ac_get_llvm_attribute(ctx, attr));
 }
 
 void ac_dump_module(LLVMModuleRef module)
@@ -314,9 +292,9 @@ void ac_llvm_set_target_features(LLVMValueRef F, struct ac_llvm_context *ctx)
 
    snprintf(features, sizeof(features), "+DumpCode%s%s",
             /* GFX9 has broken VGPR indexing, so always promote alloca to scratch. */
-            ctx->chip_class == GFX9 ? ",-promote-alloca" : "",
+            ctx->gfx_level == GFX9 ? ",-promote-alloca" : "",
             /* Wave32 is the default. */
-            ctx->chip_class >= GFX10 && ctx->wave_size == 64 ?
+            ctx->gfx_level >= GFX10 && ctx->wave_size == 64 ?
                ",+wavefrontsize64,-wavefrontsize32" : "");
 
    LLVMAddTargetDependentFunctionAttr(F, "target-features", features);

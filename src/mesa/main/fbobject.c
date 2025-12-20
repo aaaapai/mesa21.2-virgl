@@ -56,6 +56,7 @@
 #include "state_tracker/st_cb_eglimage.h"
 #include "state_tracker/st_context.h"
 #include "state_tracker/st_format.h"
+#include "state_tracker/st_util.h"
 
 /**
  * Notes:
@@ -86,7 +87,7 @@ delete_dummy_framebuffer(struct gl_framebuffer *fb)
  * with the real frame/renderbuffer.
  */
 static struct gl_framebuffer DummyFramebuffer = {
-   .Mutex = _SIMPLE_MTX_INITIALIZER_NP,
+   .Mutex = SIMPLE_MTX_INITIALIZER,
    .Delete = delete_dummy_framebuffer,
 };
 static struct gl_renderbuffer DummyRenderbuffer = {
@@ -96,7 +97,7 @@ static struct gl_renderbuffer DummyRenderbuffer = {
 /* We bind this framebuffer when applications pass a NULL
  * drawable/surface in make current. */
 static struct gl_framebuffer IncompleteFramebuffer = {
-   .Mutex = _SIMPLE_MTX_INITIALIZER_NP,
+   .Mutex = SIMPLE_MTX_INITIALIZER,
    .Delete = delete_dummy_framebuffer,
 };
 
@@ -512,6 +513,7 @@ driver_RenderTexture_is_safe(const struct gl_renderbuffer_attachment *att)
       att->Texture->Image[att->CubeMapFace][att->TextureLevel];
 
    if (!texImage ||
+       !texImage->pt ||
        texImage->Width == 0 || texImage->Height == 0 || texImage->Depth == 0)
       return false;
 
@@ -1289,7 +1291,8 @@ _mesa_test_framebuffer_completeness(struct gl_context *ctx,
    fb->_HasSNormOrFloatColorBuffer = GL_FALSE;
    fb->_HasAttachments = true;
    fb->_IntegerBuffers = 0;
-   fb->_RGBBuffers = 0;
+   fb->_BlendForceAlphaToOne = 0;
+   fb->_IsRGB = 0;
    fb->_FP32Buffers = 0;
 
    /* Start at -2 to more easily loop over all attachment points.
@@ -1451,7 +1454,12 @@ _mesa_test_framebuffer_completeness(struct gl_context *ctx,
             fb->_IntegerBuffers |= (1 << i);
 
          if (baseFormat == GL_RGB)
-            fb->_RGBBuffers |= (1 << i);
+            fb->_IsRGB |= (1 << i);
+
+         if ((baseFormat == GL_RGB && ctx->st->needs_rgb_dst_alpha_override) ||
+             (baseFormat == GL_LUMINANCE && !util_format_is_luminance(attFormat)) ||
+             (baseFormat == GL_INTENSITY && !util_format_is_intensity(attFormat)))
+            fb->_BlendForceAlphaToOne |= (1 << i);
 
          if (type == GL_FLOAT && _mesa_get_format_max_bits(attFormat) > 16)
             fb->_FP32Buffers |= (1 << i);
@@ -3276,8 +3284,10 @@ bind_framebuffer(GLenum target, GLuint framebuffer)
       /* Binding the window system framebuffer (which was originally set
        * with MakeCurrent).
        */
-      newDrawFb = ctx->WinSysDrawBuffer;
-      newReadFb = ctx->WinSysReadBuffer;
+      if (bindDrawBuf)
+         newDrawFb = ctx->WinSysDrawBuffer;
+      if (bindReadBuf)
+         newReadFb = ctx->WinSysReadBuffer;
    }
 
    _mesa_bind_framebuffers(ctx,
@@ -3797,7 +3807,8 @@ check_textarget(struct gl_context *ctx, int dims, GLenum target,
       err = dims != 2;
       break;
    case GL_TEXTURE_3D:
-      err = dims != 3;
+      err = dims != 3 ||
+            (ctx->API == API_OPENGLES2 && !ctx->Extensions.OES_texture_3D);
       break;
    default:
       _mesa_error(ctx, GL_INVALID_ENUM,
@@ -5727,7 +5738,7 @@ _mesa_EvaluateDepthValuesARB(void)
       return;
    }
 
-   st_validate_state(st_context(ctx), ST_PIPELINE_UPDATE_FRAMEBUFFER);
+   st_validate_state(st_context(ctx), ST_PIPELINE_UPDATE_FB_STATE_MASK);
 
    ctx->pipe->evaluate_depth_buffer(ctx->pipe);
 }

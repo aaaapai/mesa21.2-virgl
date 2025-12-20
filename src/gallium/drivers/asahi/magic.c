@@ -21,9 +21,9 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 #
+#include "magic.h"
 #include <stdint.h>
 #include "agx_state.h"
-#include "magic.h"
 
 /* The structures managed in this file appear to be software defined (either in
  * the macOS kernel driver or in the AGX firmware) */
@@ -32,7 +32,8 @@
 static uint64_t
 demo_unk6(struct agx_pool *pool)
 {
-   struct agx_ptr ptr = agx_pool_alloc_aligned(pool, 0x4000 * sizeof(uint64_t), 64);
+   struct agx_ptr ptr =
+      agx_pool_alloc_aligned(pool, 0x4000 * sizeof(uint64_t), 64);
    uint64_t *buf = ptr.cpu;
    memset(buf, 0, sizeof(*buf));
 
@@ -54,7 +55,7 @@ static size_t
 asahi_size_resource(struct pipe_resource *prsrc, unsigned level)
 {
    struct agx_resource *rsrc = agx_resource(prsrc);
-   size_t size = rsrc->slices[level].size;
+   size_t size = rsrc->layout.size_B;
 
    if (rsrc->separate_stencil)
       size += asahi_size_resource(&rsrc->separate_stencil->base, level);
@@ -95,28 +96,33 @@ asahi_classify_attachment(enum pipe_format format)
       return AGX_IOGPU_ATTACHMENT_TYPE_COLOUR;
 }
 
+static uint64_t
+agx_map_surface_resource(struct pipe_surface *surf, struct agx_resource *rsrc)
+{
+   return agx_map_texture_gpu(rsrc, surf->u.tex.first_layer);
+}
+
+static uint64_t
+agx_map_surface(struct pipe_surface *surf)
+{
+   return agx_map_surface_resource(surf, agx_resource(surf->texture));
+}
+
 static void
 asahi_pack_iogpu_attachment(void *out, struct agx_resource *rsrc,
-                            struct pipe_surface *surf,
                             unsigned total_size)
 {
-   /* We don't support layered rendering yet */
-   assert(surf->u.tex.first_layer == surf->u.tex.last_layer);
-
    agx_pack(out, IOGPU_ATTACHMENT, cfg) {
-      cfg.type = asahi_classify_attachment(rsrc->base.format);
-
-      cfg.address = agx_map_texture_gpu(rsrc, surf->u.tex.level,
-                                              surf->u.tex.first_layer);
-
-      cfg.size = rsrc->slices[surf->u.tex.level].size;
-
+      cfg.type = asahi_classify_attachment(rsrc->layout.format);
+      cfg.address = rsrc->bo->ptr.gpu;
+      cfg.size = rsrc->layout.size_B;
       cfg.percent = (100 * cfg.size) / total_size;
    }
 }
 
 static unsigned
-asahi_pack_iogpu_attachments(void *out, struct pipe_framebuffer_state *framebuffer)
+asahi_pack_iogpu_attachments(void *out,
+                             struct pipe_framebuffer_state *framebuffer)
 {
    unsigned total_attachment_size = asahi_size_attachments(framebuffer);
    struct agx_iogpu_attachment_packed *attachments = out;
@@ -125,102 +131,187 @@ asahi_pack_iogpu_attachments(void *out, struct pipe_framebuffer_state *framebuff
    for (unsigned i = 0; i < framebuffer->nr_cbufs; ++i) {
       asahi_pack_iogpu_attachment(attachments + (nr++),
                                   agx_resource(framebuffer->cbufs[i]->texture),
-                                  framebuffer->cbufs[i],
                                   total_attachment_size);
    }
 
    if (framebuffer->zsbuf) {
-         struct agx_resource *rsrc = agx_resource(framebuffer->zsbuf->texture);
+      struct agx_resource *rsrc = agx_resource(framebuffer->zsbuf->texture);
 
+      asahi_pack_iogpu_attachment(attachments + (nr++), rsrc,
+                                  total_attachment_size);
+
+      if (rsrc->separate_stencil) {
          asahi_pack_iogpu_attachment(attachments + (nr++),
-                                     rsrc, framebuffer->zsbuf,
+                                     rsrc->separate_stencil,
                                      total_attachment_size);
-
-         if (rsrc->separate_stencil) {
-            asahi_pack_iogpu_attachment(attachments + (nr++),
-                                        rsrc->separate_stencil,
-                                        framebuffer->zsbuf,
-                                        total_attachment_size);
-         }
+      }
    }
 
    return nr;
 }
 
 unsigned
-demo_cmdbuf(uint64_t *buf, size_t size,
-            struct agx_pool *pool,
-            struct pipe_framebuffer_state *framebuffer,
-            uint64_t encoder_ptr,
-            uint64_t encoder_id,
-            uint64_t scissor_ptr,
-            uint32_t pipeline_null,
-            uint32_t pipeline_clear,
-            uint32_t pipeline_store,
-            bool clear_pipeline_textures)
+demo_cmdbuf(uint64_t *buf, size_t size, struct agx_pool *pool,
+            struct pipe_framebuffer_state *framebuffer, uint64_t encoder_ptr,
+            uint64_t encoder_id, uint64_t scissor_ptr, uint64_t depth_bias_ptr,
+            uint64_t occlusion_ptr, uint32_t pipeline_clear,
+            uint32_t pipeline_load, uint32_t pipeline_store,
+            bool clear_pipeline_textures, unsigned clear_buffers,
+            double clear_depth, unsigned clear_stencil)
 {
-   uint32_t *map = (uint32_t *) buf;
+   bool should_clear_depth = clear_buffers & PIPE_CLEAR_DEPTH;
+   bool should_clear_stencil = clear_buffers & PIPE_CLEAR_STENCIL;
+
+   uint32_t *map = (uint32_t *)buf;
    memset(map, 0, 518 * 4);
 
-   map[54] = 0x6b0003;
-   map[55] = 0x3a0012;
-   map[56] = 1;
+   uint64_t deflake_buffer = demo_zero(pool, 0x7e0);
+   uint64_t deflake_1 = deflake_buffer + 0x2a0;
+   uint64_t deflake_2 = deflake_buffer + 0x20;
 
-   /* Unknown address at word 110 */
-
-   map[112] = 1;
-   map[114] = 0x1c;
-   map[118] = 0xffffffff;
-   map[119] = 0xffffffff;
-   map[120] = 0xffffffff;
-
-   uint64_t unk_buffer = demo_zero(pool, 0x1000);
    uint64_t unk_buffer_2 = demo_zero(pool, 0x8000);
 
-   agx_pack(map + 160, IOGPU_INTERNAL_PIPELINES, cfg) {
-      cfg.clear_pipeline_bind = 0xffff8002 | (clear_pipeline_textures ? 0x210 : 0);
+   uint64_t depth_buffer = 0;
+   uint64_t stencil_buffer = 0;
+
+   agx_pack(map + 16, IOGPU_GRAPHICS, cfg) {
+      cfg.opengl_depth_clipping = true;
+
+      cfg.deflake_1 = deflake_1;
+      cfg.deflake_2 = deflake_2;
+      cfg.deflake_3 = deflake_buffer;
+
+      cfg.clear_pipeline_bind =
+         0xffff8002 | (clear_pipeline_textures ? 0x210 : 0);
       cfg.clear_pipeline = pipeline_clear;
+
+      /* store pipeline used when entire frame completes */
       cfg.store_pipeline_bind = 0x12;
       cfg.store_pipeline = pipeline_store;
       cfg.scissor_array = scissor_ptr;
-      cfg.unknown_buffer = unk_buffer;
-   }
+      cfg.depth_bias_array = depth_bias_ptr;
+      cfg.visibility_result_buffer = occlusion_ptr;
 
-   agx_pack(map + 228, IOGPU_AUX_FRAMEBUFFER, cfg) {
-      cfg.width = framebuffer->width;
-      cfg.height = framebuffer->height;
-      cfg.z16_unorm_attachment = false;
+      if (framebuffer->zsbuf) {
+         struct pipe_surface *zsbuf = framebuffer->zsbuf;
+         struct agx_resource *zsres = agx_resource(zsbuf->texture);
+         struct agx_resource *zres = NULL;
+         struct agx_resource *sres = NULL;
+
+         const struct util_format_description *desc =
+            util_format_description(zsres->layout.format);
+
+         assert(desc->format == PIPE_FORMAT_Z32_FLOAT ||
+                desc->format == PIPE_FORMAT_Z32_FLOAT_S8X24_UINT ||
+                desc->format == PIPE_FORMAT_S8_UINT);
+
+         cfg.depth_width = framebuffer->width;
+         cfg.depth_height = framebuffer->height;
+
+         if (util_format_has_depth(desc)) {
+            zres = zsres;
+            depth_buffer = agx_map_surface(zsbuf);
+         } else {
+            sres = zsres;
+            stencil_buffer = agx_map_surface(zsbuf);
+         }
+
+         if (zsres->separate_stencil) {
+            sres = zsres->separate_stencil;
+            stencil_buffer = agx_map_surface_resource(zsbuf, sres);
+         }
+
+         if (zres) {
+            cfg.zls_control.z_store_enable = true;
+            cfg.zls_control.z_load_enable = !should_clear_depth;
+            cfg.depth_buffer_1 = depth_buffer;
+            cfg.depth_buffer_2 = depth_buffer;
+            cfg.depth_buffer_3 = depth_buffer;
+
+            if (ail_is_compressed(&zres->layout)) {
+               uint64_t accel_buffer =
+                  depth_buffer + zres->layout.metadata_offset_B;
+               cfg.depth_acceleration_buffer_1 = accel_buffer;
+               cfg.depth_acceleration_buffer_2 = accel_buffer;
+               cfg.depth_acceleration_buffer_3 = accel_buffer;
+
+               cfg.zls_control.z_compress_1 = true;
+               cfg.zls_control.z_compress_2 = true;
+            }
+         }
+
+         if (sres) {
+            cfg.zls_control.s_store_enable = true;
+            cfg.zls_control.s_load_enable = !should_clear_stencil;
+            cfg.stencil_buffer_1 = stencil_buffer;
+            cfg.stencil_buffer_2 = stencil_buffer;
+            cfg.stencil_buffer_3 = stencil_buffer;
+
+            if (ail_is_compressed(&sres->layout)) {
+               uint64_t accel_buffer =
+                  stencil_buffer + sres->layout.metadata_offset_B;
+               cfg.stencil_acceleration_buffer_1 = accel_buffer;
+               cfg.stencil_acceleration_buffer_2 = accel_buffer;
+               cfg.stencil_acceleration_buffer_3 = accel_buffer;
+
+               cfg.zls_control.s_compress_1 = true;
+               cfg.zls_control.s_compress_2 = true;
+            }
+         }
+
+         /* It's unclear how tile size is conveyed for depth/stencil targets,
+          * which interactions with mipmapping (for example of a 33x33
+          * depth/stencil attachment)
+          */
+         if (zsbuf->u.tex.level != 0)
+            unreachable("todo: mapping other levels");
+      }
+
+      cfg.width_1 = framebuffer->width;
+      cfg.height_1 = framebuffer->height;
       cfg.pointer = unk_buffer_2;
-   }
 
-   agx_pack(map + 292, IOGPU_CLEAR_Z_S, cfg) {
-      cfg.depth_clear_value = fui(1.0); // 32-bit float
-      cfg.stencil_clear_value = 0;
-      cfg.z16_unorm_attachment = false;
-   }
+      cfg.set_when_reloading_z_or_s_1 = clear_pipeline_textures;
 
-   map[312] = 0xffff8212;
-   map[314] = pipeline_null | 0x4;
-   map[320] = 0x12;
-   map[322] = pipeline_store | 0x4;
+      /* More specifically, this is set when both load+storing Z or S */
+      if (depth_buffer && !should_clear_depth) {
+         cfg.set_when_reloading_z_or_s_1 = true;
+         cfg.set_when_reloading_z_or_s_2 = true;
+      }
 
-   agx_pack(map + 356, IOGPU_MISC, cfg) {
+      if (stencil_buffer && !should_clear_stencil) {
+         cfg.set_when_reloading_z_or_s_1 = true;
+         cfg.set_when_reloading_z_or_s_2 = true;
+      }
+
+      cfg.depth_clear_value = fui(clear_depth);
+      cfg.stencil_clear_value = clear_stencil & 0xff;
+
+      cfg.partial_reload_pipeline_bind = 0xffff8212;
+      cfg.partial_reload_pipeline = pipeline_load;
+
+      cfg.partial_store_pipeline_bind = 0x12;
+      cfg.partial_store_pipeline = pipeline_store;
+
+      cfg.depth_buffer_3 = depth_buffer;
+      cfg.stencil_buffer_3 = stencil_buffer;
       cfg.encoder_id = encoder_id;
       cfg.unknown_buffer = demo_unk6(pool);
-      cfg.width = framebuffer->width;
-      cfg.height = framebuffer->height;
+      cfg.width_2 = framebuffer->width;
+      cfg.height_2 = framebuffer->height;
+      cfg.unk_352 = clear_pipeline_textures ? 0x0 : 0x1;
    }
 
    unsigned offset_unk = (484 * 4);
    unsigned offset_attachments = (496 * 4);
 
-   unsigned nr_attachments =
-      asahi_pack_iogpu_attachments(map + (offset_attachments / 4) + 4,
-                                   framebuffer);
+   unsigned nr_attachments = asahi_pack_iogpu_attachments(
+      map + (offset_attachments / 4) + 4, framebuffer);
 
    map[(offset_attachments / 4) + 3] = nr_attachments;
 
-   unsigned total_size = offset_attachments + (AGX_IOGPU_ATTACHMENT_LENGTH * nr_attachments) + 16;
+   unsigned total_size =
+      offset_attachments + (AGX_IOGPU_ATTACHMENT_LENGTH * nr_attachments) + 16;
 
    agx_pack(map, IOGPU_HEADER, cfg) {
       cfg.total_size = total_size;
@@ -228,28 +319,32 @@ demo_cmdbuf(uint64_t *buf, size_t size,
       cfg.attachment_length = nr_attachments * AGX_IOGPU_ATTACHMENT_LENGTH;
       cfg.unknown_offset = offset_unk;
       cfg.encoder = encoder_ptr;
-
-      cfg.deflake_1 = demo_zero(pool, 0x540);
-      cfg.deflake_2 = demo_zero(pool, 0x280);
    }
 
    return total_size;
 }
 
 static struct agx_map_header
-demo_map_header(uint64_t cmdbuf_id, uint64_t encoder_id, unsigned cmdbuf_size, unsigned count)
+demo_map_header(uint64_t cmdbuf_id, uint64_t encoder_id, unsigned cmdbuf_size,
+                unsigned count)
 {
-   return (struct agx_map_header) {
-      .cmdbuf_id = cmdbuf_id,
-      .unk2 = 0x1,
-      .unk3 = 0x528, // 1320
-      .encoder_id = encoder_id,
-      .unk6 = 0x0,
-      .cmdbuf_size = cmdbuf_size,
+   /* Structure: header followed by resource groups. For now, we use a single
+    * resource group for every resource. This could be optimized.
+    */
+   unsigned length = sizeof(struct agx_map_header);
+   length += count * sizeof(struct agx_map_entry);
+   assert(length < 0x10000);
 
-      /* +1 for the sentinel ending */
-      .nr_entries = count,
-      .nr_handles = count,
+   return (struct agx_map_header){
+      .cmdbuf_id = cmdbuf_id,
+      .segment_count = 1,
+      .length = length,
+      .encoder_id = encoder_id,
+      .kernel_commands_start_offset = 0,
+      .kernel_commands_end_offset = cmdbuf_size,
+      .total_resources = count,
+      .resource_group_count = count,
+      .unk = 0x8000,
    };
 }
 
@@ -258,20 +353,22 @@ demo_mem_map(void *map, size_t size, unsigned *handles, unsigned count,
              uint64_t cmdbuf_id, uint64_t encoder_id, unsigned cmdbuf_size)
 {
    struct agx_map_header *header = map;
-   struct agx_map_entry *entries = (struct agx_map_entry *) (((uint8_t *) map) + sizeof(*header));
-   struct agx_map_entry *end = (struct agx_map_entry *) (((uint8_t *) map) + size);
+   struct agx_map_entry *entries =
+      (struct agx_map_entry *)(((uint8_t *)map) + sizeof(*header));
+   struct agx_map_entry *end =
+      (struct agx_map_entry *)(((uint8_t *)map) + size);
 
    /* Header precedes the entry */
    *header = demo_map_header(cmdbuf_id, encoder_id, cmdbuf_size, count);
 
    /* Add an entry for each BO mapped */
    for (unsigned i = 0; i < count; ++i) {
-	   assert((entries + i) < end);
-      entries[i] = (struct agx_map_entry) {
-         .indices = {handles[i]},
-         .unkAAA = 0x20,
-         .unkBBB = 0x1,
-         .unka = 0x1ffff,
+      assert((entries + i) < end);
+      entries[i] = (struct agx_map_entry){
+         .resource_id = {handles[i]},
+         .resource_unk = {0x20},
+         .resource_flags = {0x1},
+         .resource_count = 1,
       };
    }
 }

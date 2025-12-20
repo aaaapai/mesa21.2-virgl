@@ -956,7 +956,7 @@ associate_uniform_storage(struct gl_context *ctx,
          unsigned columns = 0;
 
          int dmul;
-         if (ctx->Const.PackedDriverUniformStorage && !prog->info.is_arb_asm) {
+         if (ctx->Const.PackedDriverUniformStorage && !prog->info.use_legacy_math_rules) {
             dmul = storage->type->vector_elements * sizeof(float);
          } else {
             dmul = 4 * sizeof(float);
@@ -1050,7 +1050,7 @@ associate_uniform_storage(struct gl_context *ctx,
           * initializers in the source code to be copied over.
           */
          unsigned array_elements = MAX2(1, storage->array_elements);
-         if (ctx->Const.PackedDriverUniformStorage && !prog->info.is_arb_asm &&
+         if (ctx->Const.PackedDriverUniformStorage && !prog->info.use_legacy_math_rules &&
              (storage->is_bindless || !storage->type->contains_opaque())) {
             const int dmul = storage->type->is_64bit() ? 2 : 1;
             const unsigned components =
@@ -1551,7 +1551,7 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                 */
                if (sampler->unit != value || !sampler->bound) {
                   if (!flushed) {
-                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT | _NEW_PROGRAM, 0);
+                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT, 0);
                      flushed = true;
                   }
                   sampler->unit = value;
@@ -1562,7 +1562,7 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
             } else {
                if (sh->Program->SamplerUnits[unit] != value) {
                   if (!flushed) {
-                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT | _NEW_PROGRAM, 0);
+                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT, 0);
                      flushed = true;
                   }
                   sh->Program->SamplerUnits[unit] = value;

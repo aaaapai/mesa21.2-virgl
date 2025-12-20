@@ -2,30 +2,7 @@
  * SGI FREE SOFTWARE LICENSE B (Version 2.0, Sept. 18, 2008)
  * Copyright (C) 1991-2000 Silicon Graphics, Inc. All Rights Reserved.
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice including the dates of first publication and
- * either this permission notice or a reference to
- * http://oss.sgi.com/projects/FreeB/
- * shall be included in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * SILICON GRAPHICS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
- * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
- * OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
- * Except as contained in this notice, the name of Silicon Graphics, Inc.
- * shall not be used in advertising or otherwise to promote the sale, use or
- * other dealings in this Software without prior written authorization from
- * Silicon Graphics, Inc.
+ * SPDX-License-Identifier: SGI-B-2.0
  */
 
 /**
@@ -137,6 +114,8 @@ struct __GLXDRIscreenRec {
    int (*getBufferAge)(__GLXDRIdrawable *pdraw);
    void (*bindTexImage)(__GLXDRIdrawable *pdraw, int buffer, const int *attribs);
    void (*releaseTexImage)(__GLXDRIdrawable *pdraw, int buffer);
+
+   int maxSwapInterval;
 };
 
 struct __GLXDRIdrawableRec
@@ -148,7 +127,6 @@ struct __GLXDRIdrawableRec
    struct glx_screen *psc;
    GLenum textureTarget;
    GLenum textureFormat;        /* EXT_texture_from_pixmap support */
-   unsigned long eventMask;
    int refcount;
 };
 
@@ -242,6 +220,9 @@ struct glx_context_vtable {
    int (*interop_export_object)(struct glx_context *ctx,
                                 struct mesa_glinterop_export_in *in,
                                 struct mesa_glinterop_export_out *out);
+   int (*interop_flush_objects)(struct glx_context *ctx,
+                                unsigned count, struct mesa_glinterop_export_in *objects,
+                                GLsync *sync);
 };
 
 /**
@@ -341,9 +322,8 @@ struct glx_context
      */
    Bool isDirect;
 
-#if defined(GLX_DIRECT_RENDERING) && defined(GLX_USE_APPLEGL)
+   /* Backend private state for the context */
    void *driContext;
-#endif
 
     /**
      * \c dpy of current display for this context.  Will be \c NULL if not
@@ -421,11 +401,6 @@ struct glx_context
    int server_major;        /**< Major version number. */
    int server_minor;        /**< Minor version number. */
    /*@} */
-
-   /**
-    * Number of threads we're currently current in.
-    */
-   unsigned long thread_refcount;
 
    /**
     * GLX_ARB_create_context_no_error setting for this context.
@@ -653,17 +628,9 @@ extern int __glXDebug;
 
 extern void __glXSetCurrentContext(struct glx_context * c);
 
-# if defined( USE_ELF_TLS )
-
 extern __THREAD_INITIAL_EXEC void *__glX_tls_Context;
 
 #  define __glXGetCurrentContext() __glX_tls_Context
-
-# else
-
-extern struct glx_context *__glXGetCurrentContext(void);
-
-# endif /* defined( USE_ELF_TLS ) */
 
 extern void __glXSetCurrentContextNull(void);
 
@@ -739,8 +706,7 @@ extern void __glEmptyImage(struct glx_context *, GLint, GLint, GLint, GLint, GLe
 extern void __glXInitVertexArrayState(struct glx_context *);
 extern void __glXFreeVertexArrayState(struct glx_context *);
 
-_X_HIDDEN void
-__glX_send_client_info(struct glx_display *glx_dpy);
+extern void glxSendClientInfo(struct glx_display *glx_dpy, int screen);
 
 /************************************************************************/
 

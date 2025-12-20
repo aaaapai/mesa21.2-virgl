@@ -14,7 +14,7 @@
 		OSMesaPixelStore;
 		OSMesaPostprocess;
 		gl*;
-        st*;
+    st*;
 		zink*;
 	local:
 		*;

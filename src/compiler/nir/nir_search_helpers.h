@@ -225,25 +225,42 @@ is_not_const_zero(UNUSED struct hash_table *ht, const nir_alu_instr *instr,
    return true;
 }
 
-/** Is value unsigned less than 0xfffc07fc? */
+/** Is value unsigned less than the limit? */
 static inline bool
-is_ult_0xfffc07fc(UNUSED struct hash_table *ht, const nir_alu_instr *instr,
-                  unsigned src, unsigned num_components,
-                  const uint8_t *swizzle)
+is_ult(const nir_alu_instr *instr, unsigned src, unsigned num_components, const uint8_t *swizzle,
+       uint64_t limit)
 {
    /* only constant srcs: */
    if (!nir_src_is_const(instr->src[src].src))
       return false;
 
    for (unsigned i = 0; i < num_components; i++) {
-      const unsigned val =
+      const uint64_t val =
          nir_src_comp_as_uint(instr->src[src].src, swizzle[i]);
 
-      if (val >= 0xfffc07fcU)
+      if (val >= limit)
          return false;
    }
 
    return true;
+}
+
+/** Is value unsigned less than 32? */
+static inline bool
+is_ult_32(UNUSED struct hash_table *ht, const nir_alu_instr *instr,
+          unsigned src, unsigned num_components,
+          const uint8_t *swizzle)
+{
+   return is_ult(instr, src, num_components, swizzle, 32);
+}
+
+/** Is value unsigned less than 0xfffc07fc? */
+static inline bool
+is_ult_0xfffc07fc(UNUSED struct hash_table *ht, const nir_alu_instr *instr,
+                  unsigned src, unsigned num_components,
+                  const uint8_t *swizzle)
+{
+   return is_ult(instr, src, num_components, swizzle, 0xfffc07fcU);
 }
 
 /** Is the first 5 bits of value unsigned greater than or equal 2? */
@@ -406,6 +423,28 @@ is_only_used_as_float(const nir_alu_instr *instr)
 }
 
 static inline bool
+is_only_used_by_fadd(const nir_alu_instr *instr)
+{
+   nir_foreach_use(src, &instr->dest.dest.ssa) {
+      const nir_instr *const user_instr = src->parent_instr;
+      if (user_instr->type != nir_instr_type_alu)
+         return false;
+
+      const nir_alu_instr *const user_alu = nir_instr_as_alu(user_instr);
+      assert(instr != user_alu);
+
+      if (user_alu->op == nir_op_fneg || user_alu->op == nir_op_fabs) {
+         if (!is_only_used_by_fadd(user_alu))
+            return false;
+      } else if (user_alu->op != nir_op_fadd) {
+         return false;
+      }
+   }
+
+   return true;
+}
+
+static inline bool
 only_lower_8_bits_used(const nir_alu_instr *instr)
 {
    return (nir_ssa_def_bits_used(&instr->dest.dest.ssa) & ~0xffull) == 0;
@@ -432,7 +471,7 @@ is_upper_half_zero(UNUSED struct hash_table *ht, const nir_alu_instr *instr,
 
    for (unsigned i = 0; i < num_components; i++) {
       unsigned half_bit_size = nir_src_bit_size(instr->src[src].src) / 2;
-      uint32_t high_bits = ((1 << half_bit_size) - 1) << half_bit_size;
+      uint64_t high_bits = u_bit_consecutive64(half_bit_size, half_bit_size);
       if ((nir_src_comp_as_uint(instr->src[src].src,
                                 swizzle[i]) & high_bits) != 0) {
          return false;
@@ -456,9 +495,45 @@ is_lower_half_zero(UNUSED struct hash_table *ht, const nir_alu_instr *instr,
       return false;
 
    for (unsigned i = 0; i < num_components; i++) {
-      uint32_t low_bits =
-         (1 << (nir_src_bit_size(instr->src[src].src) / 2)) - 1;
-      if ((nir_src_comp_as_int(instr->src[src].src, swizzle[i]) & low_bits) != 0)
+      uint64_t low_bits = u_bit_consecutive64(0, nir_src_bit_size(instr->src[src].src) / 2);
+      if ((nir_src_comp_as_uint(instr->src[src].src, swizzle[i]) & low_bits) != 0)
+         return false;
+   }
+
+   return true;
+}
+
+static inline bool
+is_upper_half_negative_one(UNUSED struct hash_table *ht, const nir_alu_instr *instr,
+                           unsigned src, unsigned num_components,
+                           const uint8_t *swizzle)
+{
+   if (nir_src_as_const_value(instr->src[src].src) == NULL)
+      return false;
+
+   for (unsigned i = 0; i < num_components; i++) {
+      unsigned half_bit_size = nir_src_bit_size(instr->src[src].src) / 2;
+      uint64_t high_bits = u_bit_consecutive64(half_bit_size, half_bit_size);
+      if ((nir_src_comp_as_uint(instr->src[src].src,
+                                swizzle[i]) & high_bits) != high_bits) {
+         return false;
+      }
+   }
+
+   return true;
+}
+
+static inline bool
+is_lower_half_negative_one(UNUSED struct hash_table *ht, const nir_alu_instr *instr,
+                           unsigned src, unsigned num_components,
+                           const uint8_t *swizzle)
+{
+   if (nir_src_as_const_value(instr->src[src].src) == NULL)
+      return false;
+
+   for (unsigned i = 0; i < num_components; i++) {
+      uint64_t low_bits = u_bit_consecutive64(0, nir_src_bit_size(instr->src[src].src) / 2);
+      if ((nir_src_comp_as_uint(instr->src[src].src, swizzle[i]) & low_bits) != low_bits)
          return false;
    }
 

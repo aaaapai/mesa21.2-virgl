@@ -151,6 +151,7 @@ create_array_tex_from_cube_tex(nir_builder *b, nir_tex_instr *tex, nir_ssa_def *
    array_tex->sampler_dim = GLSL_SAMPLER_DIM_2D;
    array_tex->is_array = true;
    array_tex->is_shadow = tex->is_shadow;
+   array_tex->is_sparse = tex->is_sparse;
    array_tex->is_new_style_shadow = tex->is_new_style_shadow;
    array_tex->texture_index = tex->texture_index;
    array_tex->sampler_index = tex->sampler_index;
@@ -170,12 +171,12 @@ create_array_tex_from_cube_tex(nir_builder *b, nir_tex_instr *tex, nir_ssa_def *
          nir_ssa_def *c = nir_channels(b, psrc->ssa, BITFIELD_MASK(nir_tex_instr_src_size(array_tex, s)));
          array_tex->src[s].src = nir_src_for_ssa(c);
       } else
-         nir_src_copy(&array_tex->src[s].src, psrc);
+         nir_src_copy(&array_tex->src[s].src, psrc, &array_tex->instr);
       s++;
    }
 
    nir_ssa_dest_init(&array_tex->instr, &array_tex->dest,
-                     nir_tex_instr_dest_size(array_tex), 32, NULL);
+                     nir_tex_instr_dest_size(array_tex), nir_dest_bit_size(tex->dest), NULL);
    nir_builder_instr_insert(b, &array_tex->instr);
    return &array_tex->dest.ssa;
 }
@@ -390,7 +391,9 @@ rewrite_cube_var_type(nir_builder *b, nir_tex_instr *tex)
    nir_foreach_variable_with_modes(var, b->shader, nir_var_uniform) {
       if (!glsl_type_is_sampler(glsl_without_array(var->type)))
          continue;
-      if (var->data.driver_location == index) {
+      unsigned size = glsl_type_is_array(var->type) ? glsl_get_length(var->type) : 1;
+      if (var->data.driver_location == index ||
+          (var->data.driver_location < index && var->data.driver_location + size > index)) {
          sampler = var;
          break;
       }
@@ -422,13 +425,14 @@ lower_tex_to_txl(nir_builder *b, nir_tex_instr *tex)
    txl->sampler_index = tex->sampler_index;
    txl->is_array = tex->is_array;
    txl->is_shadow = tex->is_shadow;
+   txl->is_sparse = tex->is_sparse;
    txl->is_new_style_shadow = tex->is_new_style_shadow;
 
    unsigned s = 0;
    for (int i = 0; i < tex->num_srcs; i++) {
       if (i == bias_idx)
          continue;
-      nir_src_copy(&txl->src[s].src, &tex->src[i].src);
+      nir_src_copy(&txl->src[s].src, &tex->src[i].src, &txl->instr);
       txl->src[s].src_type = tex->src[i].src_type;
       s++;
    }

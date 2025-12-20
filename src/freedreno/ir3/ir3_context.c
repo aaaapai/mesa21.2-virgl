@@ -31,7 +31,8 @@
 #include "ir3_shader.h"
 
 struct ir3_context *
-ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader_variant *so)
+ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader *shader,
+                 struct ir3_shader_variant *so)
 {
    struct ir3_context *ctx = rzalloc(NULL, struct ir3_context);
 
@@ -76,13 +77,14 @@ ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader_variant *so)
     * creating duplicate variants..
     */
 
-   ctx->s = nir_shader_clone(ctx, so->shader->nir);
+   ctx->s = nir_shader_clone(ctx, shader->nir);
    ir3_nir_lower_variant(so, ctx->s);
 
    /* this needs to be the last pass run, so do this here instead of
     * in ir3_optimize_nir():
     */
    bool progress = false;
+   bool needs_late_alg = false;
    NIR_PASS(progress, ctx->s, nir_lower_locals_to_regs);
 
    /* we could need cleanup after lower_locals_to_regs */
@@ -90,6 +92,7 @@ ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader_variant *so)
       progress = false;
       NIR_PASS(progress, ctx->s, nir_opt_algebraic);
       NIR_PASS(progress, ctx->s, nir_opt_constant_folding);
+      needs_late_alg = true;
    }
 
    /* We want to lower nir_op_imul as late as possible, to catch also
@@ -106,6 +109,13 @@ ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader_variant *so)
       NIR_PASS(progress, ctx->s, nir_opt_dead_write_vars);
       NIR_PASS(progress, ctx->s, nir_opt_dce);
       NIR_PASS(progress, ctx->s, nir_opt_constant_folding);
+      needs_late_alg = true;
+   }
+
+   /* nir_opt_algebraic() above would have unfused our ffmas, re-fuse them. */
+   if (needs_late_alg) {
+      NIR_PASS(progress, ctx->s, nir_opt_algebraic_late);
+      NIR_PASS(progress, ctx->s, nir_opt_dce);
    }
 
    /* Enable the texture pre-fetch feature only a4xx onwards.  But
@@ -153,9 +163,9 @@ ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader_variant *so)
       }
    }
 
-   if (shader_debug_enabled(so->type)) {
+   if (shader_debug_enabled(so->type, ctx->s->info.internal)) {
       mesa_logi("NIR (final form) for %s shader %s:", ir3_shader_stage(so),
-                so->shader->nir->info.name);
+                so->name);
       nir_log_shaderi(ctx->s);
    }
 
@@ -343,7 +353,7 @@ ir3_create_collect(struct ir3_block *block, struct ir3_instruction *const *arr,
          elem = ir3_MOV(block, elem, type);
       }
 
-      debug_assert(dest_flags(elem) == flags);
+      assert(dest_flags(elem) == flags);
       __ssa_src(collect, elem, flags);
    }
 
@@ -367,7 +377,7 @@ ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,
    }
 
    if (src->opc == OPC_META_COLLECT) {
-      debug_assert((base + n) <= src->srcs_count);
+      assert((base + n) <= src->srcs_count);
 
       for (int i = 0; i < n; i++) {
          dst[i] = ssa(src->srcs[i + base]);

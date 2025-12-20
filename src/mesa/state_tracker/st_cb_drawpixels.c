@@ -67,7 +67,6 @@
 
 #include "pipe/p_context.h"
 #include "pipe/p_defines.h"
-#include "tgsi/tgsi_ureg.h"
 #include "util/format/u_format.h"
 #include "util/u_inlines.h"
 #include "util/u_math.h"
@@ -748,7 +747,8 @@ draw_textured_quad(struct gl_context *ctx, GLint x, GLint y, GLfloat z,
    const unsigned fb_height = _mesa_geometric_height(ctx->DrawBuffer);
    GLfloat x0, y0, x1, y1;
    ASSERTED GLsizei maxSize;
-   boolean normalized = sv[0]->texture->target == PIPE_TEXTURE_2D;
+   boolean normalized = sv[0]->texture->target == PIPE_TEXTURE_2D ||
+                        (sv[0]->texture->target == PIPE_TEXTURE_RECT && st->lower_rect_tex);
    unsigned cso_state_mask;
 
    assert(sv[0]->texture->target == st->internal_target);
@@ -837,7 +837,7 @@ draw_textured_quad(struct gl_context *ctx, GLint x, GLint y, GLfloat z,
       sampler.min_img_filter = PIPE_TEX_FILTER_NEAREST;
       sampler.min_mip_filter = PIPE_TEX_MIPFILTER_NONE;
       sampler.mag_img_filter = PIPE_TEX_FILTER_NEAREST;
-      sampler.normalized_coords = normalized;
+      sampler.unnormalized_coords = !normalized;
 
       if (fpv) {
          /* drawing a color image */
@@ -945,8 +945,8 @@ draw_textured_quad(struct gl_context *ctx, GLint x, GLint y, GLfloat z,
    st->state.num_sampler_views[PIPE_SHADER_FRAGMENT] = 0;
 
    ctx->Array.NewVertexElements = true;
-   st->dirty |= ST_NEW_VERTEX_ARRAYS |
-                ST_NEW_FS_SAMPLER_VIEWS;
+   ctx->NewDriverState |= ST_NEW_VERTEX_ARRAYS |
+                          ST_NEW_FS_SAMPLER_VIEWS;
 }
 
 
@@ -1149,7 +1149,7 @@ get_color_fp_variant(struct st_context *st)
                      ctx->Color._ClampFragmentColor;
    key.lower_alpha_func = COMPARE_FUNC_ALWAYS;
 
-   fpv = st_get_fp_variant(st, st->fp, &key);
+   fpv = st_get_fp_variant(st, ctx->FragmentProgram._Current, &key);
 
    return fpv;
 }
@@ -1179,7 +1179,7 @@ get_color_index_fp_variant(struct st_context *st)
                      ctx->Color._ClampFragmentColor;
    key.lower_alpha_func = COMPARE_FUNC_ALWAYS;
 
-   fpv = st_get_fp_variant(st, st->fp, &key);
+   fpv = st_get_fp_variant(st, ctx->FragmentProgram._Current, &key);
 
    return fpv;
 }
@@ -1291,7 +1291,7 @@ st_DrawPixels(struct gl_context *ctx, GLint x, GLint y,
    st_flush_bitmap_cache(st);
    st_invalidate_readpix_cache(st);
 
-   st_validate_state(st, ST_PIPELINE_META);
+   st_validate_state(st, ST_PIPELINE_META_STATE_MASK);
 
    clippedUnpack = *unpack;
    unpack = &clippedUnpack;
@@ -1353,7 +1353,7 @@ st_DrawPixels(struct gl_context *ctx, GLint x, GLint y,
       /* compiling a new fragment shader variant added new state constants
        * into the constant buffer, we need to update them
        */
-      st_upload_constants(st, st->fp, MESA_SHADER_FRAGMENT);
+      st_upload_constants(st, ctx->FragmentProgram._Current, MESA_SHADER_FRAGMENT);
    }
 
    {
@@ -1690,7 +1690,7 @@ st_CopyPixels(struct gl_context *ctx, GLint srcx, GLint srcy,
    st_flush_bitmap_cache(st);
    st_invalidate_readpix_cache(st);
 
-   st_validate_state(st, ST_PIPELINE_META);
+   st_validate_state(st, ST_PIPELINE_META_STATE_MASK);
 
    if (blit_copy_pixels(ctx, srcx, srcy, width, height, dstx, dsty, type))
       return;
@@ -1738,7 +1738,7 @@ st_CopyPixels(struct gl_context *ctx, GLint srcx, GLint srcy,
       /* compiling a new fragment shader variant added new state constants
        * into the constant buffer, we need to update them
        */
-      st_upload_constants(st, st->fp, MESA_SHADER_FRAGMENT);
+      st_upload_constants(st, ctx->FragmentProgram._Current, MESA_SHADER_FRAGMENT);
    } else if (type == GL_DEPTH) {
       rbRead = ctx->ReadBuffer->Attachment[BUFFER_DEPTH].Renderbuffer;
       driver_fp = get_drawpix_z_stencil_program(st, GL_TRUE, GL_FALSE);

@@ -84,6 +84,7 @@ blorp_blit_get_frag_coords(nir_builder *b,
       coord = nir_isub(b, coord, nir_load_var(b, v->v_dst_offset));
 
    if (key->persample_msaa_dispatch) {
+      b->shader->info.fs.uses_sample_shading = true;
       return nir_vec3(b, nir_channel(b, coord, 0), nir_channel(b, coord, 1),
                       nir_load_sample_id(b));
    } else {
@@ -216,8 +217,7 @@ blorp_nir_txf_ms(nir_builder *b, struct brw_blorp_blit_vars *v,
                  nir_ssa_def *pos, nir_ssa_def *mcs, nir_alu_type dst_type)
 {
    nir_tex_instr *tex =
-      blorp_create_nir_tex_instr(b, v, nir_texop_txf_ms, pos,
-                                 mcs != NULL ? 3 : 2, dst_type);
+      blorp_create_nir_tex_instr(b, v, nir_texop_txf_ms, pos, 3, dst_type);
 
    tex->sampler_dim = GLSL_SAMPLER_DIM_MS;
 
@@ -229,10 +229,11 @@ blorp_nir_txf_ms(nir_builder *b, struct brw_blorp_blit_vars *v,
       tex->src[1].src = nir_src_for_ssa(nir_channel(b, pos, 2));
    }
 
-   if (mcs) {
-      tex->src[2].src_type = nir_tex_src_ms_mcs_intel;
-      tex->src[2].src = nir_src_for_ssa(mcs);
-   }
+   if (!mcs)
+      mcs = nir_imm_zero(b, 4, 32);
+
+   tex->src[2].src_type = nir_tex_src_ms_mcs_intel;
+   tex->src[2].src = nir_src_for_ssa(mcs);
 
    nir_builder_instr_insert(b, &tex->instr);
 
@@ -940,7 +941,7 @@ bit_cast_color(struct nir_builder *b, nir_ssa_def *color,
       /* Restrict to only the channels we actually have */
       const unsigned src_channels =
          isl_format_get_num_channels(key->src_format);
-      color = nir_channels(b, color, (1 << src_channels) - 1);
+      color = nir_trim_vector(b, color, src_channels);
 
       color = nir_format_bitcast_uvec_unmasked(b, color, src_bpc, dst_bpc);
    }
@@ -1394,7 +1395,7 @@ brw_blorp_build_nir_shader(struct blorp_context *blorp,
                             nir_imm_float(&b, 0.5f));
          color = blorp_nir_tex(&b, &v, key, src_pos);
       } else {
-         /* Gfx7+ hardware doesn't automaticaly blend. */
+         /* Gfx7+ hardware doesn't automatically blend. */
          color = blorp_nir_combine_samples(&b, &v, src_pos, key->src_samples,
                                            key->tex_aux_usage,
                                            key->texture_data_type,
@@ -1526,9 +1527,6 @@ brw_blorp_get_blit_kernel_fs(struct blorp_batch *batch,
 
    struct brw_wm_prog_key wm_key;
    brw_blorp_init_wm_prog_key(&wm_key);
-   wm_key.base.tex.compressed_multisample_layout_mask =
-      isl_aux_usage_has_mcs(key->tex_aux_usage);
-   wm_key.base.tex.msaa_16 = key->tex_samples == 16;
    wm_key.multisample_fbo = key->rt_samples > 1;
 
    program = blorp_compile_fs(blorp, mem_ctx, nir, &wm_key, false,
@@ -1568,9 +1566,6 @@ brw_blorp_get_blit_kernel_cs(struct blorp_batch *batch,
 
    struct brw_cs_prog_key cs_key;
    brw_blorp_init_cs_prog_key(&cs_key);
-   cs_key.base.tex.compressed_multisample_layout_mask =
-      prog_key->tex_aux_usage == ISL_AUX_USAGE_MCS;
-   cs_key.base.tex.msaa_16 = prog_key->tex_samples == 16;
    assert(prog_key->rt_samples == 1);
 
    program = blorp_compile_cs(blorp, mem_ctx, nir, &cs_key, &prog_data);
@@ -2455,9 +2450,9 @@ blorp_blit_supports_compute(struct blorp_context *blorp,
    }
 }
 
-static bool
-blitter_supports_aux(const struct intel_device_info *devinfo,
-                     enum isl_aux_usage aux_usage)
+bool
+blorp_blitter_supports_aux(const struct intel_device_info *devinfo,
+                           enum isl_aux_usage aux_usage)
 {
    switch (aux_usage) {
    case ISL_AUX_USAGE_NONE:
@@ -2485,10 +2480,10 @@ blorp_copy_supports_blitter(struct blorp_context *blorp,
    if (dst_surf->samples > 1 || src_surf->samples > 1)
       return false;
 
-   if (!blitter_supports_aux(devinfo, dst_aux_usage))
+   if (!blorp_blitter_supports_aux(devinfo, dst_aux_usage))
       return false;
 
-   if (!blitter_supports_aux(devinfo, src_aux_usage))
+   if (!blorp_blitter_supports_aux(devinfo, src_aux_usage))
       return false;
 
    const struct isl_format_layout *fmtl =
@@ -2527,7 +2522,7 @@ blorp_blit(struct blorp_batch *batch,
 {
    struct blorp_params params;
    blorp_params_init(&params);
-   params.snapshot_type = INTEL_SNAPSHOT_BLIT;
+   params.op = BLORP_OP_BLIT;
    const bool compute = batch->flags & BLORP_BATCH_USE_COMPUTE;
    if (compute) {
       assert(blorp_blit_supports_compute(batch->blorp,
@@ -2729,6 +2724,9 @@ get_ccs_compatible_copy_format(const struct isl_format_layout *fmtl)
    case ISL_FORMAT_R32_SNORM:
       return ISL_FORMAT_R32_UINT;
 
+   case ISL_FORMAT_R11G11B10_FLOAT:
+      return ISL_FORMAT_R32_UINT;
+
    case ISL_FORMAT_B10G10R10A2_UNORM:
    case ISL_FORMAT_B10G10R10A2_UNORM_SRGB:
    case ISL_FORMAT_R10G10B10A2_UNORM:
@@ -2868,7 +2866,7 @@ blorp_copy(struct blorp_batch *batch,
       return;
 
    blorp_params_init(&params);
-   params.snapshot_type = INTEL_SNAPSHOT_COPY;
+   params.op = BLORP_OP_COPY;
 
    const bool compute = batch->flags & BLORP_BATCH_USE_COMPUTE;
    if (compute) {

@@ -73,17 +73,26 @@
 #define TILE_BOTTOM_LEFT  2
 #define TILE_BOTTOM_RIGHT 3
 
+static_assert(alignof(union tgsi_exec_channel) == 16, "");
+static_assert(alignof(struct tgsi_exec_vector) == 16, "");
+static_assert(alignof(struct tgsi_exec_machine) == 16, "");
+
 union tgsi_double_channel {
+   alignas(16)
    double d[TGSI_QUAD_SIZE];
    unsigned u[TGSI_QUAD_SIZE][2];
    uint64_t u64[TGSI_QUAD_SIZE];
    int64_t i64[TGSI_QUAD_SIZE];
-} ALIGN16;
+};
 
-struct ALIGN16 tgsi_double_vector {
+struct tgsi_double_vector {
+   alignas(16)
    union tgsi_double_channel xy;
    union tgsi_double_channel zw;
 };
+
+static_assert(alignof(union tgsi_double_channel) == 16, "");
+static_assert(alignof(struct tgsi_double_vector) == 16, "");
 
 static void
 micro_abs(union tgsi_exec_channel *dst,
@@ -1288,18 +1297,10 @@ micro_div(
    const union tgsi_exec_channel *src0,
    const union tgsi_exec_channel *src1 )
 {
-   if (src1->f[0] != 0) {
-      dst->f[0] = src0->f[0] / src1->f[0];
-   }
-   if (src1->f[1] != 0) {
-      dst->f[1] = src0->f[1] / src1->f[1];
-   }
-   if (src1->f[2] != 0) {
-      dst->f[2] = src0->f[2] / src1->f[2];
-   }
-   if (src1->f[3] != 0) {
-      dst->f[3] = src0->f[3] / src1->f[3];
-   }
+   dst->f[0] = src0->f[0] / src1->f[0];
+   dst->f[1] = src0->f[1] / src1->f[1];
+   dst->f[2] = src0->f[2] / src1->f[2];
+   dst->f[3] = src0->f[3] / src1->f[3];
 }
 
 static void
@@ -1884,7 +1885,7 @@ emit_primitive(struct tgsi_exec_machine *mach,
    prim_count = &mach->OutputPrimCount[stream_id];
    if (mach->ExecMask) {
       ++(*prim_count);
-      debug_assert((*prim_count * mach->NumOutputs) < TGSI_MAX_TOTAL_VERTICES);
+      assert((*prim_count * mach->NumOutputs) < TGSI_MAX_TOTAL_VERTICES);
       mach->Primitives[stream_id][*prim_count] = 0;
    }
 }

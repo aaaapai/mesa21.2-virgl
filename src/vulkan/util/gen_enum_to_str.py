@@ -209,6 +209,12 @@ H_DEFINE_TEMPLATE = Template(textwrap.dedent(u"""\
       % endif
     % endfor
 
+    static inline VkFormatFeatureFlags
+    vk_format_features2_to_features(VkFormatFeatureFlags2 features2)
+    {
+       return features2 & VK_ALL_FORMAT_FEATURE_FLAG_BITS;
+    }
+
     #ifdef __cplusplus
     } /* extern "C" */
     #endif
@@ -250,7 +256,7 @@ def compute_max_enum_name(s):
     max_enum_name = CamelCase_to_SHOUT_CASE(s)
     last_prefix = max_enum_name.rsplit('_', 1)[-1]
     # Those special prefixes need to be always at the end
-    if last_prefix in ['AMD', 'EXT', 'INTEL', 'KHR', 'NV'] :
+    if last_prefix in ['AMD', 'EXT', 'INTEL', 'KHR', 'NV', 'LUNARG'] :
         max_enum_name = "_".join(max_enum_name.split('_')[:-1])
         max_enum_name = max_enum_name + "_MAX_ENUM_" + last_prefix
     else:

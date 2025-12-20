@@ -25,6 +25,7 @@
 #define GLSL_LINKER_UTIL_H
 
 #include "util/bitset.h"
+#include "util/glheader.h"
 #include "compiler/glsl/list.h"
 
 struct gl_constants;
@@ -70,6 +71,10 @@ linker_error(struct gl_shader_program *prog, const char *fmt, ...);
 
 void
 linker_warning(struct gl_shader_program *prog, const char *fmt, ...);
+
+long
+link_util_parse_program_resource_name(const GLchar *name, const size_t len,
+                                      const GLchar **out_base_name_end);
 
 bool
 link_util_should_add_buffer_variable(struct gl_shader_program *prog,

@@ -30,6 +30,8 @@
 
 #include <stdio.h>
 
+#include "util/detect_os.h"
+
 #ifdef HAVE_LIBUNWIND
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
@@ -43,7 +45,7 @@
  */
 
 
-#ifdef	__cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -51,7 +53,7 @@ extern "C" {
 /**
  * Represent a frame from a stack backtrace.
  *
-#if defined(PIPE_OS_WINDOWS) && !defined(HAVE_LIBUNWIND)
+#if DETECT_OS_WINDOWS && !defined(HAVE_LIBUNWIND)
  * XXX: Do not change this. (passed to Windows' CaptureStackBackTrace())
 #endif
  *
@@ -85,7 +87,7 @@ debug_backtrace_print(FILE *f,
                       const struct debug_stack_frame *backtrace,
                       unsigned nr_frames);
 
-#ifdef	__cplusplus
+#ifdef __cplusplus
 }
 #endif
 

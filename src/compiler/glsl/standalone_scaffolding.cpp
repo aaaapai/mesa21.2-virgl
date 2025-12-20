@@ -73,11 +73,9 @@ _mesa_problem(struct gl_context *ctx, const char *fmt, ...)
 }
 
 void
-_mesa_reference_shader_program_data(struct gl_context *ctx,
-                                    struct gl_shader_program_data **ptr,
+_mesa_reference_shader_program_data(struct gl_shader_program_data **ptr,
                                     struct gl_shader_program_data *data)
 {
-   (void) ctx;
    *ptr = data;
 }
 
@@ -218,6 +216,7 @@ void initialize_context_to_defaults(struct gl_context *ctx, gl_api api)
 
    ctx->Extensions.OES_EGL_image_external = true;
    ctx->Extensions.OES_standard_derivatives = true;
+   ctx->Extensions.OES_texture_3D = true;
 
    ctx->Extensions.EXT_gpu_shader4 = true;
    ctx->Extensions.EXT_shader_integer_mix = true;
@@ -265,7 +264,6 @@ void initialize_context_to_defaults(struct gl_context *ctx, gl_api api)
    /* Set up default shader compiler options. */
    struct gl_shader_compiler_options options;
    memset(&options, 0, sizeof(options));
-   options.MaxUnrollIterations = 32;
    options.MaxIfDepth = UINT_MAX;
 
    for (int sh = 0; sh < MESA_SHADER_STAGES; ++sh)

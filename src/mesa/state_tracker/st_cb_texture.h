@@ -30,7 +30,7 @@
 #define ST_CB_TEXTURE_H
 
 
-#include "main/glheader.h"
+#include "util/glheader.h"
 
 struct dd_function_table;
 struct gl_context;
@@ -43,7 +43,7 @@ struct gl_pixelstore_attrib;
 struct gl_memory_object;
 struct gl_sampler_object;
 
-extern enum pipe_texture_target
+enum pipe_texture_target
 gl_target_to_pipe(GLenum target);
 
 unsigned

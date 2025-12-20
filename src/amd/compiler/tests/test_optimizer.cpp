@@ -28,7 +28,7 @@ using namespace aco;
 BEGIN_TEST(optimize.neg)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, v1: %b, s1: %c, s1: %d = p_startpgm
-      if (!setup_cs("v1 v1 s1 s1", (chip_class)i))
+      if (!setup_cs("v1 v1 s1 s1", (amd_gfx_level)i))
          continue;
 
       //! v1: %res0 = v_mul_f32 %a, -%b
@@ -272,7 +272,7 @@ Temp create_subbrev_co(Operand op0, Operand op1, Operand op2)
 BEGIN_TEST(optimize.cndmask)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, s1: %b, s2: %c = p_startpgm
-      if (!setup_cs("v1 s1 s2", (chip_class)i))
+      if (!setup_cs("v1 s1 s2", (amd_gfx_level)i))
          continue;
 
       Temp subbrev;
@@ -316,7 +316,7 @@ END_TEST
 BEGIN_TEST(optimize.add_lshl)
    for (unsigned i = GFX8; i <= GFX10; i++) {
       //>> s1: %a, v1: %b = p_startpgm
-      if (!setup_cs("s1 v1", (chip_class)i))
+      if (!setup_cs("s1 v1", (amd_gfx_level)i))
          continue;
 
       Temp shift;
@@ -398,7 +398,7 @@ END_TEST
 BEGIN_TEST(optimize.bcnt)
    for (unsigned i = GFX8; i <= GFX10; i++) {
       //>> v1: %a, s1: %b = p_startpgm
-      if (!setup_cs("v1 s1", (chip_class)i))
+      if (!setup_cs("v1 s1", (amd_gfx_level)i))
          continue;
 
       Temp bcnt;
@@ -530,21 +530,22 @@ BEGIN_TEST(optimize.clamp)
                            bld.vop2(cfg.max, bld.def(v1), inputs[2], inputs[0])));
 
       /* correct NaN behaviour with precise */
+      if (cfg.min == aco_opcode::v_min_f16 || cfg.min == aco_opcode::v_min_f32) {
+         //~f(16|32)! v1: %res7 = @med3 @ub, @lb, %a
+         //~f(16|32)! p_unit_test 7, %res7
+         Builder::Result max = bld.vop2(cfg.max, bld.def(v1), cfg.lb, inputs[0]);
+         max.def(0).setPrecise(true);
+         Builder::Result min = bld.vop2(cfg.min, bld.def(v1), cfg.ub, max);
+         max.def(0).setPrecise(true);
+         writeout(7, min);
 
-      //! v1: %res7 = @med3 @ub, @lb, %a
-      //! p_unit_test 7, %res7
-      Builder::Result max = bld.vop2(cfg.max, bld.def(v1), cfg.lb, inputs[0]);
-      max.def(0).setPrecise(true);
-      Builder::Result min = bld.vop2(cfg.min, bld.def(v1), cfg.ub, max);
-      max.def(0).setPrecise(true);
-      writeout(7, min);
-
-      //! v1: (precise)%res8_tmp = @min @ub, %a
-      //! v1: %res8 = @max @lb, %res8_tmp
-      //! p_unit_test 8, %res8
-      min = bld.vop2(cfg.min, bld.def(v1), cfg.ub, inputs[0]);
-      min.def(0).setPrecise(true);
-      writeout(8, bld.vop2(cfg.max, bld.def(v1), cfg.lb, min));
+         //~f(16|32)! v1: (precise)%res8_tmp = @min @ub, %a
+         //~f(16|32)! v1: %res8 = @max @lb, %res8_tmp
+         //~f(16|32)! p_unit_test 8, %res8
+         min = bld.vop2(cfg.min, bld.def(v1), cfg.ub, inputs[0]);
+         min.def(0).setPrecise(true);
+         writeout(8, bld.vop2(cfg.max, bld.def(v1), cfg.lb, min));
+      }
 
       finish_opt_test();
    }
@@ -697,7 +698,7 @@ BEGIN_TEST(optimize.add3)
    //! v1: %res1 = v_add_u32 %a, %tmp1
    //! p_unit_test 1, %res1
    tmp = bld.vop2_e64(aco_opcode::v_add_u32, bld.def(v1), inputs[1], inputs[2]);
-   tmp.instr->vop3().clamp = true;
+   tmp->vop3().clamp = true;
    writeout(1, bld.vop2(aco_opcode::v_add_u32, bld.def(v1), inputs[0], tmp));
 
    //! v1: %tmp2 = v_add_u32 %b, %c
@@ -705,30 +706,71 @@ BEGIN_TEST(optimize.add3)
    //! p_unit_test 2, %res2
    tmp = bld.vop2(aco_opcode::v_add_u32, bld.def(v1), inputs[1], inputs[2]);
    tmp = bld.vop2_e64(aco_opcode::v_add_u32, bld.def(v1), inputs[0], tmp);
-   tmp.instr->vop3().clamp = true;
+   tmp->vop3().clamp = true;
    writeout(2, tmp);
 
    finish_opt_test();
 END_TEST
 
 BEGIN_TEST(optimize.minmax)
-   for (unsigned i = GFX9; i <= GFX10; i++) {
-      //>> v1: %a = p_startpgm
-      if (!setup_cs("v1", (chip_class)i))
+   for (unsigned i = GFX10_3; i <= GFX11; i++) {
+      //>> v1: %a, v1: %b, v1: %c = p_startpgm
+      if (!setup_cs("v1 v1 v1", (amd_gfx_level)i))
          continue;
 
-      //! v1: %res0 = v_max3_f32 0, -0, %a
-      //! p_unit_test 0, %res0
-      Temp xor0 = fneg(inputs[0]);
-      Temp min = bld.vop2(aco_opcode::v_min_f32, bld.def(v1), Operand::zero(), xor0);
-      Temp xor1 = fneg(min);
-      writeout(0, bld.vop2(aco_opcode::v_max_f32, bld.def(v1), Operand::zero(), xor1));
+      Temp a = inputs[0];
+      Temp b = inputs[1];
+      Temp c = inputs[2];
 
-      //! v1: %res1 = v_max3_f32 0, -0, -%a
+      //! v1: %res0 = v_min3_f32 %a, %b, %c
+      //! p_unit_test 0, %res0
+      writeout(0, fmin(c, fmin(a, b)));
+
+      //! v1: %res1 = v_max3_f32 %a, %b, %c
       //! p_unit_test 1, %res1
-      min = bld.vop2(aco_opcode::v_min_f32, bld.def(v1), Operand::zero(), Operand(inputs[0]));
-      xor1 = fneg(min);
-      writeout(1, bld.vop2(aco_opcode::v_max_f32, bld.def(v1), Operand::zero(), xor1));
+      writeout(1, fmax(c, fmax(a, b)));
+
+      //! v1: %res2 = v_min3_f32 -%a, -%b, %c
+      //! p_unit_test 2, %res2
+      writeout(2, fmin(c, fneg(fmax(a, b))));
+
+      //! v1: %res3 = v_max3_f32 -%a, -%b, %c
+      //! p_unit_test 3, %res3
+      writeout(3, fmax(c, fneg(fmin(a, b))));
+
+      //! v1: %res4 = v_max3_f32 -%a, %b, %c
+      //! p_unit_test 4, %res4
+      writeout(4, fmax(c, fneg(fmin(a, fneg(b)))));
+
+      //~gfx10_3! v1: %res5_tmp = v_max_f32 %a, %b
+      //~gfx10_3! v1: %res5 = v_min_f32 %c, %res5_tmp
+      //~gfx11! v1: %res5 = v_maxmin_f32 %a, %b, %c
+      //! p_unit_test 5, %res5
+      writeout(5, fmin(c, fmax(a, b)));
+
+      //~gfx10_3! v1: %res6_tmp = v_min_f32 %a, %b
+      //~gfx10_3! v1: %res6 = v_max_f32 %c, %res6_tmp
+      //~gfx11! v1: %res6 = v_minmax_f32 %a, %b, %c
+      //! p_unit_test 6, %res6
+      writeout(6, fmax(c, fmin(a, b)));
+
+      //~gfx10_3! v1: %res7_tmp = v_min_f32 %a, %b
+      //~gfx10_3! v1: %res7 = v_min_f32 %c, -%res7_tmp
+      //~gfx11! v1: %res7 = v_maxmin_f32 -%a, -%b, %c
+      //! p_unit_test 7, %res7
+      writeout(7, fmin(c, fneg(fmin(a, b))));
+
+      //~gfx10_3! v1: %res8_tmp = v_max_f32 %a, %b
+      //~gfx10_3! v1: %res8 = v_max_f32 %c, -%res8_tmp
+      //~gfx11! v1: %res8 = v_minmax_f32 -%a, -%b, %c
+      //! p_unit_test 8, %res8
+      writeout(8, fmax(c, fneg(fmax(a, b))));
+
+      //~gfx10_3! v1: %res9_tmp = v_max_f32 %a, -%b
+      //~gfx10_3! v1: %res9 = v_max_f32 %c, -%res9_tmp
+      //~gfx11! v1: %res9 = v_minmax_f32 -%a, %b, %c
+      //! p_unit_test 9, %res9
+      writeout(9, fmax(c, fneg(fmax(a, fneg(b)))));
 
       finish_opt_test();
    }
@@ -737,7 +779,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_32_24)
    for (unsigned i = GFX8; i <= GFX9; i++) {
       //>> v1: %a, v1: %b, v1: %c = p_startpgm
-      if (!setup_cs("v1 v1 v1", (chip_class)i))
+      if (!setup_cs("v1 v1 v1", (amd_gfx_level)i))
          continue;
 
       //! v1: %res0 = v_mad_u32_u24 %b, %c, %a
@@ -758,7 +800,7 @@ END_TEST
 BEGIN_TEST(optimize.add_lshlrev)
    for (unsigned i = GFX8; i <= GFX10; i++) {
       //>> v1: %a, v1: %b, s1: %c = p_startpgm
-      if (!setup_cs("v1 v1 s1", (chip_class)i))
+      if (!setup_cs("v1 v1 s1", (amd_gfx_level)i))
          continue;
 
       Temp lshl;
@@ -886,7 +928,7 @@ BEGIN_TEST(optimize.denorm_propagation)
          sprintf(subvariant, "_%s_%s_%s_%s",
                  cfg.flush ? "flush" : "keep", srcdest_op_name(cfg.src),
                  denorm_op_names[(int)cfg.op], srcdest_op_name(cfg.dest));
-         if (!setup_cs("v1 s2", (chip_class)i, CHIP_UNKNOWN, subvariant))
+         if (!setup_cs("v1 s2", (amd_gfx_level)i, CHIP_UNKNOWN, subvariant))
             continue;
 
          bool can_propagate = cfg.src == aco_opcode::v_rcp_f32 || (i >= GFX9 && cfg.src == aco_opcode::v_min_f32) ||
@@ -988,7 +1030,7 @@ BEGIN_TEST(optimizer.dpp)
    //! v1: %res3 = v_add_f32 -%a, %b row_mirror bound_ctrl:1
    //! p_unit_test 3, %res3
    auto tmp3 = bld.vop1_dpp(aco_opcode::v_mov_b32, bld.def(v1), a, dpp_row_mirror);
-   tmp3.instr->dpp16().neg[0] = true;
+   tmp3->dpp16().neg[0] = true;
    Temp res3 = bld.vop2(aco_opcode::v_add_f32, bld.def(v1), tmp3, b);
    writeout(3, res3);
 
@@ -996,7 +1038,7 @@ BEGIN_TEST(optimizer.dpp)
    //! p_unit_test 4, %res4
    Temp tmp4 = bld.vop1_dpp(aco_opcode::v_mov_b32, bld.def(v1), a, dpp_row_mirror);
    auto res4 = bld.vop2_e64(aco_opcode::v_add_f32, bld.def(v1), tmp4, b);
-   res4.instr->vop3().neg[0] = true;
+   res4->vop3().neg[0] = true;
    writeout(4, res4);
 
    //! v1: %tmp5 = v_mov_b32 %a row_mirror bound_ctrl:1
@@ -1004,22 +1046,22 @@ BEGIN_TEST(optimizer.dpp)
    //! p_unit_test 5, %res5
    Temp tmp5 = bld.vop1_dpp(aco_opcode::v_mov_b32, bld.def(v1), a, dpp_row_mirror);
    auto res5 = bld.vop2_e64(aco_opcode::v_add_f32, bld.def(v1), tmp5, b);
-   res5.instr->vop3().clamp = true;
+   res5->vop3().clamp = true;
    writeout(5, res5);
 
    //! v1: %res6 = v_add_f32 |%a|, %b row_mirror bound_ctrl:1
    //! p_unit_test 6, %res6
    auto tmp6 = bld.vop1_dpp(aco_opcode::v_mov_b32, bld.def(v1), a, dpp_row_mirror);
-   tmp6.instr->dpp16().neg[0] = true;
+   tmp6->dpp16().neg[0] = true;
    auto res6 = bld.vop2_e64(aco_opcode::v_add_f32, bld.def(v1), tmp6, b);
-   res6.instr->vop3().abs[0] = true;
+   res6->vop3().abs[0] = true;
    writeout(6, res6);
 
    //! v1: %res7 = v_subrev_f32 %a, |%b| row_mirror bound_ctrl:1
    //! p_unit_test 7, %res7
    Temp tmp7 = bld.vop1_dpp(aco_opcode::v_mov_b32, bld.def(v1), a, dpp_row_mirror);
    auto res7 = bld.vop2_e64(aco_opcode::v_sub_f32, bld.def(v1), b, tmp7);
-   res7.instr->vop3().abs[0] = true;
+   res7->vop3().abs[0] = true;
    writeout(7, res7);
 
    /* vcc */
@@ -1161,7 +1203,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_mix.input_conv.basic)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, v2b: %a16 = p_startpgm
-      if (!setup_cs("v1 v2b", (chip_class)i))
+      if (!setup_cs("v1 v2b", (amd_gfx_level)i))
          continue;
 
       program->blocks[0].fp_mode.denorm16_64 = fp_denorm_flush;
@@ -1196,7 +1238,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_mix.input_conv.precision)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, v2b: %a16 = p_startpgm
-      if (!setup_cs("v1 v2b", (chip_class)i))
+      if (!setup_cs("v1 v2b", (amd_gfx_level)i))
          continue;
 
       program->blocks[0].fp_mode.denorm16_64 = fp_denorm_flush;
@@ -1249,7 +1291,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_mix.input_conv.modifiers)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, v2b: %a16 = p_startpgm
-      if (!setup_cs("v1 v2b", (chip_class)i))
+      if (!setup_cs("v1 v2b", (amd_gfx_level)i))
          continue;
 
       program->blocks[0].fp_mode.denorm16_64 = fp_denorm_flush;
@@ -1344,7 +1386,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_mix.output_conv.basic)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, v1: %b, v1: %c, v2b: %a16, v2b: %b16 = p_startpgm
-      if (!setup_cs("v1 v1 v1 v2b v2b", (chip_class)i))
+      if (!setup_cs("v1 v1 v1 v2b v2b", (amd_gfx_level)i))
          continue;
 
       program->blocks[0].fp_mode.denorm16_64 = fp_denorm_flush;
@@ -1386,7 +1428,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_mix.output_conv.precision)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v2b: %a16 = p_startpgm
-      if (!setup_cs("v2b", (chip_class)i))
+      if (!setup_cs("v2b", (amd_gfx_level)i))
          continue;
 
       program->blocks[0].fp_mode.denorm16_64 = fp_denorm_flush;
@@ -1410,7 +1452,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_mix.output_conv.modifiers)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, v1: %b, v2b: %a16, v2b: %b16 = p_startpgm
-      if (!setup_cs("v1 v1 v2b v2b", (chip_class)i))
+      if (!setup_cs("v1 v1 v2b v2b", (amd_gfx_level)i))
          continue;
 
       program->blocks[0].fp_mode.denorm16_64 = fp_denorm_flush;
@@ -1459,7 +1501,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_mix.fma.basic)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, v1: %b, v1: %c, v2b: %a16, v2b: %c16 = p_startpgm
-      if (!setup_cs("v1 v1 v1 v2b v2b", (chip_class)i))
+      if (!setup_cs("v1 v1 v1 v2b v2b", (amd_gfx_level)i))
          continue;
 
       program->blocks[0].fp_mode.denorm16_64 = fp_denorm_flush;
@@ -1513,7 +1555,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_mix.fma.precision)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, v1: %b, v1: %c, v2b: %a16, v2b: %b16 = p_startpgm
-      if (!setup_cs("v1 v1 v1 v2b v2b", (chip_class)i))
+      if (!setup_cs("v1 v1 v1 v2b v2b", (amd_gfx_level)i))
          continue;
 
       program->blocks[0].fp_mode.denorm16_64 = fp_denorm_flush;
@@ -1575,7 +1617,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_mix.clamp)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, v2b: %a16 = p_startpgm
-      if (!setup_cs("v1 v2b", (chip_class)i))
+      if (!setup_cs("v1 v2b", (amd_gfx_level)i))
          continue;
 
       program->blocks[0].fp_mode.denorm16_64 = fp_denorm_flush;
@@ -1602,7 +1644,7 @@ END_TEST
 BEGIN_TEST(optimize.mad_mix.cast)
    for (unsigned i = GFX9; i <= GFX10; i++) {
       //>> v1: %a, v2b: %a16 = p_startpgm
-      if (!setup_cs("v1 v2b", (chip_class)i))
+      if (!setup_cs("v1 v2b", (amd_gfx_level)i))
          continue;
 
       program->blocks[0].fp_mode.denorm16_64 = fp_denorm_flush;
@@ -1663,3 +1705,118 @@ BEGIN_TEST(optimize.mad_mix.cast)
    }
 END_TEST
 
+static void vop3p_constant(unsigned *idx, aco_opcode op, const char *swizzle, uint32_t val)
+{
+   uint32_t halves[2] = {val & 0xffff, val >> 16};
+   uint32_t expected = halves[swizzle[0] - 'x'] | (halves[swizzle[1] - 'x'] << 16);
+   fprintf(output, "Expected for %u: 0x%.8x / %u\n", *idx, expected, expected);
+
+   unsigned opsel_lo = swizzle[0] == 'x' ? 0x0 : 0x1;
+   unsigned opsel_hi = swizzle[1] == 'x' ? 0x2 : 0x3;
+   writeout((*idx)++, bld.vop3p(op, bld.def(v1), bld.copy(bld.def(v1), Operand::c32(val)),
+                                inputs[0], opsel_lo, opsel_hi));
+}
+
+BEGIN_TEST(optimize.vop3p_constants)
+   for (aco_opcode op : {aco_opcode::v_pk_add_f16, aco_opcode::v_pk_add_u16}) {
+      for (const char *swizzle : {"xx", "yy", "xy", "yx"}) {
+         char variant[16];
+         strcpy(variant, op == aco_opcode::v_pk_add_f16 ? "_f16" : "_u16");
+         strcat(variant, "_");
+         strcat(variant, swizzle);
+
+         //; for i in range(36):
+         //;    insert_pattern('Expected for %u: $_ / #expected%u' % (i, i))
+
+         //>> v1: %a = p_startpgm
+         if (!setup_cs("v1", GFX10_3, CHIP_UNKNOWN, variant))
+            continue;
+
+         //; opcode = 'v_pk_add_u16' if 'u16' in variant else 'v_pk_add_f16'
+         //; for i in range(36):
+         //;    insert_pattern('v1: %%res%u = %s $got%u %%a' % (i, opcode, i))
+         //;    insert_pattern('p_unit_test %u, %%res%u' % (i, i))
+         //! s_endpgm
+
+         //; def parse_op(op):
+         //;    is_int = opcode == 'v_pk_add_u16'
+         //;    op = op.rstrip(',')
+         //;
+         //;    mods = lambda v: v
+         //;    if op.endswith('*[1,-1]'):
+         //;       mods = lambda v: v ^ 0x80000000
+         //;       assert(not is_int)
+         //;    elif op.endswith('*[-1,1]'):
+         //;       mods = lambda v: v ^ 0x00008000
+         //;       assert(not is_int)
+         //;    op = op.split('*')[0]
+         //;
+         //;    swizzle = lambda v: v
+         //;    if op.endswith('.xx'):
+         //;       swizzle = lambda v: ((v & 0xffff) | (v << 16)) & 0xffffffff;
+         //;    elif op.endswith('.yy'):
+         //;       swizzle = lambda v: (v >> 16) | (v & 0xffff0000);
+         //;    elif op.endswith('.yx'):
+         //;       swizzle = lambda v: ((v >> 16) | (v << 16)) & 0xffffffff;
+         //;    op = op.rstrip('xy.')
+         //;
+         //;    val = None
+         //;    if op.startswith('0x'):
+         //;       val = int(op[2:], 16)
+         //;    elif op == '-1.0':
+         //;       val = 0xbf800000 if is_int else 0xbC00
+         //;    elif op == '1.0':
+         //;       val = 0x3f800000 if is_int else 0x3c00
+         //;    else:
+         //;       val = int(op) & 0xffffffff
+         //;
+         //;    return mods(swizzle(val))
+
+         //; # Check correctness
+         //; for i in range(36):
+         //;    expected = globals()['expected%u' % i]
+         //;    got = globals()['got%u' % i]
+         //;    got_parsed = parse_op(got)
+         //;    if got_parsed != expected:
+         //;       raise Exception('Check %u failed: expected 0x%.8x, got 0x%.8x ("%s")' % (i, expected, got_parsed, got))
+
+         //; # Check that all literals are ones that cannot be encoded as inline constants
+         //; allowed_literals = [0x00004242, 0x0000fffe, 0x00308030, 0x0030ffff, 0x3c00ffff,
+         //;                     0x42420000, 0x42424242, 0x4242c242, 0x4242ffff, 0x7ffefffe,
+         //;                     0x80300030, 0xbeefdead, 0xc2424242, 0xdeadbeef, 0xfffe0000,
+         //;                     0xfffe7ffe, 0xffff0030, 0xffff3c00, 0xffff4242]
+         //; if opcode == 'v_pk_add_u16':
+         //;    allowed_literals.extend([0x00003c00, 0x3c000000, 0x3c003c00, 0x3c00bc00, 0xbc003c00])
+         //; else:
+         //;    allowed_literals.extend([0x00003f80, 0x3f800000])
+         //;
+         //; for i in range(36):
+         //;    got = globals()['got%u' % i]
+         //;    if not got.startswith('0x'):
+         //;       continue;
+         //;    got = int(got[2:].rstrip(',').split('*')[0].split('.')[0], 16)
+         //;    if got not in allowed_literals:
+         //;       raise Exception('Literal check %u failed: 0x%.8x not in allowed literals' % (i, got))
+
+         unsigned idx = 0;
+         for (uint32_t constant : {0x3C00, 0x0030, 0xfffe, 0x4242}) {
+            vop3p_constant(&idx, op, swizzle, constant);
+            vop3p_constant(&idx, op, swizzle, constant | 0xffff0000);
+            vop3p_constant(&idx, op, swizzle, constant | (constant << 16));
+            vop3p_constant(&idx, op, swizzle, constant << 16);
+            vop3p_constant(&idx, op, swizzle, (constant << 16) | 0x0000ffff);
+            vop3p_constant(&idx, op, swizzle, constant | ((constant ^ 0x8000) << 16));
+            vop3p_constant(&idx, op, swizzle, (constant ^ 0x8000) | (constant << 16));
+         }
+
+         for (uint32_t constant : {0x3f800000u, 0xfffffffeu, 0x00000030u, 0xdeadbeefu}) {
+            uint32_t lo = constant & 0xffff;
+            uint32_t hi = constant >> 16;
+            vop3p_constant(&idx, op, swizzle, constant);
+            vop3p_constant(&idx, op, swizzle, hi | (lo << 16));
+         }
+
+         finish_opt_test();
+      }
+   }
+END_TEST

@@ -128,7 +128,7 @@ files_libnir = files(
   'nir_loop_analyze.c',
   'nir_loop_analyze.h',
   'nir_lower_alu.c',
-  'nir_lower_alu_to_scalar.c',
+  'nir_lower_alu_width.c',
   'nir_lower_alpha_test.c',
   'nir_lower_amul.c',
   'nir_lower_array_deref_of_vec.c',
@@ -138,11 +138,13 @@ files_libnir = files(
   'nir_lower_bool_to_bitsize.c',
   'nir_lower_bool_to_float.c',
   'nir_lower_bool_to_int32.c',
+  'nir_lower_cl_images.c',
   'nir_lower_clamp_color_outputs.c',
   'nir_lower_clip.c',
   'nir_lower_clip_cull_distance_arrays.c',
   'nir_lower_clip_disable.c',
   'nir_lower_clip_halfz.c',
+  'nir_lower_const_arrays_to_uniforms.c',
   'nir_lower_convert_alu_types.c',
   'nir_lower_variable_initializers.c',
   'nir_lower_discard_if.c',
@@ -186,6 +188,8 @@ files_libnir = files(
   'nir_lower_pntc_ytransform.c',
   'nir_lower_point_size.c',
   'nir_lower_point_size_mov.c',
+  'nir_lower_point_smooth.c',
+  'nir_lower_poly_line_smooth.c',
   'nir_lower_printf.c',
   'nir_lower_regs_to_ssa.c',
   'nir_lower_readonly_images_to_tex.c',
@@ -193,9 +197,11 @@ files_libnir = files(
   'nir_lower_samplers.c',
   'nir_lower_scratch.c',
   'nir_lower_shader_calls.c',
+  'nir_lower_single_sampled.c',
   'nir_lower_ssbo.c',
   'nir_lower_subgroups.c',
   'nir_lower_system_values.c',
+  'nir_lower_task_shader.c',
   'nir_lower_tex_shadow.c',
   'nir_lower_tex.c',
   'nir_lower_texcoord_replace.c',
@@ -241,6 +247,7 @@ files_libnir = files(
   'nir_opt_memcpy.c',
   'nir_opt_move.c',
   'nir_opt_move_discards_to_top.c',
+  'nir_opt_non_uniform_access.c',
   'nir_opt_offsets.c',
   'nir_opt_peephole_select.c',
   'nir_opt_phi_precision.c',
@@ -255,6 +262,8 @@ files_libnir = files(
   'nir_opt_undef.c',
   'nir_opt_uniform_atomics.c',
   'nir_opt_vectorize.c',
+  'nir_passthrough_gs.c',
+  'nir_passthrough_tcs.c',
   'nir_phi_builder.c',
   'nir_phi_builder.h',
   'nir_print.c',
@@ -271,6 +280,7 @@ files_libnir = files(
   'nir_search_helpers.h',
   'nir_serialize.c',
   'nir_serialize.h',
+  'nir_split_64bit_vec3_and_vec4.c',
   'nir_split_per_member_structs.c',
   'nir_split_var_copies.c',
   'nir_split_vars.c',
@@ -364,10 +374,12 @@ _libnir = static_library(
   build_by_default : false,
 )
 
+inc_nir = include_directories('.')
+
 # Headers-only dependency
 idep_nir_headers = declare_dependency(
   sources : [nir_opcodes_h, nir_builder_opcodes_h, nir_intrinsics_h, nir_intrinsics_indices_h],
-  include_directories : include_directories('.'),
+  include_directories : inc_nir,
 )
 
 # Also link with nir
@@ -387,9 +399,11 @@ if with_tests
         'tests/comparison_pre_tests.cpp',
         'tests/control_flow_tests.cpp',
         'tests/core_tests.cpp',
+        'tests/loop_analyze_tests.cpp',
         'tests/lower_returns_tests.cpp',
         'tests/negative_equal_tests.cpp',
         'tests/opt_if_tests.cpp',
+        'tests/opt_shrink_vectors_tests.cpp',
         'tests/serialize_tests.cpp',
         'tests/ssa_def_bits_used_tests.cpp',
         'tests/vars_tests.cpp',
@@ -424,7 +438,7 @@ if with_tests
     ),
     suite : ['compiler', 'nir'],
     # TODO: Use a negative filter for gtest instead of the expect failure here.
-    should_fail : meson.get_cross_property('xfail', '').contains('load_store_vectorizer'),
+    should_fail : meson.get_external_property('xfail', '').contains('load_store_vectorizer'),
     protocol : gtest_test_protocol,
   )
 

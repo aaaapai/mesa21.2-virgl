@@ -72,13 +72,6 @@ get_texture_index(struct gl_context *ctx, const unsigned unit)
    return index;
 }
 
-
-static inline GLboolean
-is_wrap_gl_clamp(GLint param)
-{
-   return param == GL_CLAMP || param == GL_MIRROR_CLAMP_EXT;
-}
-
 static void
 update_gl_clamp(struct st_context *st, struct gl_program *prog, uint32_t *gl_clamp)
 {
@@ -94,7 +87,7 @@ update_gl_clamp(struct st_context *st, struct gl_program *prog, uint32_t *gl_cla
       if (samplers_used & 1 &&
           (st->ctx->Texture.Unit[tex_unit]._Current->Target != GL_TEXTURE_BUFFER ||
            st->texture_buffer_sampler)) {
-         const struct gl_texture_object *texobj;
+         ASSERTED const struct gl_texture_object *texobj;
          struct gl_context *ctx = st->ctx;
          const struct gl_sampler_object *msamp;
 
@@ -151,11 +144,6 @@ st_update_fp( struct st_context *st )
       key.lower_two_sided_color = st->lower_two_sided_color &&
          _mesa_vertex_program_two_side_enabled(st->ctx);
 
-      /* _NEW_POINT | _NEW_PROGRAM */
-      if (st->lower_texcoord_replace && st->ctx->Point.PointSprite &&
-          st->ctx->Point.CoordReplace)
-         key.lower_texcoord_replace = st->ctx->Point.CoordReplace;
-
       /* gl_driver_flags::NewFragClamp */
       key.clamp_color = st->clamp_frag_color_in_shader &&
                         st->ctx->Color._ClampFragmentColor;
@@ -207,7 +195,7 @@ st_update_vp( struct st_context *st )
    assert(vp->Target == GL_VERTEX_PROGRAM_ARB);
 
    if (st->shader_has_one_variant[MESA_SHADER_VERTEX] &&
-       !st->vertdata_edgeflags) {
+       !st->ctx->Array._PerVertexEdgeFlagsEnabled) {
       st->vp_variant = st_common_variant(vp->variants);
    } else {
       struct st_common_variant_key key;
@@ -222,7 +210,7 @@ st_update_vp( struct st_context *st )
        * the input to the output.  We'll need to use similar logic to set
        * up the extra vertex_element input for edgeflags.
        */
-      key.passthrough_edgeflags = st->vertdata_edgeflags;
+      key.passthrough_edgeflags = st->ctx->Array._PerVertexEdgeFlagsEnabled;
 
       key.clamp_color = st->clamp_vert_color_in_shader &&
                         st->ctx->Light._ClampVertexColor &&
@@ -236,7 +224,7 @@ st_update_vp( struct st_context *st )
           !st->ctx->TessEvalProgram._Current) {
          /* _NEW_POINT */
          if (st->lower_point_size)
-            key.export_point_size = !st->ctx->VertexProgram.PointSizeEnabled && !st->ctx->PointSizeIsOne;
+            key.export_point_size = !st->ctx->VertexProgram.PointSizeEnabled && !st->ctx->PointSizeIsSet;
          /* _NEW_TRANSFORM */
          if (st->lower_ucp && st_user_clip_planes_enabled(st->ctx))
             key.lower_ucp = st->ctx->Transform.ClipPlanesEnabled;
@@ -293,7 +281,7 @@ st_update_common_program(struct st_context *st, struct gl_program *prog,
          key.lower_ucp = st->ctx->Transform.ClipPlanesEnabled;
 
       if (st->lower_point_size)
-         key.export_point_size = !st->ctx->VertexProgram.PointSizeEnabled && !st->ctx->PointSizeIsOne;
+         key.export_point_size = !st->ctx->VertexProgram.PointSizeEnabled && !st->ctx->PointSizeIsSet;
    }
 
    update_gl_clamp(st, prog, key.gl_clamp);

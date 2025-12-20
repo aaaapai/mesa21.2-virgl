@@ -288,7 +288,7 @@ tex_cache_flush_hack(struct iris_batch *batch,
                      enum isl_format view_format,
                      enum isl_format surf_format)
 {
-   const struct intel_device_info *devinfo = &batch->screen->devinfo;
+   const struct intel_device_info *devinfo = batch->screen->devinfo;
 
    /* The WaSamplerCacheFlushBetweenRedescribedSurfaceReads workaround says:
     *
@@ -365,7 +365,7 @@ iris_blit(struct pipe_context *ctx, const struct pipe_blit_info *info)
 {
    struct iris_context *ice = (void *) ctx;
    struct iris_screen *screen = (struct iris_screen *)ctx->screen;
-   const struct intel_device_info *devinfo = &screen->devinfo;
+   const struct intel_device_info *devinfo = screen->devinfo;
    struct iris_batch *batch = &ice->batches[IRIS_BATCH_RENDER];
    enum blorp_batch_flags blorp_flags = iris_blorp_flags_for_batch(batch);
 
@@ -493,7 +493,8 @@ iris_blit(struct pipe_context *ctx, const struct pipe_blit_info *info)
       struct iris_format_info src_fmt =
          iris_format_for_usage(devinfo, src_pfmt, ISL_SURF_USAGE_TEXTURE_BIT);
       enum isl_aux_usage src_aux_usage =
-         iris_resource_texture_aux_usage(ice, src_res, src_fmt.fmt);
+         iris_resource_texture_aux_usage(ice, src_res, src_fmt.fmt,
+                                         info->src.level, 1);
 
       iris_resource_prepare_texture(ice, src_res, src_fmt.fmt,
                                     info->src.level, 1, info->src.box.z,
@@ -572,7 +573,7 @@ get_copy_region_aux_settings(struct iris_context *ice,
                              bool is_dest)
 {
    struct iris_screen *screen = (void *) ice->ctx.screen;
-   struct intel_device_info *devinfo = &screen->devinfo;
+   const struct intel_device_info *devinfo = screen->devinfo;
 
    switch (res->aux.usage) {
    case ISL_AUX_USAGE_HIZ:
@@ -585,7 +586,8 @@ get_copy_region_aux_settings(struct iris_context *ice,
                                                          false);
       } else {
          *out_aux_usage = iris_resource_texture_aux_usage(ice, res,
-                                                          res->surf.format);
+                                                          res->surf.format,
+                                                          level, 1);
       }
       *out_clear_supported = isl_aux_usage_has_fast_clears(*out_aux_usage);
       break;
@@ -599,6 +601,18 @@ get_copy_region_aux_settings(struct iris_context *ice,
       FALLTHROUGH;
    case ISL_AUX_USAGE_CCS_E:
    case ISL_AUX_USAGE_GFX12_CCS_E: {
+      /* If our source doesn't have any unresolved color, report an aux
+       * usage of ISL_AUX_USAGE_NONE.  This way, texturing won't even look
+       * at the aux surface and we can save some bandwidth.
+       */
+      if (!is_dest &&
+          !iris_has_invalid_primary(res, level, 1,
+                                    0, INTEL_REMAINING_LAYERS)) {
+         *out_aux_usage = ISL_AUX_USAGE_NONE;
+         *out_clear_supported = false;
+         break;
+      }
+
       /* blorp_copy may reinterpret the surface format and has limited support
        * for adjusting the clear color, so clear support may only be enabled
        * in some cases:
@@ -684,13 +698,13 @@ iris_copy_region(struct blorp_context *blorp,
 
    if (dst->target == PIPE_BUFFER && src->target == PIPE_BUFFER) {
       struct blorp_address src_addr = {
-         .buffer = src_res->bo, .offset = src_box->x,
+         .buffer = src_res->bo, .offset = src_res->offset + src_box->x,
          .mocs = iris_mocs(src_res->bo, &screen->isl_dev,
                            ISL_SURF_USAGE_TEXTURE_BIT),
          .local_hint = iris_bo_likely_local(src_res->bo),
       };
       struct blorp_address dst_addr = {
-         .buffer = dst_res->bo, .offset = dstx,
+         .buffer = dst_res->bo, .offset = dst_res->offset + dstx,
          .reloc_flags = EXEC_OBJECT_WRITE,
          .mocs = iris_mocs(dst_res->bo, &screen->isl_dev,
                            ISL_SURF_USAGE_RENDER_TARGET_BIT),

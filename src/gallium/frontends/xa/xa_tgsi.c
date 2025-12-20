@@ -27,7 +27,7 @@
  */
 #include "xa_priv.h"
 
-#include "pipe/p_format.h"
+#include "util/format/u_formats.h"
 #include "pipe/p_context.h"
 #include "pipe/p_state.h"
 #include "pipe/p_shader_tokens.h"
@@ -489,7 +489,7 @@ xa_shaders_get(struct xa_shaders *sc, unsigned vs_traits, unsigned fs_traits)
     fs = shader_from_cache(sc->r->pipe, PIPE_SHADER_FRAGMENT,
 			   &sc->fs_hash, fs_traits);
 
-    debug_assert(vs && fs);
+    assert(vs && fs);
     if (!vs || !fs)
 	return shader;
 

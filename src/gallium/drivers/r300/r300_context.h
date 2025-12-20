@@ -547,8 +547,6 @@ struct r300_context {
     /* Occlusion query. */
     struct r300_atom query_start;
 
-    struct util_debug_callback debug;
-
     /* The pointers to the first and the last atom. */
     struct r300_atom *first_dirty, *last_dirty;
 
@@ -639,6 +637,8 @@ struct r300_context {
     /* Compiler state. */
     struct rc_regalloc_state fs_regalloc_state; /* Register allocator info for
                                                  * fragment shaders. */
+    struct rc_regalloc_state vs_regalloc_state; /* Register allocator info for
+                                                 * vertex shaders. */
 };
 
 #define foreach_atom(r300, atom) \

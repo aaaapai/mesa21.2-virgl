@@ -51,7 +51,7 @@
 #include "etnaviv_drmif.h"
 #include "drm-uapi/etnaviv_drm.h"
 
-extern simple_mtx_t etna_drm_table_lock;
+extern simple_mtx_t etna_device_lock;
 
 struct etna_bo_bucket {
 	uint32_t size;
@@ -109,17 +109,8 @@ struct etna_bo {
 	uint32_t        handle;
 	uint32_t        flags;
 	uint32_t        name;           /* flink global handle (DRI2 name) */
-	uint64_t        offset;         /* offset to mmap() */
 	uint32_t        va;             /* GPU virtual address */
 	int		refcnt;
-
-	/*
-	 * To avoid excess hashtable lookups, cache the stream this bo was
-	 * last emitted on (since that will probably also be the next ring
-	 * it is emitted on).
-	 */
-	struct etna_cmd_stream *current_stream;
-	uint32_t idx;
 
 	int reuse;
 	struct list_head list;   /* bucket-list entry */
@@ -198,17 +189,17 @@ extern int etna_mesa_debug;
 
 #define INFO_MSG(fmt, ...) \
 		do { mesa_logi("%s:%d: " fmt, \
-				__FUNCTION__, __LINE__, ##__VA_ARGS__); } while (0)
+				__func__, __LINE__, ##__VA_ARGS__); } while (0)
 #define DEBUG_MSG(fmt, ...) \
 		do if (etna_mesa_debug & ETNA_DRM_MSGS) { \
 		     mesa_logd("%s:%d: " fmt, \
-				__FUNCTION__, __LINE__, ##__VA_ARGS__); } while (0)
+				__func__, __LINE__, ##__VA_ARGS__); } while (0)
 #define WARN_MSG(fmt, ...) \
 		do { mesa_logw("%s:%d: " fmt, \
-				__FUNCTION__, __LINE__, ##__VA_ARGS__); } while (0)
+				__func__, __LINE__, ##__VA_ARGS__); } while (0)
 #define ERROR_MSG(fmt, ...) \
 		do { mesa_loge("%s:%d: " fmt, \
-				__FUNCTION__, __LINE__, ##__VA_ARGS__); } while (0)
+				__func__, __LINE__, ##__VA_ARGS__); } while (0)
 
 #define DEBUG_BO(msg, bo)						\
    DEBUG_MSG("%s %p, va: 0x%.8x, size: 0x%.8x, flags: 0x%.8x, "		\

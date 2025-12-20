@@ -24,6 +24,8 @@ vk_physical_device_features_gen_depend_files = [
 ]
 
 vulkan_runtime_files = files(
+  'vk_buffer.c',
+  'vk_buffer.h',
   'vk_cmd_copy.c',
   'vk_cmd_enqueue.c',
   'vk_command_buffer.c',
@@ -36,14 +38,20 @@ vulkan_runtime_files = files(
   'vk_debug_utils.h',
   'vk_deferred_operation.c',
   'vk_deferred_operation.h',
+  'vk_descriptor_set_layout.c',
+  'vk_descriptor_set_layout.h',
   'vk_descriptors.c',
   'vk_descriptors.h',
+  'vk_descriptor_update_template.c',
+  'vk_descriptor_update_template.h',
   'vk_device.c',
   'vk_device.h',
   'vk_fence.c',
   'vk_fence.h',
   'vk_framebuffer.c',
   'vk_framebuffer.h',
+  'vk_graphics_state.c',
+  'vk_graphics_state.h',
   'vk_image.c',
   'vk_image.h',
   'vk_instance.c',
@@ -54,15 +62,25 @@ vulkan_runtime_files = files(
   'vk_nir.h',
   'vk_object.c',
   'vk_object.h',
+  'vk_pipeline.c',
+  'vk_pipeline.h',
+  'vk_pipeline_cache.c',
+  'vk_pipeline_cache.h',
   'vk_physical_device.c',
   'vk_physical_device.h',
+  'vk_pipeline_layout.c',
+  'vk_pipeline_layout.h',
   'vk_queue.c',
   'vk_queue.h',
   'vk_render_pass.c',
+  'vk_sampler.c',
+  'vk_sampler.h',
   'vk_semaphore.c',
   'vk_semaphore.h',
   'vk_shader_module.c',
   'vk_shader_module.h',
+  'vk_standard_sample_locations.c',
+  'vk_standard_sample_locations.h',
   'vk_sync.c',
   'vk_sync.h',
   'vk_sync_binary.c',
@@ -77,7 +95,7 @@ vulkan_runtime_files = files(
 vulkan_runtime_deps = [
   vulkan_wsi_deps,
   idep_mesautil,
-  idep_nir_headers,
+  idep_nir,
   idep_vulkan_util,
 ]
 
@@ -147,16 +165,27 @@ vk_physical_device_features = custom_target(
   depend_files : vk_physical_device_features_gen_depend_files,
 )
 
+vk_format_info = custom_target(
+  'vk_format_info',
+  input : ['vk_format_info_gen.py', vk_api_xml],
+  output : ['vk_format_info.c', 'vk_format_info.h'],
+  command : [
+    prog_python, '@INPUT0@', '--xml', '@INPUT1@',
+    '--out-c', '@OUTPUT0@', '--out-h', '@OUTPUT1@'
+  ],
+)
+
 libvulkan_runtime = static_library(
   'vulkan_runtime',
   [vulkan_runtime_files, vk_common_entrypoints,
    vk_cmd_queue, vk_cmd_enqueue_entrypoints,
-   vk_dispatch_trampolines, vk_physical_device_features],
+   vk_dispatch_trampolines, vk_physical_device_features,
+   vk_format_info],
   include_directories : [inc_include, inc_src, inc_gallium],
   dependencies : vulkan_runtime_deps,
   # For glsl_type_singleton
   link_with : libcompiler,
-  c_args : [vulkan_wsi_args],
+  c_args : [c_msvc_compat_args],
   gnu_symbol_visibility : 'hidden',
   build_by_default : false,
 )

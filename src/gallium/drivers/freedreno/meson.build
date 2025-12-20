@@ -192,8 +192,6 @@ files_libfreedreno = files(
   'a6xx/fd6_draw.h',
   'a6xx/fd6_emit.c',
   'a6xx/fd6_emit.h',
-  'a6xx/fd6_format.c',
-  'a6xx/fd6_format.h',
   'a6xx/fd6_gmem.c',
   'a6xx/fd6_gmem.h',
   'a6xx/fd6_image.c',
@@ -227,7 +225,7 @@ freedreno_tracepoints = custom_target(
   output: ['freedreno_tracepoints.c', 'freedreno_tracepoints.h'],
   command: [
     prog_python, '@INPUT@',
-    '-p', join_paths(meson.source_root(), 'src/util/perf/'),
+    '-p', join_paths(dir_source_root, 'src/util/perf/'),
     '-C', '@OUTPUT0@',
     '-H', '@OUTPUT1@',
   ],

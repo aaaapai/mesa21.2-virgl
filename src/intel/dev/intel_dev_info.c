@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <string.h>
 #include <inttypes.h>
 
 #include <sys/types.h>
@@ -34,6 +35,7 @@
 #include <xf86drm.h>
 
 #include "intel_device_info.h"
+#include "intel_hwconfig.h"
 
 static int
 error(char *fmt, ...)
@@ -46,11 +48,54 @@ error(char *fmt, ...)
    return EXIT_FAILURE;
 }
 
+static void
+print_regions_info(const struct intel_device_info *devinfo)
+{
+   if (devinfo->mem.sram.mappable.size > 0 ||
+       devinfo->mem.sram.unmappable.size > 0) {
+      fprintf(stdout, "   sram:\n");
+      if (devinfo->mem.use_class_instance) {
+         fprintf(stdout, "      class: %d; instance: %d\n",
+                 devinfo->mem.sram.mem_class, devinfo->mem.sram.mem_instance);
+      }
+      fprintf(stdout, "      mappable: %" PRId64 "; ",
+              devinfo->mem.sram.mappable.size);
+      fprintf(stdout, "free: %" PRId64 "\n",
+              devinfo->mem.sram.mappable.free);
+      if (devinfo->mem.sram.unmappable.size > 0) {
+         fprintf(stdout, "      unmappable: %" PRId64 "; ",
+                 devinfo->mem.sram.unmappable.size);
+         fprintf(stdout, "free: %" PRId64 "\n",
+                 devinfo->mem.sram.unmappable.free);
+      }
+   }
+
+   if (devinfo->mem.vram.mappable.size > 0 ||
+       devinfo->mem.vram.unmappable.size > 0) {
+      fprintf(stdout, "   vram:\n");
+      if (devinfo->mem.use_class_instance) {
+         fprintf(stdout, "      class: %d; instance: %d\n",
+                 devinfo->mem.vram.mem_class, devinfo->mem.vram.mem_instance);
+      }
+      fprintf(stdout, "      mappable: %" PRId64 "; ",
+              devinfo->mem.vram.mappable.size);
+      fprintf(stdout, "free: %" PRId64 "\n",
+              devinfo->mem.vram.mappable.free);
+      if (devinfo->mem.vram.unmappable.size > 0) {
+         fprintf(stdout, "      unmappable: %" PRId64 "; ",
+                 devinfo->mem.vram.unmappable.size);
+         fprintf(stdout, "free: %" PRId64 "\n",
+                 devinfo->mem.vram.unmappable.free);
+      }
+   }
+}
+
 int
 main(int argc, char *argv[])
 {
    drmDevicePtr devices[8];
    int max_devices;
+   bool print_hwconfig = argc > 1 && strcmp(argv[1], "--hwconfig") == 0;
 
    max_devices = drmGetDevices2(0, devices, ARRAY_SIZE(devices));
    if (max_devices < 1)
@@ -63,6 +108,10 @@ main(int argc, char *argv[])
 
       if (fd < 0)
          continue;
+
+      if (print_hwconfig) {
+         intel_get_and_print_hwconfig_table(fd);
+      }
 
       bool success = intel_get_device_info_from_fd(fd, &devinfo);
       close(fd);
@@ -124,6 +173,8 @@ main(int argc, char *argv[])
       fprintf(stdout, "   max CS  threads: %u\n", devinfo.max_cs_threads);
       fprintf(stdout, "   timestamp frequency: %" PRIu64 " / %.4f ns\n",
               devinfo.timestamp_frequency, 1000000000.0 / devinfo.timestamp_frequency);
+
+      print_regions_info(&devinfo);
    }
 
    return EXIT_SUCCESS;

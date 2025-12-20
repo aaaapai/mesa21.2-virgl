@@ -1,25 +1,25 @@
 /*
- * Copyright © 2021 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
- */
+* Copyright © 2021 Intel Corporation
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice (including the next
+* paragraph) shall be included in all copies or substantial portions of the
+* Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+* IN THE SOFTWARE.
+*/
 
 #include "anv_private.h"
 
@@ -31,7 +31,7 @@ command_buffers_count_utraces(struct anv_device *device,
                               struct anv_cmd_buffer **cmd_buffers,
                               uint32_t *utrace_copies)
 {
-   if (!u_trace_context_actively_tracing(&device->ds.trace_context))
+   if (!u_trace_should_process(&device->ds.trace_context))
       return 0;
 
    uint32_t utraces = 0;
@@ -59,8 +59,8 @@ anv_utrace_delete_flush_data(struct u_trace_context *utctx,
    if (flush->trace_bo) {
       assert(flush->batch_bo);
       anv_reloc_list_finish(&flush->relocs, &device->vk.alloc);
-      anv_device_release_bo(device, flush->batch_bo);
-      anv_device_release_bo(device, flush->trace_bo);
+      anv_bo_pool_free(&device->utrace_bo_pool, flush->batch_bo);
+      anv_bo_pool_free(&device->utrace_bo_pool, flush->trace_bo);
    }
 
    vk_sync_destroy(&device->vk, flush->sync);
@@ -83,7 +83,7 @@ anv_device_utrace_emit_copy_ts_buffer(struct u_trace_context *utctx,
    struct anv_address to_addr = (struct anv_address) {
       .bo = ts_to, .offset = to_offset * sizeof(uint64_t) };
 
-   anv_genX(&device->info, emit_so_memcpy)(&flush->memcpy_state,
+   anv_genX(device->info, emit_so_memcpy)(&flush->memcpy_state,
                                            to_addr, from_addr, count * sizeof(uint64_t));
 }
 
@@ -111,7 +111,7 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
    if (!flush)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   intel_ds_flush_data_init(&flush->ds, queue->ds, queue->ds->submission_id);
+   intel_ds_flush_data_init(&flush->ds, &queue->ds, queue->ds.submission_id);
 
    result = vk_sync_create(&device->vk, &device->physical->sync_syncobj_type,
                            0, 0, &flush->sync);
@@ -119,19 +119,16 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
       goto error_sync;
 
    if (utrace_copies > 0) {
-      result =
-         anv_device_alloc_bo(device, "utrace-copy-buf", utrace_copies * 4096,
-                             ANV_BO_ALLOC_MAPPED, 0 /* explicit_address */,
-                             &flush->trace_bo);
+      result = anv_bo_pool_alloc(&device->utrace_bo_pool,
+                                 utrace_copies * 4096,
+                                 &flush->trace_bo);
       if (result != VK_SUCCESS)
          goto error_trace_buf;
 
-      result =
-         anv_device_alloc_bo(device, "utrace-copy-batch",
-                             /* 128 dwords of setup + 64 dwords per copy */
-                             align_u32(512 + 64 * utrace_copies, 4096),
-                             ANV_BO_ALLOC_MAPPED, 0 /* explicit_address */,
-                             &flush->batch_bo);
+      result = anv_bo_pool_alloc(&device->utrace_bo_pool,
+                                 /* 128 dwords of setup + 64 dwords per copy */
+                                 align(512 + 64 * utrace_copies, 4096),
+                                 &flush->batch_bo);
       if (result != VK_SUCCESS)
          goto error_batch_buf;
 
@@ -146,7 +143,7 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
                             flush->batch_bo->map, flush->batch_bo->size);
 
       /* Emit the copies */
-      anv_genX(&device->info, emit_so_memcpy_init)(&flush->memcpy_state,
+      anv_genX(device->info, emit_so_memcpy_init)(&flush->memcpy_state,
                                                    device,
                                                    &flush->batch);
       for (uint32_t i = 0; i < cmd_buffer_count; i++) {
@@ -160,7 +157,7 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
                                  anv_device_utrace_emit_copy_ts_buffer);
          }
       }
-      anv_genX(&device->info, emit_so_memcpy_fini)(&flush->memcpy_state);
+      anv_genX(device->info, emit_so_memcpy_fini)(&flush->memcpy_state);
 
       u_trace_flush(&flush->ds.trace, flush, true);
 
@@ -184,9 +181,9 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
  error_batch:
    anv_reloc_list_finish(&flush->relocs, &device->vk.alloc);
  error_reloc_list:
-   anv_device_release_bo(device, flush->batch_bo);
+   anv_bo_pool_free(&device->utrace_bo_pool, flush->batch_bo);
  error_batch_buf:
-   anv_device_release_bo(device, flush->trace_bo);
+   anv_bo_pool_free(&device->utrace_bo_pool, flush->trace_bo);
  error_trace_buf:
    vk_sync_destroy(&device->vk, flush->sync);
  error_sync:
@@ -202,8 +199,9 @@ anv_utrace_create_ts_buffer(struct u_trace_context *utctx, uint32_t size_b)
 
    struct anv_bo *bo = NULL;
    UNUSED VkResult result =
-      anv_device_alloc_bo(device, "utrace-ts", align_u32(size_b, 4096),
-                          ANV_BO_ALLOC_MAPPED, 0, &bo);
+      anv_bo_pool_alloc(&device->utrace_bo_pool,
+                        align(size_b, 4096),
+                        &bo);
    assert(result == VK_SUCCESS);
 
    return bo;
@@ -216,22 +214,27 @@ anv_utrace_destroy_ts_buffer(struct u_trace_context *utctx, void *timestamps)
       container_of(utctx, struct anv_device, ds.trace_context);
    struct anv_bo *bo = timestamps;
 
-   anv_device_release_bo(device, bo);
+   anv_bo_pool_free(&device->utrace_bo_pool, bo);
 }
 
 static void
-anv_utrace_record_ts(struct u_trace *ut, void *cs, void *timestamps, unsigned idx,
+anv_utrace_record_ts(struct u_trace *ut, void *cs,
+                     void *timestamps, unsigned idx,
                      bool end_of_pipe)
 {
-   struct anv_cmd_buffer *cmd_buffer = cs;
+   struct anv_cmd_buffer *cmd_buffer =
+      container_of(ut, struct anv_cmd_buffer, trace);
    struct anv_device *device = cmd_buffer->device;
    struct anv_bo *bo = timestamps;
 
+   enum anv_timestamp_capture_type capture_type =
+      (end_of_pipe) ? ANV_TIMESTAMP_CAPTURE_END_OF_PIPE
+                    : ANV_TIMESTAMP_CAPTURE_TOP_OF_PIPE;
    device->physical->cmd_emit_timestamp(&cmd_buffer->batch, device,
                                         (struct anv_address) {
                                            .bo = bo,
                                            .offset = idx * sizeof(uint64_t) },
-                                        end_of_pipe);
+                                        capture_type);
 }
 
 static uint64_t
@@ -260,30 +263,14 @@ anv_utrace_read_ts(struct u_trace_context *utctx,
    if (ts[idx] == U_TRACE_NO_TIMESTAMP)
       return U_TRACE_NO_TIMESTAMP;
 
-   return intel_device_info_timebase_scale(&device->info, ts[idx]);
-}
-
-static const char *
-queue_family_to_name(const struct anv_queue_family *family)
-{
-   switch (family->engine_class) {
-   case I915_ENGINE_CLASS_RENDER:
-      return "render";
-   case I915_ENGINE_CLASS_COPY:
-      return "copy";
-   case I915_ENGINE_CLASS_VIDEO:
-      return "video";
-   case I915_ENGINE_CLASS_VIDEO_ENHANCE:
-      return "video-enh";
-   default:
-      return "unknown";
-   }
+   return intel_device_info_timebase_scale(device->info, ts[idx]);
 }
 
 void
 anv_device_utrace_init(struct anv_device *device)
 {
-   intel_ds_device_init(&device->ds, &device->info, device->fd,
+   anv_bo_pool_init(&device->utrace_bo_pool, device, "utrace");
+   intel_ds_device_init(&device->ds, device->info, device->fd,
                         device->physical->local_minor - 128,
                         INTEL_DS_API_VULKAN);
    u_trace_context_init(&device->ds.trace_context,
@@ -297,10 +284,9 @@ anv_device_utrace_init(struct anv_device *device)
    for (uint32_t q = 0; q < device->queue_count; q++) {
       struct anv_queue *queue = &device->queues[q];
 
-      queue->ds =
-         intel_ds_device_add_queue(&device->ds, "%s%u",
-                                   queue_family_to_name(queue->family),
-                                   queue->index_in_family);
+      intel_ds_device_init_queue(&device->ds, &queue->ds, "%s%u",
+                                 intel_engines_class_to_string(queue->family->engine_class),
+                                 queue->vk.index_in_family);
    }
 }
 
@@ -309,6 +295,7 @@ anv_device_utrace_finish(struct anv_device *device)
 {
    u_trace_context_process(&device->ds.trace_context, true);
    intel_ds_device_fini(&device->ds);
+   anv_bo_pool_finish(&device->utrace_bo_pool);
 }
 
 enum intel_ds_stall_flag
@@ -331,6 +318,8 @@ anv_pipe_flush_bit_to_ds_stall_flag(enum anv_pipe_bits bits)
       { .anv = ANV_PIPE_CS_STALL_BIT,                     .ds = INTEL_DS_CS_STALL_BIT, },
       { .anv = ANV_PIPE_HDC_PIPELINE_FLUSH_BIT,           .ds = INTEL_DS_HDC_PIPELINE_FLUSH_BIT, },
       { .anv = ANV_PIPE_STALL_AT_SCOREBOARD_BIT,          .ds = INTEL_DS_STALL_AT_SCOREBOARD_BIT, },
+      { .anv = ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT, .ds = INTEL_DS_UNTYPED_DATAPORT_CACHE_FLUSH_BIT, },
+      { .anv = ANV_PIPE_PSS_STALL_SYNC_BIT,               .ds = INTEL_DS_PSS_STALL_SYNC_BIT, },
    };
 
    enum intel_ds_stall_flag ret = 0;

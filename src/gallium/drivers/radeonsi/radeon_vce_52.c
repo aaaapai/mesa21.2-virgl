@@ -69,13 +69,13 @@ static void get_rate_control_param(struct rvce_encoder *enc, struct pipe_h264_en
 static void get_motion_estimation_param(struct rvce_encoder *enc,
                                         struct pipe_h264_enc_picture_desc *pic)
 {
-   enc->enc_pic.me.motion_est_quarter_pixel = pic->motion_est.motion_est_quarter_pixel;
-   enc->enc_pic.me.enc_disable_sub_mode = pic->motion_est.enc_disable_sub_mode;
-   enc->enc_pic.me.lsmvert = pic->motion_est.lsmvert;
-   enc->enc_pic.me.enc_en_ime_overw_dis_subm = pic->motion_est.enc_en_ime_overw_dis_subm;
-   enc->enc_pic.me.enc_ime_overw_dis_subm_no = pic->motion_est.enc_ime_overw_dis_subm_no;
-   enc->enc_pic.me.enc_ime2_search_range_x = pic->motion_est.enc_ime2_search_range_x;
-   enc->enc_pic.me.enc_ime2_search_range_y = pic->motion_est.enc_ime2_search_range_y;
+   enc->enc_pic.me.motion_est_quarter_pixel = 0;
+   enc->enc_pic.me.enc_disable_sub_mode = 254;
+   enc->enc_pic.me.lsmvert = 0;
+   enc->enc_pic.me.enc_en_ime_overw_dis_subm = 0;
+   enc->enc_pic.me.enc_ime_overw_dis_subm_no = 0;
+   enc->enc_pic.me.enc_ime2_search_range_x = 1;
+   enc->enc_pic.me.enc_ime2_search_range_y = 1;
    enc->enc_pic.me.enc_ime_decimation_search = 0x00000001;
    enc->enc_pic.me.motion_est_half_pixel = 0x00000001;
    enc->enc_pic.me.enc_search_range_x = 0x00000010;
@@ -89,11 +89,11 @@ static void get_pic_control_param(struct rvce_encoder *enc, struct pipe_h264_enc
    unsigned encNumMBsPerSlice;
    encNumMBsPerSlice = align(enc->base.width, 16) / 16;
    encNumMBsPerSlice *= align(enc->base.height, 16) / 16;
-   if (pic->pic_ctrl.enc_frame_cropping_flag) {
-      enc->enc_pic.pc.enc_crop_left_offset = pic->pic_ctrl.enc_frame_crop_left_offset;
-      enc->enc_pic.pc.enc_crop_right_offset = pic->pic_ctrl.enc_frame_crop_right_offset;
-      enc->enc_pic.pc.enc_crop_top_offset = pic->pic_ctrl.enc_frame_crop_top_offset;
-      enc->enc_pic.pc.enc_crop_bottom_offset = pic->pic_ctrl.enc_frame_crop_bottom_offset;
+   if (pic->seq.enc_frame_cropping_flag) {
+      enc->enc_pic.pc.enc_crop_left_offset = pic->seq.enc_frame_crop_left_offset;
+      enc->enc_pic.pc.enc_crop_right_offset = pic->seq.enc_frame_crop_right_offset;
+      enc->enc_pic.pc.enc_crop_top_offset = pic->seq.enc_frame_crop_top_offset;
+      enc->enc_pic.pc.enc_crop_bottom_offset = pic->seq.enc_frame_crop_bottom_offset;
    } else {
       enc->enc_pic.pc.enc_crop_right_offset = (align(enc->base.width, 16) - enc->base.width) >> 1;
       enc->enc_pic.pc.enc_crop_bottom_offset =
@@ -106,7 +106,7 @@ static void get_pic_control_param(struct rvce_encoder *enc, struct pipe_h264_enc
    enc->enc_pic.pc.enc_num_default_active_ref_l0 = 0x00000001;
    enc->enc_pic.pc.enc_num_default_active_ref_l1 = 0x00000001;
    enc->enc_pic.pc.enc_cabac_enable = pic->pic_ctrl.enc_cabac_enable;
-   enc->enc_pic.pc.enc_constraint_set_flags = pic->pic_ctrl.enc_constraint_set_flags;
+   enc->enc_pic.pc.enc_constraint_set_flags = 0x00000040;
 }
 
 static void get_task_info_param(struct rvce_encoder *enc)
@@ -167,9 +167,9 @@ void si_vce_52_get_param(struct rvce_encoder *enc, struct pipe_h264_enc_picture_
    enc->enc_pic.i_remain = pic->i_remain;
    enc->enc_pic.gop_cnt = pic->gop_cnt;
    enc->enc_pic.pic_order_cnt = pic->pic_order_cnt;
-   enc->enc_pic.ref_idx_l0 = pic->ref_idx_l0;
-   enc->enc_pic.ref_idx_l1 = pic->ref_idx_l1;
-   enc->enc_pic.not_referenced = false;
+   enc->enc_pic.ref_idx_l0 = pic->ref_idx_l0_list[0];
+   enc->enc_pic.ref_idx_l1 = pic->ref_idx_l1_list[0];
+   enc->enc_pic.not_referenced = pic->not_referenced;
    if (enc->dual_inst)
       enc->enc_pic.addrmode_arraymode_disrdo_distwoinstants = 0x00000201;
    else
@@ -190,7 +190,7 @@ static void create(struct rvce_encoder *enc)
    RVCE_CS(enc->base.width);  // encImageWidth
    RVCE_CS(enc->base.height); // encImageHeight
 
-   if (sscreen->info.chip_class < GFX9) {
+   if (sscreen->info.gfx_level < GFX9) {
       RVCE_CS(enc->luma->u.legacy.level[0].nblk_x * enc->luma->bpe);     // encRefPicLumaPitch
       RVCE_CS(enc->chroma->u.legacy.level[0].nblk_x * enc->chroma->bpe); // encRefPicChromaPitch
       RVCE_CS(align(enc->luma->u.legacy.level[0].nblk_y, 16) / 8);       // encRefYHeightInQw
@@ -261,7 +261,7 @@ static void encode(struct rvce_encoder *enc)
    RVCE_CS(enc->enc_pic.eo.end_of_sequence);
    RVCE_CS(enc->enc_pic.eo.end_of_stream);
 
-   if (sscreen->info.chip_class < GFX9) {
+   if (sscreen->info.gfx_level < GFX9) {
       RVCE_READ(enc->handle, RADEON_DOMAIN_VRAM,
                 (uint64_t)enc->luma->u.legacy.level[0].offset_256B * 256); // inputPictureLumaAddressHi/Lo
       RVCE_READ(enc->handle, RADEON_DOMAIN_VRAM,

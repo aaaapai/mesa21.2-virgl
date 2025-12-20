@@ -32,7 +32,7 @@
 #define SHADER_TYPES_H
 
 #include "main/config.h" /* for MAX_FEEDBACK_BUFFERS */
-#include "main/glheader.h"
+#include "util/glheader.h"
 #include "main/menums.h"
 #include "util/mesa-sha1.h"
 #include "compiler/shader_info.h"
@@ -266,8 +266,6 @@ struct gl_linked_shader
    unsigned num_combined_uniform_components;
 
    struct exec_list *ir;
-   struct exec_list *packed_varyings;
-   struct exec_list *fragdata_arrays;
    struct glsl_symbol_table *symbols;
 
    /**
@@ -440,17 +438,6 @@ struct gl_shader_program
       unsigned ActiveStreamMask;
    } Geom;
 
-   /**
-    * Compute shader state - copied into gl_program by
-    * _mesa_copy_linked_program_data().
-    */
-   struct {
-      /**
-       * Size of shared variables accessed by the compute shader.
-       */
-      unsigned SharedSize;
-   } Comp;
-
    /** Data shared by gl_program and gl_shader_program */
    struct gl_shader_program_data *data;
 
@@ -567,14 +554,12 @@ struct gl_program
    GLubyte SamplerUnits[MAX_SAMPLERS];
 
    struct pipe_shader_state state;
-   struct glsl_to_tgsi_visitor* glsl_to_tgsi;
    struct ati_fragment_shader *ati_fs;
    uint64_t affected_states; /**< ST_NEW_* flags to mark dirty when binding */
 
    void *serialized_nir;
    unsigned serialized_nir_size;
 
-   /* used when bypassing glsl_to_tgsi: */
    struct gl_shader_program *shader_program;
 
    struct st_variant *variants;
@@ -619,16 +604,9 @@ struct gl_program
           */
          GLubyte ImageUnits[MAX_IMAGE_UNIFORMS];
 
-         /**
-          * Access qualifier specified in the shader for each image uniform
-          * index.  Either \c GL_READ_ONLY, \c GL_WRITE_ONLY, \c
-          * GL_READ_WRITE, or \c GL_NONE to indicate both read-only and
-          * write-only.
-          *
-          * It may be different, though only more strict than the value of
-          * \c gl_image_unit::Access for the corresponding image unit.
+         /** Access qualifier from linked shader
           */
-         GLenum16 ImageAccess[MAX_IMAGE_UNIFORMS];
+         enum gl_access_qualifier image_access[MAX_IMAGE_UNIFORMS];
 
          GLuint NumUniformBlocks;
          struct gl_uniform_block **UniformBlocks;
@@ -939,10 +917,9 @@ struct gl_bindless_image
    /** Whether this bindless image is bound to a unit. */
    GLboolean bound;
 
-   /** Access qualifier (GL_READ_WRITE, GL_READ_ONLY, GL_WRITE_ONLY, or
-    * GL_NONE to indicate both read-only and write-only)
+   /** Access qualifier from linked shader
     */
-   GLenum16 access;
+   enum gl_access_qualifier image_access;
 
    /** Pointer to the base of the data. */
    GLvoid *data;

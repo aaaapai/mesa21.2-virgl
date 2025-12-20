@@ -60,6 +60,27 @@ test_util_get_process_name (void)
 
    const char *name = util_get_process_name();
    expect_equal_str(expected, name, "util_get_process_name");
+
+   /* Test util_get_process_name_may_override */
+   char name_buf[PATH_MAX] = { 0 };
+   util_get_process_name_may_override("TEST_MESA_OVERRIDE_PROCESS_NAME", name_buf, sizeof(name_buf));
+   expect_equal_str(expected, name_buf, "util_get_process_name_may_override");
+   putenv("TEST_MESA_OVERRIDE_PROCESS_NAME=hello");
+   util_get_process_name_may_override("TEST_MESA_OVERRIDE_PROCESS_NAME", name_buf, sizeof(name_buf));
+   expect_equal_str("hello", name_buf, "util_get_process_name_may_override");
+   putenv("TEST_MESA_OVERRIDE_PROCESS_NAME=hello2");
+   util_get_process_name_may_override("TEST_MESA_OVERRIDE_PROCESS_NAME", name_buf, sizeof(name_buf));
+   expect_equal_str("hello2", name_buf, "util_get_process_name_may_override");
+}
+
+static void posixify_path(char *path) {
+   /* Always using posix separator '/' to check path equal */
+   char *p = path;
+   for (; *p != '\0'; p += 1) {
+      if (*p == '\\') {
+         *p = '/';
+      }
+   }
 }
 
 /* This test gets the real path from Meson (BUILD_FULL_PATH env var),
@@ -73,18 +94,22 @@ test_util_get_process_exec_path (void)
       error = true;
       return;
    }
+   posixify_path(path);
    char* build_path = getenv("BUILD_FULL_PATH");
    if (!build_path) {
       fprintf(stderr, "BUILD_FULL_PATH environment variable should be set\n");
       error = true;
       return;
    }
+   build_path = strdup(build_path);
+   posixify_path(build_path);
 #ifdef __CYGWIN__
    int i = strlen(build_path) - 4;
    if ((i > 0) && (strcmp(&build_path[i], ".exe") == 0))
       build_path[i] = 0;
 #endif
-   expect_equal_str(build_path, path, "util_get_process_name");
+   expect_equal_str(build_path, path, "test_util_get_process_exec_path");
+   free(build_path);
 }
 
 int

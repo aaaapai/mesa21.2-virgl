@@ -420,6 +420,9 @@ static void
 lima_set_sample_mask(struct pipe_context *pctx,
                      unsigned sample_mask)
 {
+   struct lima_context *ctx = lima_context(pctx);
+   ctx->sample_mask = sample_mask & ((1 << LIMA_MAX_SAMPLES) - 1);
+   ctx->dirty |= LIMA_CONTEXT_DIRTY_SAMPLE_MASK;
 }
 
 void
@@ -470,7 +473,4 @@ lima_state_fini(struct lima_context *ctx)
 
    util_set_vertex_buffers_mask(so->vb, &so->enabled_mask, NULL,
                                 0, 0, ARRAY_SIZE(so->vb), false);
-
-   pipe_surface_reference(&ctx->framebuffer.base.cbufs[0], NULL);
-   pipe_surface_reference(&ctx->framebuffer.base.zsbuf, NULL);
 }

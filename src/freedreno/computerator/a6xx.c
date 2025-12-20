@@ -153,6 +153,7 @@ cs_program_emit(struct fd_ringbuffer *ring, struct kernel *kernel)
                A6XX_SP_CS_CTRL_REG0_FULLREGFOOTPRINT(i->max_reg + 1) |
                A6XX_SP_CS_CTRL_REG0_HALFREGFOOTPRINT(i->max_half_reg + 1) |
                COND(v->mergedregs, A6XX_SP_CS_CTRL_REG0_MERGEDREGS) |
+               COND(ir3_kernel->info.early_preamble, A6XX_SP_CS_CTRL_REG0_EARLYPREAMBLE) |
                A6XX_SP_CS_CTRL_REG0_BRANCHSTACK(ir3_shader_branchstack_hw(v)));
 
    OUT_PKT4(ring, REG_A6XX_SP_CS_UNKNOWN_A9B1, 1);
@@ -231,7 +232,7 @@ emit_const(struct fd_ringbuffer *ring, uint32_t regid, uint32_t sizedwords,
 {
    uint32_t align_sz;
 
-   debug_assert((regid % 4) == 0);
+   assert((regid % 4) == 0);
 
    align_sz = align(sizedwords, 4);
 
@@ -316,8 +317,9 @@ cs_ibo_emit(struct fd_ringbuffer *ring, struct fd_submit *submit,
 
       OUT_RING(state, A6XX_TEX_CONST_0_FMT(FMT6_32_UINT) | A6XX_TEX_CONST_0_TILE_MODE(0));
       OUT_RING(state, A6XX_TEX_CONST_1_WIDTH(width) | A6XX_TEX_CONST_1_HEIGHT(height));
-      OUT_RING(state, A6XX_TEX_CONST_2_PITCH(0) | A6XX_TEX_CONST_2_BUFFER |
-                         A6XX_TEX_CONST_2_TYPE(A6XX_TEX_BUFFER));
+      OUT_RING(state, A6XX_TEX_CONST_2_PITCH(0) |
+                      A6XX_TEX_CONST_2_STRUCTSIZETEXELS(1) |
+                      A6XX_TEX_CONST_2_TYPE(A6XX_TEX_BUFFER));
       OUT_RING(state, A6XX_TEX_CONST_3_ARRAY_PITCH(0));
       OUT_RELOC(state, kernel->bufs[i], 0, 0, 0);
       OUT_RING(state, 0x00000000);

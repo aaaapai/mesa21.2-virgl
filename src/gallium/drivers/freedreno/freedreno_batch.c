@@ -84,7 +84,7 @@ batch_init(struct fd_batch *batch)
     * immediately:
     */
    if (ctx->screen->gen < 6)
-      batch->fence = fd_fence_create(batch);
+      batch->fence = fd_pipe_fence_create(batch);
 
    batch->cleared = 0;
    batch->fast_cleared = 0;
@@ -163,6 +163,11 @@ cleanup_submit(struct fd_batch *batch)
       batch->prologue = NULL;
    }
 
+   if (batch->tile_epilogue) {
+      fd_ringbuffer_del(batch->tile_epilogue);
+      batch->tile_epilogue = NULL;
+   }
+
    if (batch->epilogue) {
       fd_ringbuffer_del(batch->epilogue);
       batch->epilogue = NULL;
@@ -194,9 +199,9 @@ batch_fini(struct fd_batch *batch)
 
    /* in case batch wasn't flushed but fence was created: */
    if (batch->fence)
-      fd_fence_set_batch(batch->fence, NULL);
+      fd_pipe_fence_set_batch(batch->fence, NULL);
 
-   fd_fence_ref(&batch->fence, NULL);
+   fd_pipe_fence_ref(&batch->fence, NULL);
 
    cleanup_submit(batch);
 
@@ -256,7 +261,7 @@ batch_reset_resources(struct fd_batch *batch)
    set_foreach (batch->resources, entry) {
       struct fd_resource *rsc = (struct fd_resource *)entry->key;
       _mesa_set_remove(batch->resources, entry);
-      debug_assert(rsc->track->batch_mask & (1 << batch->idx));
+      assert(rsc->track->batch_mask & (1 << batch->idx));
       rsc->track->batch_mask &= ~(1 << batch->idx);
       if (rsc->track->write_batch == batch)
          fd_batch_reference_locked(&rsc->track->write_batch, NULL);
@@ -297,12 +302,12 @@ __fd_batch_destroy(struct fd_batch *batch)
    fd_bc_invalidate_batch(batch, true);
 
    batch_reset_resources(batch);
-   debug_assert(batch->resources->entries == 0);
+   assert(batch->resources->entries == 0);
    _mesa_set_destroy(batch->resources, NULL);
 
    fd_screen_unlock(ctx->screen);
    batch_reset_dependencies(batch);
-   debug_assert(batch->dependents_mask == 0);
+   assert(batch->dependents_mask == 0);
 
    util_copy_framebuffer_state(&batch->framebuffer, NULL);
    batch_fini(batch);
@@ -363,11 +368,11 @@ batch_flush(struct fd_batch *batch) assert_dt
    fd_screen_unlock(batch->ctx->screen);
 
    if (batch->fence)
-      fd_fence_ref(&batch->ctx->last_fence, batch->fence);
+      fd_pipe_fence_ref(&batch->ctx->last_fence, batch->fence);
 
    fd_gmem_render_tiles(batch);
 
-   debug_assert(batch->reference.count > 0);
+   assert(batch->reference.count > 0);
 
    cleanup_submit(batch);
    fd_batch_unlock_submit(batch);
@@ -403,16 +408,22 @@ recursive_dependents_mask(struct fd_batch *batch)
    return dependents_mask;
 }
 
+bool
+fd_batch_has_dep(struct fd_batch *batch, struct fd_batch *dep)
+{
+   return !!(batch->dependents_mask & (1 << dep->idx));
+}
+
 void
 fd_batch_add_dep(struct fd_batch *batch, struct fd_batch *dep)
 {
    fd_screen_assert_locked(batch->ctx->screen);
 
-   if (batch->dependents_mask & (1 << dep->idx))
+   if (fd_batch_has_dep(batch, dep))
       return;
 
    /* a loop should not be possible */
-   debug_assert(!((1 << batch->idx) & recursive_dependents_mask(dep)));
+   assert(!((1 << batch->idx) & recursive_dependents_mask(dep)));
 
    struct fd_batch *other = NULL;
    fd_batch_reference_locked(&other, dep);
@@ -438,11 +449,11 @@ fd_batch_add_resource(struct fd_batch *batch, struct fd_resource *rsc)
 {
 
    if (likely(fd_batch_references_resource(batch, rsc))) {
-      debug_assert(_mesa_set_search_pre_hashed(batch->resources, rsc->hash, rsc));
+      assert(_mesa_set_search_pre_hashed(batch->resources, rsc->hash, rsc));
       return;
    }
 
-   debug_assert(!_mesa_set_search(batch->resources, rsc));
+   assert(!_mesa_set_search(batch->resources, rsc));
 
    _mesa_set_add_pre_hashed(batch->resources, rsc->hash, rsc);
    rsc->track->batch_mask |= (1 << batch->idx);
@@ -522,6 +533,11 @@ void
 fd_batch_check_size(struct fd_batch *batch)
 {
    if (FD_DBG(FLUSH)) {
+      fd_batch_flush(batch);
+      return;
+   }
+
+   if (batch->num_draws > 100000) {
       fd_batch_flush(batch);
       return;
    }

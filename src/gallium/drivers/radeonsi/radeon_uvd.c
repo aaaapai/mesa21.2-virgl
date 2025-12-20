@@ -94,9 +94,16 @@ struct ruvd_decoder {
 };
 
 /* flush IB to the hardware */
-static int flush(struct ruvd_decoder *dec, unsigned flags)
+static int flush(struct ruvd_decoder *dec, unsigned flags, struct pipe_fence_handle **fence)
 {
-   return dec->ws->cs_flush(&dec->cs, flags, NULL);
+   return dec->ws->cs_flush(&dec->cs, flags, fence);
+}
+
+static int ruvd_dec_get_decoder_fence(struct pipe_video_codec *decoder,
+                                      struct pipe_fence_handle *fence,
+                                      uint64_t timeout) {
+   struct ruvd_decoder *dec = (struct ruvd_decoder *)decoder;
+   return dec->ws->fence_wait(dec->ws, fence, timeout);
 }
 
 /* add a new set register command to the IB */
@@ -829,12 +836,12 @@ static struct ruvd_vc1 get_vc1_msg(struct pipe_vc1_picture_desc *pic)
    result.chroma_format = 1;
 
 #if 0
-//(((unsigned int)(pPicParams->advance.reserved1))        << SPS_INFO_VC1_RESERVED_SHIFT)
-uint32_t 	slice_count
-uint8_t 	picture_type
-uint8_t 	frame_coding_mode
-uint8_t 	deblockEnable
-uint8_t 	pquant
+//(((unsigned int)(pPicParams->advance.reserved1)) << SPS_INFO_VC1_RESERVED_SHIFT)
+uint32_t  slice_count
+uint8_t   picture_type
+uint8_t   frame_coding_mode
+uint8_t   deblockEnable
+uint8_t   pquant
 #endif
 
    return result;
@@ -952,14 +959,14 @@ static struct ruvd_mpeg4 get_mpeg4_msg(struct ruvd_decoder *dec,
    }
 
    /*
-   int32_t 	trd [2]
-   int32_t 	trb [2]
-   uint8_t 	vop_coding_type
-   uint8_t 	vop_fcode_forward
-   uint8_t 	vop_fcode_backward
-   uint8_t 	rounding_control
-   uint8_t 	alternate_vertical_scan_flag
-   uint8_t 	top_field_first
+   int32_t    trd [2]
+   int32_t    trb [2]
+   uint8_t    vop_coding_type
+   uint8_t    vop_fcode_forward
+   uint8_t    vop_fcode_backward
+   uint8_t    rounding_control
+   uint8_t    alternate_vertical_scan_flag
+   uint8_t    top_field_first
    */
 
    return result;
@@ -981,7 +988,7 @@ static void ruvd_destroy(struct pipe_video_codec *decoder)
    dec->msg->stream_handle = dec->stream_handle;
    send_msg_buf(dec);
 
-   flush(dec, 0);
+   flush(dec, 0, NULL);
 
    dec->ws->cs_destroy(&dec->cs);
 
@@ -1198,7 +1205,7 @@ static void ruvd_end_frame(struct pipe_video_codec *decoder, struct pipe_video_b
                FB_BUFFER_OFFSET + dec->fb_size, RADEON_USAGE_READ, RADEON_DOMAIN_GTT);
    set_reg(dec, dec->reg.cntl, 1);
 
-   flush(dec, PIPE_FLUSH_ASYNC);
+   flush(dec, PIPE_FLUSH_ASYNC, picture->fence);
    next_buffer(dec);
 }
 
@@ -1262,6 +1269,7 @@ struct pipe_video_codec *si_common_uvd_create_decoder(struct pipe_context *conte
    dec->base.decode_bitstream = ruvd_decode_bitstream;
    dec->base.end_frame = ruvd_end_frame;
    dec->base.flush = ruvd_flush;
+   dec->base.get_decoder_fence = ruvd_dec_get_decoder_fence;
 
    dec->stream_type = profile2stream_type(dec, sctx->family);
    dec->set_dtb = set_dtb;
@@ -1269,7 +1277,7 @@ struct pipe_video_codec *si_common_uvd_create_decoder(struct pipe_context *conte
    dec->screen = context->screen;
    dec->ws = ws;
 
-   if (!ws->cs_create(&dec->cs, sctx->ctx, RING_UVD, NULL, NULL, false)) {
+   if (!ws->cs_create(&dec->cs, sctx->ctx, AMD_IP_UVD, NULL, NULL, false)) {
       RVID_ERR("Can't get command submission context.\n");
       goto error;
    }
@@ -1317,7 +1325,7 @@ struct pipe_video_codec *si_common_uvd_create_decoder(struct pipe_context *conte
       si_vid_clear_buffer(context, &dec->ctx);
    }
 
-   if (sctx->family >= CHIP_POLARIS10 && sctx->screen->info.drm_minor >= 3) {
+   if (sctx->family >= CHIP_POLARIS10) {
       if (!si_vid_create_buffer(dec->screen, &dec->sessionctx, UVD_SESSION_CONTEXT_SIZE,
                                 PIPE_USAGE_DEFAULT)) {
          RVID_ERR("Can't allocated session ctx.\n");
@@ -1347,7 +1355,7 @@ struct pipe_video_codec *si_common_uvd_create_decoder(struct pipe_context *conte
    dec->msg->body.create.height_in_samples = dec->base.height;
    dec->msg->body.create.dpb_size = dpb_size;
    send_msg_buf(dec);
-   r = flush(dec, 0);
+   r = flush(dec, 0, NULL);
    if (r)
       goto error;
 

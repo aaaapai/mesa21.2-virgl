@@ -65,7 +65,7 @@ typedef struct __DRIframeTrackingExtensionRec	__DRIframeTrackingExtension;
 typedef struct __DRImediaStreamCounterExtensionRec	__DRImediaStreamCounterExtension;
 typedef struct __DRItexOffsetExtensionRec	__DRItexOffsetExtension;
 typedef struct __DRItexBufferExtensionRec	__DRItexBufferExtension;
-typedef struct __DRIlegacyExtensionRec		__DRIlegacyExtension;
+typedef struct __DRIlegacyExtensionRec		__DRIlegacyExtension; /* DRI1, structures of which have been deleted from the tree */
 typedef struct __DRIswrastExtensionRec		__DRIswrastExtension;
 typedef struct __DRIbufferRec			__DRIbuffer;
 typedef struct __DRIdri2ExtensionRec		__DRIdri2Extension;
@@ -123,6 +123,8 @@ struct __DRIextensionRec {
 
 /**
  * Used by drivers that implement the GLX_MESA_copy_sub_buffer extension.
+ *
+ * Used by the X server in swrast mode.
  */
 #define __DRI_COPY_SUB_BUFFER "DRI_CopySubBuffer"
 #define __DRI_COPY_SUB_BUFFER_VERSION 1
@@ -134,6 +136,8 @@ struct __DRIcopySubBufferExtensionRec {
 /**
  * Used by drivers that implement the GLX_SGI_swap_control or
  * GLX_MESA_swap_control extension.
+ *
+ * Used by the X server.
  */
 #define __DRI_SWAP_CONTROL "DRI_SwapControl"
 #define __DRI_SWAP_CONTROL_VERSION 1
@@ -145,6 +149,8 @@ struct __DRIswapControlExtensionRec {
 
 /**
  * Used by drivers that implement the GLX_SGI_video_sync extension.
+ *
+ * Not used by the X server.
  */
 #define __DRI_MEDIA_STREAM_COUNTER "DRI_MediaStreamCounter"
 #define __DRI_MEDIA_STREAM_COUNTER_VERSION 1
@@ -186,7 +192,7 @@ struct __DRItexBufferExtensionRec {
      * __DRIdrawable. 
      *
      * For GLX_EXT_texture_from_pixmap with AIGLX.  Deprecated in favor of
-     * setTexBuffer2 in version 2 of this interface
+     * setTexBuffer2 in version 2 of this interface.  Not used by post-2011 X.
      */
     void (*setTexBuffer)(__DRIcontext *pDRICtx,
 			 int target,
@@ -196,7 +202,8 @@ struct __DRItexBufferExtensionRec {
      * Method to override base texture image with the contents of a
      * __DRIdrawable, including the required texture format attribute.
      *
-     * For GLX_EXT_texture_from_pixmap with AIGLX.
+     * For GLX_EXT_texture_from_pixmap with AIGLX.  Used by the X server since
+     * 2011.
      *
      * \since 2
      */
@@ -205,10 +212,13 @@ struct __DRItexBufferExtensionRec {
 			  int format,
 			  __DRIdrawable *pDraw);
     /**
-     * Method to release texture buffer in case some special platform
-     * need this.
+     * Called from glXReleaseTexImageEXT().
      *
-     * For GLX_EXT_texture_from_pixmap with AIGLX.
+     * This was used by i965 in 24952160fde9 ("i965: Use finish_external instead
+     * of make_shareable in setTexBuffer2") to note when the user mis-used the
+     * interface in a way that would produce rendering bugs, and try to recover
+     * from them.  This has only ever been used from inside the Mesa tree and
+     * was never used by the X server.
      *
      * \since 3
      */
@@ -218,7 +228,7 @@ struct __DRItexBufferExtensionRec {
 };
 
 /**
- * Used by drivers that implement DRI2
+ * Used by drivers that implement DRI2.  Version 3 is used by the X server.
  */
 #define __DRI2_FLUSH "DRI2_Flush"
 #define __DRI2_FLUSH_VERSION 4
@@ -273,6 +283,8 @@ struct __DRI2flushExtensionRec {
 /**
  * Extension that the driver uses to request
  * throttle callbacks.
+ *
+ * Not used by the X server.
  */
 
 #define __DRI2_THROTTLE "DRI2_Throttle"
@@ -287,6 +299,8 @@ struct __DRI2throttleExtensionRec {
 
 /**
  * Extension for EGL_ANDROID_blob_cache
+ * *
+ * Not used by the X server.
  */
 
 #define __DRI2_BLOB "DRI2_Blob"
@@ -312,6 +326,8 @@ struct __DRI2blobExtensionRec {
 
 /**
  * Extension for fences / synchronization objects.
+ * *
+ * Not used by the X server.
  */
 
 #define __DRI2_FENCE "DRI2_Fence"
@@ -413,14 +429,17 @@ struct __DRI2fenceExtensionRec {
 /**
  * Extension for API interop.
  * See GL/mesa_glinterop.h.
+ * *
+ * Not used by the X server.
  */
 
 #define __DRI2_INTEROP "DRI2_Interop"
-#define __DRI2_INTEROP_VERSION 1
+#define __DRI2_INTEROP_VERSION 2
 
 struct mesa_glinterop_device_info;
 struct mesa_glinterop_export_in;
 struct mesa_glinterop_export_out;
+typedef struct __GLsync *GLsync;
 
 struct __DRI2interopExtensionRec {
    __DRIextension base;
@@ -433,12 +452,23 @@ struct __DRI2interopExtensionRec {
    int (*export_object)(__DRIcontext *ctx,
                         struct mesa_glinterop_export_in *in,
                         struct mesa_glinterop_export_out *out);
+
+   /**
+    * Same as MesaGLInterop*FlushObjects.
+    * 
+    * \since 2
+    */
+   int (*flush_objects)(__DRIcontext *ctx,
+                        unsigned count, struct mesa_glinterop_export_in *objects,
+                        GLsync *sync);
 };
 
 
 /**
  * Extension for limiting window system back buffer rendering to user-defined
  * scissor region.
+ *
+ * Not used by the X server.
  */
 
 #define __DRI2_BUFFER_DAMAGE "DRI2_BufferDamage"
@@ -497,6 +527,8 @@ typedef struct __DRIswrastLoaderExtensionRec __DRIswrastLoaderExtension;
 
 /**
  * Callback to get system time for media stream counter extensions.
+ *
+ * Not used by the X server.
  */
 #define __DRI_SYSTEM_TIME "DRI_SystemTime"
 #define __DRI_SYSTEM_TIME_VERSION 1
@@ -526,6 +558,8 @@ struct __DRIsystemTimeExtensionRec {
 
 /**
  * SWRast Loader extension.
+ *
+ * Version 1 is advertised by the X server.
  */
 #define __DRI_SWRAST_LOADER "DRI_SWRastLoader"
 #define __DRI_SWRAST_LOADER_VERSION 6
@@ -631,6 +665,8 @@ struct __DRIswrastLoaderExtensionRec {
  * indicate to the driver that it can use the new semantics.  A DRI
  * driver can use this to switch between the different semantics or
  * just refuse to initialize if this extension isn't present.
+ *
+ * Advertised by the X server.
  */
 #define __DRI_USE_INVALIDATE "DRI_UseInvalidate"
 #define __DRI_USE_INVALIDATE_VERSION 1
@@ -755,10 +791,11 @@ struct __DRIuseInvalidateExtensionRec {
 #define __DRI_ATTRIB_SWAP_UNDEFINED             0x8063
 
 /**
- * This extension defines the core DRI functionality.
+ * This extension defines the core DRI functionality.  It was introduced when
+ * DRI2 and AIGLX were added.
  *
  * Version >= 2 indicates that getConfigAttrib with __DRI_ATTRIB_SWAP_METHOD
- * returns a reliable value.
+ * returns a reliable value.  The X server requires v1 and uses v2.
  */
 #define __DRI_CORE "DRI_Core"
 #define __DRI_CORE_VERSION 2
@@ -766,6 +803,7 @@ struct __DRIuseInvalidateExtensionRec {
 struct __DRIcoreExtensionRec {
     __DRIextension base;
 
+    /* Not used by the X server. */
     __DRIscreen *(*createNewScreen)(int screen, int fd,
 				    unsigned int sarea_handle,
 				    const __DRIextension **extensions,
@@ -776,38 +814,48 @@ struct __DRIcoreExtensionRec {
 
     const __DRIextension **(*getExtensions)(__DRIscreen *screen);
 
+    /* Not used by the X server. */
     int (*getConfigAttrib)(const __DRIconfig *config,
 			   unsigned int attrib,
 			   unsigned int *value);
 
+    /* Not used by the X server. */
     int (*indexConfigAttrib)(const __DRIconfig *config, int index,
 			     unsigned int *attrib, unsigned int *value);
 
+    /* Not used by the X server. */
     __DRIdrawable *(*createNewDrawable)(__DRIscreen *screen,
 					const __DRIconfig *config,
 					unsigned int drawable_id,
 					unsigned int head,
 					void *loaderPrivate);
 
+    /* Used by the X server */
     void (*destroyDrawable)(__DRIdrawable *drawable);
 
+    /* Used by the X server in swrast mode. */
     void (*swapBuffers)(__DRIdrawable *drawable);
 
+    /* Used by the X server in swrast mode. */
     __DRIcontext *(*createNewContext)(__DRIscreen *screen,
 				      const __DRIconfig *config,
 				      __DRIcontext *shared,
 				      void *loaderPrivate);
 
+    /* Used by the X server. */
     int (*copyContext)(__DRIcontext *dest,
 		       __DRIcontext *src,
 		       unsigned long mask);
 
+    /* Used by the X server. */
     void (*destroyContext)(__DRIcontext *context);
 
+    /* Used by the X server. */
     int (*bindContext)(__DRIcontext *ctx,
 		       __DRIdrawable *pdraw,
 		       __DRIdrawable *pread);
 
+    /* Used by the X server. */
     int (*unbindContext)(__DRIcontext *ctx);
 };
 
@@ -819,6 +867,8 @@ struct __DRIcoreExtensionRec {
  * There are several data structures that explicitly store a major version,
  * minor version, and patch level.  These structures should be modified to
  * have a \c __DRIversionRec instead.
+ *
+ * Not used by the X server since DRI1 was deleted.
  */
 struct __DRIversionRec {
     int    major;        /**< Major version number. */
@@ -837,6 +887,8 @@ struct __DRIversionRec {
  *     __driUtilCreateNewScreen CallCreateNewScreen
  *
  * \bug This structure could be better named.
+ *
+ * Not used by the X server since DRI1 was deleted.
  */
 struct __DRIframebufferRec {
     unsigned char *base;    /**< Framebuffer base address in the CPU's
@@ -855,9 +907,9 @@ struct __DRIframebufferRec {
 
 
 /**
- * This extension provides alternative screen, drawable and context
- * constructors for swrast DRI functionality.  This is used in
- * conjunction with the core extension.
+ * This extension provides alternative screen, drawable and context constructors
+ * for swrast DRI functionality.  This is used in conjunction with the core
+ * extension.  Version 1 is required by the X server, and version 3 is used.
  */
 #define __DRI_SWRAST "DRI_SWRast"
 #define __DRI_SWRAST_VERSION 4
@@ -956,6 +1008,7 @@ typedef unsigned int
 /* Inofficial and for internal use. Increase when adding a new buffer token. */
 #define __DRI_BUFFER_COUNT		11
 
+/* Used by the X server. */
 struct __DRIbufferRec {
     unsigned int attachment;
     unsigned int name;
@@ -964,6 +1017,7 @@ struct __DRIbufferRec {
     unsigned int flags;
 };
 
+/* The X server implements up to version 3 of the DRI2 loader. */
 #define __DRI_DRI2_LOADER "DRI_DRI2Loader"
 #define __DRI_DRI2_LOADER_VERSION 5
 
@@ -1049,7 +1103,7 @@ struct __DRIdri2LoaderExtensionRec {
 
 /**
  * This extension provides alternative screen, drawable and context
- * constructors for DRI2.
+ * constructors for DRI2.  The X server uses up to version 4.
  */
 #define __DRI_DRI2 "DRI_DRI2"
 #define __DRI_DRI2_VERSION 4
@@ -1090,7 +1144,14 @@ struct __DRIdri2LoaderExtensionRec {
 
 #define __DRI_CTX_ATTRIB_NO_ERROR               6
 
-#define __DRI_CTX_NUM_ATTRIBS                   7
+/**
+ * \requires __DRI2_RENDER_HAS_PROTECTED_CONTEXT.
+ *
+ */
+#define __DRI_CTX_ATTRIB_PROTECTED              7
+
+
+#define __DRI_CTX_NUM_ATTRIBS                   8
 
 /**
  * \name Reasons that __DRIdri2Extension::createContextAttribs might fail
@@ -1211,6 +1272,7 @@ struct __DRIdri2ExtensionRec {
 #define __DRI_IMAGE_FORMAT_ABGR16161616F 0x1015
 #define __DRI_IMAGE_FORMAT_SXRGB8       0x1016
 #define __DRI_IMAGE_FORMAT_ABGR16161616 0x1017
+#define __DRI_IMAGE_FORMAT_XBGR16161616 0x1018
 
 #define __DRI_IMAGE_USE_SHARE		0x0001
 #define __DRI_IMAGE_USE_SCANOUT		0x0002
@@ -1223,6 +1285,7 @@ struct __DRIdri2ExtensionRec {
 #define __DRI_IMAGE_USE_BACKBUFFER      0x0010
 #define __DRI_IMAGE_USE_PROTECTED       0x0020
 #define __DRI_IMAGE_USE_PRIME_BUFFER    0x0040
+#define __DRI_IMAGE_USE_FRONT_RENDERING 0x0080
 
 
 #define __DRI_IMAGE_TRANSFER_READ            0x1
@@ -1241,7 +1304,6 @@ struct __DRIdri2ExtensionRec {
 #define __DRI_IMAGE_FOURCC_SARGB8888	0x83324258
 #define __DRI_IMAGE_FOURCC_SABGR8888	0x84324258
 #define __DRI_IMAGE_FOURCC_SXRGB8888	0x85324258
-#define __DRI_IMAGE_FOURCC_RGBA16161616 0x38344152  /* fourcc_code('R', 'A', '4', '8' ) */
 
 /**
  * Queryable on images created by createImageFromNames.
@@ -1768,6 +1830,8 @@ struct __DRI2configQueryExtensionRec {
  * \c __DRI_CTX_FLAG_ROBUST_BUFFER_ACCESS flag and the
  * \c __DRI_CTX_ATTRIB_RESET_STRATEGY attribute in
  * \c __DRIdri2ExtensionRec::createContextAttribs.
+ *
+ * Used by the X server.
  */
 #define __DRI2_ROBUSTNESS "DRI_Robustness"
 #define __DRI2_ROBUSTNESS_VERSION 1
@@ -1783,8 +1847,10 @@ struct __DRIrobustnessExtensionRec {
  * Existence of this extension means the driver can accept the
  * __DRI_CTX_FLAG_NO_ERROR flag.
  *
- * This extension is deprecated, and modern loaders will not use it. Please
- * use __DRI2_RENDERER_HAS_NO_ERROR_CONTEXT instead.
+ * This extension is deprecated, and modern Mesa knows that it's always
+ * supported.
+ *
+ * Not used by the X server.
  */
 #define __DRI2_NO_ERROR "DRI_NoError"
 #define __DRI2_NO_ERROR_VERSION 1
@@ -1799,6 +1865,8 @@ typedef struct __DRInoErrorExtensionRec {
  * Existence of this extension means the driver can accept the
  * \c __DRI_CTX_ATTRIB_RELEASE_BEHAVIOR attribute in
  * \c __DRIdri2ExtensionRec::createContextAttribs.
+ *
+ * Used by the X server.
  */
 #define __DRI2_FLUSH_CONTROL "DRI_FlushControl"
 #define __DRI2_FLUSH_CONTROL_VERSION 1
@@ -1839,23 +1907,6 @@ typedef struct __DRIconfigOptionsExtensionRec {
 } __DRIconfigOptionsExtension;
 
 /**
- * This extension provides a driver vtable to a set of common driver helper
- * functions (driCoreExtension, driDRI2Extension) within the driver
- * implementation, as opposed to having to pass them through a global
- * variable.
- *
- * It is not intended to be public API to the actual loader, and the vtable
- * layout may change at any time.
- */
-#define __DRI_DRIVER_VTABLE "DRI_DriverVtable"
-#define __DRI_DRIVER_VTABLE_VERSION 1
-
-typedef struct __DRIDriverVtableExtensionRec {
-    __DRIextension base;
-    const struct __DriverAPIRec *vtable;
-} __DRIDriverVtableExtension;
-
-/**
  * Query renderer driver extension
  *
  * This allows the window system layer (either EGL or GLX) to query aspects of
@@ -1875,23 +1926,8 @@ typedef struct __DRIDriverVtableExtensionRec {
 #define __DRI2_RENDERER_OPENGL_COMPATIBILITY_PROFILE_VERSION  0x0008
 #define __DRI2_RENDERER_OPENGL_ES_PROFILE_VERSION             0x0009
 #define __DRI2_RENDERER_OPENGL_ES2_PROFILE_VERSION            0x000a
-#define __DRI2_RENDERER_HAS_TEXTURE_3D                        0x000b
-/* Whether there is an sRGB format support for every supported 32-bit UNORM
- * color format.
- */
-#define __DRI2_RENDERER_HAS_FRAMEBUFFER_SRGB                  0x000c
 
-/* Bitmaks of supported/available context priorities - must match
- * __EGL_CONTEXT_PRIORITY_LOW_BIT et al
- */
-#define __DRI2_RENDERER_HAS_CONTEXT_PRIORITY                  0x000d
-#define   __DRI2_RENDERER_HAS_CONTEXT_PRIORITY_LOW            (1 << 0)
-#define   __DRI2_RENDERER_HAS_CONTEXT_PRIORITY_MEDIUM         (1 << 1)
-#define   __DRI2_RENDERER_HAS_CONTEXT_PRIORITY_HIGH           (1 << 2)
-
-#define __DRI2_RENDERER_HAS_PROTECTED_CONTENT                 0x000e
 #define __DRI2_RENDERER_PREFER_BACK_BUFFER_REUSE              0x000f
-#define __DRI2_RENDERER_HAS_NO_ERROR_CONTEXT                  0x0010
 
 typedef struct __DRI2rendererQueryExtensionRec __DRI2rendererQueryExtension;
 struct __DRI2rendererQueryExtensionRec {
@@ -2036,7 +2072,9 @@ struct __DRIimageLoaderExtensionRec {
 };
 
 /**
- * DRI extension.
+ * Main DRI3 interface extension.
+ *
+ * Not used by the X server.
  */
 
 #define __DRI_IMAGE_DRIVER           "DRI_IMAGE_DRIVER"
@@ -2137,6 +2175,8 @@ struct __DRIbackgroundCallableExtensionRec {
  *      care that SurfaceFlinger and hwcomposer can consume the compression
  *      format.
  *
+ * Not used by the X server.
+ *
  * \see __DRI_IMAGE_BUFFER_SHARED
  * \see __DRI_ATTRIB_MUTABLE_RENDER_BUFFER
  * \see __DRI_MUTABLE_RENDER_BUFFER_LOADER
@@ -2154,6 +2194,8 @@ struct __DRImutableRenderBufferDriverExtensionRec {
  *
  * Requires loader extension DRI_IMAGE_LOADER, through which the loader sends
  * __DRI_IMAGE_BUFFER_SHARED to the driver.
+ *
+ * Not used by the X server.
  *
  * \see __DRI_MUTABLE_RENDER_BUFFER_DRIVER
  */

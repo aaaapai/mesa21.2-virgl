@@ -37,8 +37,8 @@ public:
 
    fs_reg();
    fs_reg(struct ::brw_reg reg);
-   fs_reg(enum brw_reg_file file, int nr);
-   fs_reg(enum brw_reg_file file, int nr, enum brw_reg_type type);
+   fs_reg(enum brw_reg_file file, unsigned nr);
+   fs_reg(enum brw_reg_file file, unsigned nr, enum brw_reg_type type);
 
    bool equals(const fs_reg &r) const;
    bool negative_equals(const fs_reg &r) const;
@@ -121,8 +121,16 @@ horiz_offset(const fs_reg &reg, unsigned delta)
       if (reg.is_null()) {
          return reg;
       } else {
-         const unsigned stride = reg.hstride ? 1 << (reg.hstride - 1) : 0;
-         return byte_offset(reg, delta * stride * type_sz(reg.type));
+         const unsigned hstride = reg.hstride ? 1 << (reg.hstride - 1) : 0;
+         const unsigned vstride = reg.vstride ? 1 << (reg.vstride - 1) : 0;
+         const unsigned width = 1 << reg.width;
+
+         if (delta % width == 0) {
+            return byte_offset(reg, delta / width * vstride * type_sz(reg.type));
+         } else {
+            assert(vstride == hstride * width);
+            return byte_offset(reg, delta * hstride * type_sz(reg.type));
+         }
       }
    }
    unreachable("Invalid register file");
@@ -156,6 +164,11 @@ component(fs_reg reg, unsigned idx)
 {
    reg = horiz_offset(reg, idx);
    reg.stride = 0;
+   if (reg.file == ARF || reg.file == FIXED_GRF) {
+      reg.vstride = BRW_VERTICAL_STRIDE_0;
+      reg.width = BRW_WIDTH_1;
+      reg.hstride = BRW_HORIZONTAL_STRIDE_0;
+   }
    return reg;
 }
 
@@ -533,9 +546,12 @@ is_send(const fs_inst *inst)
  * assumed to complete in-order.
  */
 static inline bool
-is_unordered(const fs_inst *inst)
+is_unordered(const intel_device_info *devinfo, const fs_inst *inst)
 {
-   return is_send(inst) || inst->is_math();
+   return is_send(inst) || inst->is_math() ||
+          (devinfo->has_64bit_float_via_math_pipe &&
+           (get_exec_type(inst) == BRW_REGISTER_TYPE_DF ||
+            inst->dst.type == BRW_REGISTER_TYPE_DF));
 }
 
 /**
@@ -688,6 +704,6 @@ is_coalescing_payload(const brw::simple_allocator &alloc, const fs_inst *inst)
 }
 
 bool
-has_bank_conflict(const intel_device_info *devinfo, const fs_inst *inst);
+has_bank_conflict(const struct brw_isa_info *isa, const fs_inst *inst);
 
 #endif

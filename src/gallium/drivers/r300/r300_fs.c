@@ -432,7 +432,7 @@ static void r300_translate_fragment_shader(
     compiler.code = &shader->code;
     compiler.state = shader->compare_state;
     if (!shader->dummy)
-        compiler.Base.debug = &r300->debug;
+        compiler.Base.debug = &r300->context.debug;
     compiler.Base.is_r500 = r300->screen->caps.is_r500;
     compiler.Base.is_r400 = r300->screen->caps.is_r400;
     compiler.Base.disable_optimizations = DBG_ON(r300, DBG_NO_OPT);
@@ -463,7 +463,6 @@ static void r300_translate_fragment_shader(
     /* Translate TGSI to our internal representation */
     ttr.compiler = &compiler.Base;
     ttr.info = &shader->info;
-    ttr.use_half_swizzles = TRUE;
 
     r300_tgsi_to_rc(&ttr, tokens);
 

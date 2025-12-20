@@ -8,7 +8,7 @@
 #include "util/format/u_format_s3tc.h"
 #include "util/u_string.h"
 
-#include "os/os_mman.h"
+#include "util/os_mman.h"
 #include "util/os_time.h"
 
 #include <stdio.h>
@@ -17,6 +17,8 @@
 
 #include <nouveau_drm.h>
 #include <xf86drm.h>
+#include <nvif/class.h>
+#include <nvif/cl0080.h>
 
 #include "nouveau_winsys.h"
 #include "nouveau_screen.h"
@@ -47,7 +49,7 @@ nouveau_screen_get_name(struct pipe_screen *pscreen)
 static const char *
 nouveau_screen_get_vendor(struct pipe_screen *pscreen)
 {
-   return "nouveau";
+   return "Mesa";
 }
 
 static const char *
@@ -59,7 +61,7 @@ nouveau_screen_get_device_vendor(struct pipe_screen *pscreen)
 static uint64_t
 nouveau_screen_get_timestamp(struct pipe_screen *pscreen)
 {
-   int64_t cpu_time = os_time_get() * 1000;
+   int64_t cpu_time = os_time_get_nano();
 
    /* getparam of PTIMER_TIME takes about x10 as long (several usecs) */
 
@@ -104,14 +106,14 @@ nouveau_screen_bo_from_handle(struct pipe_screen *pscreen,
 
    if (whandle->offset != 0) {
       debug_printf("%s: attempt to import unsupported winsys offset %d\n",
-                   __FUNCTION__, whandle->offset);
+                   __func__, whandle->offset);
       return NULL;
    }
 
    if (whandle->type != WINSYS_HANDLE_TYPE_SHARED &&
        whandle->type != WINSYS_HANDLE_TYPE_FD) {
       debug_printf("%s: attempt to import unsupported handle type %d\n",
-                   __FUNCTION__, whandle->type);
+                   __func__, whandle->type);
       return NULL;
    }
 
@@ -122,7 +124,7 @@ nouveau_screen_bo_from_handle(struct pipe_screen *pscreen,
 
    if (ret) {
       debug_printf("%s: ref name 0x%08x failed with %d\n",
-                   __FUNCTION__, whandle->handle, ret);
+                   __func__, whandle->handle, ret);
       return NULL;
    }
 
@@ -187,6 +189,76 @@ reserve_vma(uintptr_t start, uint64_t reserved_size)
    return reserved;
 }
 
+static void
+nouveau_query_memory_info(struct pipe_screen *pscreen,
+                          struct pipe_memory_info *info)
+{
+   const struct nouveau_screen *screen = nouveau_screen(pscreen);
+   struct nouveau_device *dev = screen->device;
+
+   info->total_device_memory = dev->vram_size / 1024;
+   info->total_staging_memory = dev->gart_size / 1024;
+
+   info->avail_device_memory = dev->vram_limit / 1024;
+   info->avail_staging_memory = dev->gart_limit / 1024;
+}
+
+static void
+nouveau_pushbuf_cb(struct nouveau_pushbuf *push)
+{
+   struct nouveau_pushbuf_priv *p = (struct nouveau_pushbuf_priv *)push->user_priv;
+
+   if (p->context)
+      p->context->kick_notify(p->context);
+   else
+      _nouveau_fence_update(p->screen, true);
+
+   NOUVEAU_DRV_STAT(p->screen, pushbuf_count, 1);
+}
+
+int
+nouveau_pushbuf_create(struct nouveau_screen *screen, struct nouveau_context *context,
+                       struct nouveau_client *client, struct nouveau_object *chan, int nr,
+                       uint32_t size, bool immediate, struct nouveau_pushbuf **push)
+{
+   int ret;
+   ret = nouveau_pushbuf_new(client, chan, nr, size, immediate, push);
+   if (ret)
+      return ret;
+
+   struct nouveau_pushbuf_priv *p = MALLOC_STRUCT(nouveau_pushbuf_priv);
+   if (!p) {
+      nouveau_pushbuf_del(push);
+      return -ENOMEM;
+   }
+   p->screen = screen;
+   p->context = context;
+   (*push)->kick_notify = nouveau_pushbuf_cb;
+   (*push)->user_priv = p;
+   return 0;
+}
+
+void
+nouveau_pushbuf_destroy(struct nouveau_pushbuf **push)
+{
+   if (!*push)
+      return;
+   FREE((*push)->user_priv);
+   nouveau_pushbuf_del(push);
+}
+
+static bool
+nouveau_check_for_uma(int chipset, struct nouveau_object *obj)
+{
+   struct nv_device_info_v0 info = {
+      .version = 0,
+   };
+
+   nouveau_object_mthd(obj, NV_DEVICE_V0_INFO, &info, sizeof(info));
+
+   return (info.platform == NV_DEVICE_INFO_V0_IGP) || (info.platform == NV_DEVICE_INFO_V0_SOC);
+}
+
 int
 nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
 {
@@ -202,14 +274,13 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
    if (nv_dbg)
       nouveau_mesa_debug = atoi(nv_dbg);
 
-   if (dev->chipset < 0x140)
-      screen->prefer_nir = debug_get_bool_option("NV50_PROG_USE_NIR", false);
-   else
-      screen->prefer_nir = true;
+   screen->prefer_nir = !debug_get_bool_option("NV50_PROG_USE_TGSI", false);
 
    screen->force_enable_cl = debug_get_bool_option("NOUVEAU_ENABLE_CL", false);
    if (screen->force_enable_cl)
       glsl_type_singleton_init_or_ref();
+
+   screen->disable_fences = debug_get_bool_option("NOUVEAU_DISABLE_FENCES", false);
 
    /* These must be set before any failure is possible, as the cleanup
     * paths assume they're responsible for deleting them.
@@ -302,9 +373,9 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
    ret = nouveau_client_new(screen->device, &screen->client);
    if (ret)
       goto err;
-   ret = nouveau_pushbuf_new(screen->client, screen->channel,
-                             4, 512 * 1024, 1,
-                             &screen->pushbuf);
+   ret = nouveau_pushbuf_create(screen, NULL, screen->client, screen->channel,
+                                4, 512 * 1024, 1,
+                                &screen->pushbuf);
    if (ret)
       goto err;
 
@@ -326,6 +397,8 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
    pscreen->fence_reference = nouveau_screen_fence_ref;
    pscreen->fence_finish = nouveau_screen_fence_finish;
 
+   pscreen->query_memory_info = nouveau_query_memory_info;
+
    nouveau_disk_cache_create(screen);
 
    screen->transfer_pushbuf_threshold = 192;
@@ -342,7 +415,10 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
       PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_STREAM_OUTPUT |
       PIPE_BIND_COMMAND_ARGS_BUFFER;
 
+   screen->is_uma = nouveau_check_for_uma(dev->chipset, &dev->object);
+
    memset(&mm_config, 0, sizeof(mm_config));
+   nouveau_fence_list_init(&screen->fence);
 
    screen->mm_GART = nouveau_mm_create(dev,
                                        NOUVEAU_BO_GART | NOUVEAU_BO_MAP,
@@ -369,7 +445,7 @@ nouveau_screen_fini(struct nouveau_screen *screen)
    nouveau_mm_destroy(screen->mm_GART);
    nouveau_mm_destroy(screen->mm_VRAM);
 
-   nouveau_pushbuf_del(&screen->pushbuf);
+   nouveau_pushbuf_destroy(&screen->pushbuf);
 
    nouveau_client_del(&screen->client);
    nouveau_object_del(&screen->channel);
@@ -379,6 +455,7 @@ nouveau_screen_fini(struct nouveau_screen *screen)
    close(fd);
 
    disk_cache_destroy(screen->disk_shader_cache);
+   nouveau_fence_list_destroy(&screen->fence);
 }
 
 static void
@@ -393,8 +470,23 @@ nouveau_set_debug_callback(struct pipe_context *pipe,
       memset(&context->debug, 0, sizeof(context->debug));
 }
 
-void
-nouveau_context_init(struct nouveau_context *context)
+int
+nouveau_context_init(struct nouveau_context *context, struct nouveau_screen *screen)
 {
+   int ret;
+
    context->pipe.set_debug_callback = nouveau_set_debug_callback;
+   context->screen = screen;
+
+   ret = nouveau_client_new(screen->device, &context->client);
+   if (ret)
+      return ret;
+
+   ret = nouveau_pushbuf_create(screen, context, context->client, screen->channel,
+                                4, 512 * 1024, 1,
+                                &context->pushbuf);
+   if (ret)
+      return ret;
+
+   return 0;
 }

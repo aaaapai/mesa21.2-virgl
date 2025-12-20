@@ -47,6 +47,7 @@ struct si_pm4_state {
    uint16_t last_pm4;
    uint16_t ndw;        /* number of dwords in pm4 */
    uint8_t last_opcode;
+   uint8_t last_idx;
 
    /* For shader states only */
    bool is_shader;
@@ -54,6 +55,9 @@ struct si_pm4_state {
 
    /* commands for the DE */
    uint16_t max_dw;
+
+   /* Used by SQTT to override the shader address */
+   uint16_t reg_va_low_idx;
 
    /* This must be the last field because the array can continue after the structure. */
    uint32_t pm4[64];

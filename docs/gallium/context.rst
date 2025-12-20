@@ -102,7 +102,7 @@ objects. They all follow simple, one-method binding calls, e.g.
   PIPE_MAX_VIEWPORTS.
 * ``set_viewport_states``
 * ``set_window_rectangles`` sets the window rectangles to be used for
-  rendering, as defined by GL_EXT_window_rectangles. There are two
+  rendering, as defined by :ext:`GL_EXT_window_rectangles`. There are two
   modes - include and exclude, which define whether the supplied
   rectangles are to be used for including fragments or excluding
   them. All of the rectangles are ORed together, so in exclude mode,
@@ -122,7 +122,7 @@ objects. They all follow simple, one-method binding calls, e.g.
   for tessellation.
 
 * ``set_debug_callback`` sets the callback to be used for reporting
-  various debug messages, eventually reported via KHR_debug and
+  various debug messages, eventually reported via :ext:`GL_KHR_debug` and
   similar mechanisms.
 
 Samplers
@@ -180,7 +180,7 @@ to the array index which is used for sampling.
 Hardware Atomic buffers
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-Buffers containing hw atomics are required to support the feature
+Buffers containing HW atomics are required to support the feature
 on some drivers.
 
 Drivers that require this need to fill the ``set_hw_atomic_buffers`` method.
@@ -269,7 +269,7 @@ Clearing
 ^^^^^^^^
 
 Clear is one of the most difficult concepts to nail down to a single
-interface (due to both different requirements from APIs and also driver/hw
+interface (due to both different requirements from APIs and also driver/HW
 specific differences).
 
 ``clear`` initializes some or all of the surfaces currently bound to
@@ -567,7 +567,7 @@ Normally, if the occlusion query returned a non-zero result subsequent
 drawing happens normally so fragments may be generated, shaded and
 processed even where they're known to be obscured.
 
-The ''render_condition_mem'' function specifies the drawing is dependant
+The ''render_condition_mem'' function specifies the drawing is dependent
 on a value in memory. A buffer resource and offset denote which 32-bit
 value to use for the query. This is used for Vulkan API.
 
@@ -698,6 +698,11 @@ The returned pointer points to the start of the mapped range according to
 the box region, not the beginning of the resource. If transfer_map fails,
 the returned pointer to the buffer memory is NULL, and the pointer
 to the transfer object remains unchanged (i.e. it can be non-NULL).
+
+When mapping an MSAA surface, the samples are implicitly resolved to
+single-sampled for reads (returning the first sample for depth/stencil/integer,
+averaged for others).  See u_transfer_helper's U_TRANSFER_HELPER_MSAA_MAP for a
+way to get that behavior using a resolve blit.
 
 ``transfer_unmap`` remove the memory mapping for and destroy
 the transfer object. The pointer into the resource should be considered

@@ -57,12 +57,14 @@ def define_tracepoints(args):
                  tp_args=[Arg(type='uint8_t', var='level', c_format='%hhu'),],
                  end_pipelined=False)
 
+    begin_end_tp('xfb',
+                 end_pipelined=False)
+
     begin_end_tp('render_pass',
                  tp_args=[Arg(type='uint16_t', var='width', c_format='%hu'),
                           Arg(type='uint16_t', var='height', c_format='%hu'),
                           Arg(type='uint8_t', var='att_count', c_format='%hhu'),
-                          Arg(type='uint8_t', var='msaa', c_format='%hhu'),
-                          Arg(type='uint32_t', var='subpass_count', c_format='%u'),])
+                          Arg(type='uint8_t', var='msaa', c_format='%hhu'),])
 
     begin_end_tp('dyn_render_pass',
                  tp_args=[Arg(type='uint16_t', var='width', c_format='%hu'),
@@ -73,12 +75,16 @@ def define_tracepoints(args):
                           Arg(type='uint8_t', var='resume', c_format='%hhu'),])
 
     begin_end_tp('blorp',
-                 tp_args=[Arg(type='uint32_t', name='width', var='width', c_format='%u'),
+                 tp_args=[Arg(type='enum blorp_op', name='op', var='op', c_format='%s', to_prim_type='blorp_op_to_name({})'),
+                          Arg(type='uint32_t', name='width', var='width', c_format='%u'),
                           Arg(type='uint32_t', name='height', var='height', c_format='%u'),
-                          Arg(type='enum isl_aux_op', name='hiz_op', var='hiz_op', c_format='%s', to_prim_type='isl_aux_op_to_name({})'),
-                          Arg(type='enum isl_aux_op', name='fast_clear_op', var='fast_clear_op', c_format='%s', to_prim_type='isl_aux_op_to_name({})'),
-                          Arg(type='enum blorp_shader_type', name='blorp_type', var='shader_type', c_format='%s', to_prim_type='blorp_shader_type_to_name({})'),
-                          Arg(type='enum blorp_shader_pipeline', name='blorp_pipe', var='shader_pipe', c_format='%s', to_prim_type='blorp_shader_pipeline_to_name({})'),])
+                          Arg(type='uint32_t', name='samples', var='samples', c_format='%u'),
+                          Arg(type='enum blorp_shader_pipeline', name='blorp_pipe', var='shader_pipe', c_format='%s', to_prim_type='blorp_shader_pipeline_to_name({})'),
+                          Arg(type='enum isl_format', name='dst_fmt', var='dst_fmt', c_format='%s', to_prim_type='isl_format_get_short_name({})'),
+                          Arg(type='enum isl_format', name='src_fmt', var='src_fmt', c_format='%s', to_prim_type='isl_format_get_short_name({})'),
+                          ])
+
+    begin_end_tp('generate_draws')
 
     begin_end_tp('draw',
                  tp_args=[Arg(type='uint32_t', var='count', c_format='%u')])
@@ -97,6 +103,16 @@ def define_tracepoints(args):
     begin_end_tp('draw_indirect_count',
                  tp_args=[Arg(type='uint32_t', var='max_draw_count', c_format='%u'),])
     begin_end_tp('draw_indexed_indirect_count',
+                 tp_args=[Arg(type='uint32_t', var='max_draw_count', c_format='%u'),])
+
+    begin_end_tp('draw_mesh',
+                 tp_args=[Arg(type='uint32_t', var='group_x', c_format='%u'),
+                          Arg(type='uint32_t', var='group_y', c_format='%u'),
+                          Arg(type='uint32_t', var='group_z', c_format='%u'),],
+                 tp_print=['group=%ux%ux%u', '__entry->group_x', '__entry->group_y', '__entry->group_z'])
+    begin_end_tp('draw_mesh_indirect',
+                 tp_args=[Arg(type='uint32_t', var='draw_count', c_format='%u'),])
+    begin_end_tp('draw_mesh_indirect_count',
                  tp_args=[Arg(type='uint32_t', var='max_draw_count', c_format='%u'),])
 
     begin_end_tp('compute',
@@ -119,23 +135,28 @@ def define_tracepoints(args):
             exprs.append('(__entry->flags & INTEL_DS_{0}_BIT) ? "+{1}" : ""'.format(a[0], a[1]))
         fmt += ' : %s'
         exprs.append('__entry->reason ? __entry->reason : "unknown"')
+        # To printout flags
+        # fmt += '(0x%08x)'
+        # exprs.append('__entry->flags')
         fmt = [fmt]
         fmt += exprs
         return fmt
 
-    stall_flags = [['DEPTH_CACHE_FLUSH',         'depth_flush'],
-                   ['DATA_CACHE_FLUSH',          'dc_flush'],
-                   ['HDC_PIPELINE_FLUSH',        'hdc_flush'],
-                   ['RENDER_TARGET_CACHE_FLUSH', 'rt_flush'],
-                   ['TILE_CACHE_FLUSH',          'tile_flush'],
-                   ['STATE_CACHE_INVALIDATE',    'state_inval'],
-                   ['CONST_CACHE_INVALIDATE',    'const_inval'],
-                   ['VF_CACHE_INVALIDATE',       'vf_inval'],
-                   ['TEXTURE_CACHE_INVALIDATE',  'tex_inval'],
-                   ['INST_CACHE_INVALIDATE',     'ic_inval'],
-                   ['STALL_AT_SCOREBOARD',       'pb_stall'],
-                   ['DEPTH_STALL',               'depth_stall'],
-                   ['CS_STALL',                  'cs_stall']]
+    stall_flags = [['DEPTH_CACHE_FLUSH',             'depth_flush'],
+                   ['DATA_CACHE_FLUSH',              'dc_flush'],
+                   ['HDC_PIPELINE_FLUSH',            'hdc_flush'],
+                   ['RENDER_TARGET_CACHE_FLUSH',     'rt_flush'],
+                   ['TILE_CACHE_FLUSH',              'tile_flush'],
+                   ['STATE_CACHE_INVALIDATE',        'state_inval'],
+                   ['CONST_CACHE_INVALIDATE',        'const_inval'],
+                   ['VF_CACHE_INVALIDATE',           'vf_inval'],
+                   ['TEXTURE_CACHE_INVALIDATE',      'tex_inval'],
+                   ['INST_CACHE_INVALIDATE',         'ic_inval'],
+                   ['STALL_AT_SCOREBOARD',           'pb_stall'],
+                   ['DEPTH_STALL',                   'depth_stall'],
+                   ['CS_STALL',                      'cs_stall'],
+                   ['UNTYPED_DATAPORT_CACHE_FLUSH',  'udp_flush'],
+                   ['PSS_STALL_SYNC',                'pss_stall']]
 
     begin_end_tp('stall',
                  tp_args=[ArgStruct(type='uint32_t', var='flags'),
@@ -152,7 +173,8 @@ def generate_code(args):
     from u_trace import utrace_generate_perfetto_utils
 
     utrace_generate(cpath=args.utrace_src, hpath=args.utrace_hdr,
-                    ctx_param='struct intel_ds_device *dev')
+                    ctx_param='struct intel_ds_device *dev',
+                    need_cs_param=False)
     utrace_generate_perfetto_utils(hpath=args.perfetto_hdr)
 
 

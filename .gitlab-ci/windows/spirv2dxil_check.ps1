@@ -1,11 +1,3 @@
-# Ensure that dxil.dll in on the %PATH%
-$dxil_dll = cmd.exe /C "C:\BuildTools\Common7\Tools\VsDevCmd.bat -host_arch=amd64 -arch=amd64 -no_logo && where dxil.dll" 2>&1
-if ($dxil_dll -notmatch "dxil.dll$") {
-    Write-Output "Couldn't get path to dxil.dll"
-    exit 1
-}
-$env:Path = "$(Split-Path $dxil_dll);$env:Path"
-
 $exec_mode_to_stage = @{ Fragment = "fragment"; Vertex = "vertex"; GLCompute = "compute" }
 
 $spvasm_files = (Get-ChildItem C:\spirv-samples\spvasm\*.spvasm) | Sort-Object Name
@@ -18,7 +10,7 @@ foreach ($spvasm in $spvasm_files) {
         $spv_version = $Matches[1]
     }
     
-    $as_output = C:\spirv-tools\bin\spirv-as.exe --target-env spv$spv_version --preserve-numeric-ids -o $spvfile $spvasm 2>&1 | % { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ } }  | Out-String
+    $as_output = . "$env:VULKAN_SDK\Bin\spirv-as.exe" --target-env spv$spv_version --preserve-numeric-ids -o $spvfile $spvasm 2>&1 | % { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ } }  | Out-String
     if ($LASTEXITCODE -ne 0) {
         Write-Output "$test_name Skip: Unable to assemble shader"
         Write-Output "$as_output`n"

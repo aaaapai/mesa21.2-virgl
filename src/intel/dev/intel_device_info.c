@@ -31,11 +31,15 @@
 #include <xf86drm.h>
 
 #include "intel_device_info.h"
+#include "intel_hwconfig.h"
 #include "intel/common/intel_gem.h"
 #include "util/bitscan.h"
-#include "util/debug.h"
+#include "intel_wa.h"
+
+#include "util/u_debug.h"
 #include "util/log.h"
 #include "util/macros.h"
+#include "util/os_misc.h"
 
 #include "drm-uapi/i915_drm.h"
 
@@ -70,6 +74,8 @@ static const struct {
    { "adl", 0x4680 },
    { "sg1", 0x4907 },
    { "rpl", 0xa780 },
+   { "dg2", 0x5690 },
+   { "mtl", 0x7d60 },
 };
 
 /**
@@ -97,7 +103,6 @@ static const struct intel_device_info intel_device_info_gfx3 = {
    .max_eus_per_subslice = 8,
    .num_thread_per_eu = 4,
    .timestamp_frequency = 12500000,
-   .cs_prefetch_size = 512,
 };
 
 static const struct intel_device_info intel_device_info_i965 = {
@@ -116,7 +121,6 @@ static const struct intel_device_info intel_device_info_i965 = {
    },
    .timestamp_frequency = 12500000,
    .simulator_id = -1,
-   .cs_prefetch_size = 512,
 };
 
 static const struct intel_device_info intel_device_info_g4x = {
@@ -138,7 +142,6 @@ static const struct intel_device_info intel_device_info_g4x = {
    },
    .timestamp_frequency = 12500000,
    .simulator_id = -1,
-   .cs_prefetch_size = 512,
 };
 
 static const struct intel_device_info intel_device_info_ilk = {
@@ -159,7 +162,6 @@ static const struct intel_device_info intel_device_info_ilk = {
    },
    .timestamp_frequency = 12500000,
    .simulator_id = -1,
-   .cs_prefetch_size = 512,
 };
 
 static const struct intel_device_info intel_device_info_snb_gt1 = {
@@ -190,7 +192,6 @@ static const struct intel_device_info intel_device_info_snb_gt1 = {
    },
    .timestamp_frequency = 12500000,
    .simulator_id = -1,
-   .cs_prefetch_size = 512,
 };
 
 static const struct intel_device_info intel_device_info_snb_gt2 = {
@@ -221,7 +222,6 @@ static const struct intel_device_info intel_device_info_snb_gt2 = {
    },
    .timestamp_frequency = 12500000,
    .simulator_id = -1,
-   .cs_prefetch_size = 512,
 };
 
 #define GFX7_FEATURES                               \
@@ -233,8 +233,7 @@ static const struct intel_device_info intel_device_info_snb_gt2 = {
    .has_64bit_float = true,                         \
    .has_surface_tile_offset = true,                 \
    .timestamp_frequency = 12500000,                 \
-   .max_constant_urb_size_kb = 16,                  \
-   .cs_prefetch_size = 512
+   .max_constant_urb_size_kb = 16
 
 static const struct intel_device_info intel_device_info_ivb_gt1 = {
    GFX7_FEATURES, .platform = INTEL_PLATFORM_IVB, .gt = 1,
@@ -436,8 +435,7 @@ static const struct intel_device_info intel_device_info_hsw_gt3 = {
    .max_wm_threads = 384,                           \
    .max_threads_per_psd = 64,                       \
    .timestamp_frequency = 12500000,                 \
-   .max_constant_urb_size_kb = 32,                  \
-   .cs_prefetch_size = 512
+   .max_constant_urb_size_kb = 32
 
 static const struct intel_device_info intel_device_info_bdw_gt1 = {
    GFX8_FEATURES, .gt = 1,
@@ -547,7 +545,6 @@ static const struct intel_device_info intel_device_info_chv = {
    .max_threads_per_psd = 64,                       \
    .max_cs_threads = 56,                            \
    .timestamp_frequency = 12000000,                 \
-   .cs_prefetch_size = 512,                         \
    .urb = {                                         \
       .min_entries = {                              \
          [MESA_SHADER_VERTEX]    = 64,              \
@@ -568,6 +565,7 @@ static const struct intel_device_info intel_device_info_chv = {
    .gt = 1,                                        \
    .has_llc = false,                               \
    .has_sample_with_hiz = true,                    \
+   .has_illegal_ccs_values = true,                 \
    .num_slices = 1,                                \
    .num_thread_per_eu = 6,                         \
    .max_vs_threads = 112,                          \
@@ -619,7 +617,8 @@ static const struct intel_device_info intel_device_info_chv = {
 #define GFX9_FEATURES                               \
    GFX8_FEATURES,                                   \
    GFX9_HW_INFO,                                    \
-   .has_sample_with_hiz = true
+   .has_sample_with_hiz = true,                     \
+   .has_illegal_ccs_values = true
 
 static const struct intel_device_info intel_device_info_skl_gt1 = {
    GFX9_FEATURES, .gt = 1,
@@ -832,8 +831,7 @@ static const struct intel_device_info intel_device_info_cfl_gt3 = {
    .max_tcs_threads = 224,                          \
    .max_tes_threads = 364,                          \
    .max_threads_per_psd = 64,                       \
-   .max_cs_threads = 56,                            \
-   .cs_prefetch_size = 512
+   .max_cs_threads = 56
 
 #define GFX11_FEATURES(_gt, _slices, _subslices, _l3, _platform)  \
    GFX8_FEATURES,                                     \
@@ -843,6 +841,7 @@ static const struct intel_device_info intel_device_info_cfl_gt3 = {
    .has_64bit_int = false,                            \
    .has_integer_dword_mul = false,                    \
    .has_sample_with_hiz = false,                      \
+   .has_illegal_ccs_values = true,                    \
    .gt = _gt, .num_slices = _slices, .l3_banks = _l3, \
    .num_subslices = _subslices,                       \
    .max_eus_per_subslice = 8
@@ -896,6 +895,7 @@ static const struct intel_device_info intel_device_info_icl_gt0_5 = {
       GFX11_URB_MIN_MAX_ENTRIES,                    \
    },                                               \
    .disable_ccs_repack = true,                      \
+   .has_illegal_ccs_values = true,                  \
    .simulator_id = 28
 
 static const struct intel_device_info intel_device_info_ehl_4x8 = {
@@ -968,8 +968,7 @@ static const struct intel_device_info intel_device_info_ehl_2x4 = {
    .has_integer_dword_mul = false,                              \
    .gt = _gt, .num_slices = _slices, .l3_banks = _l3,           \
    .simulator_id = 22,                                          \
-   .max_eus_per_subslice = 16,                                   \
-   .cs_prefetch_size = 512
+   .max_eus_per_subslice = 16
 
 #define dual_subslices(args...) { args, }
 
@@ -1004,11 +1003,13 @@ static const struct intel_device_info intel_device_info_rkl_gt1 = {
 static const struct intel_device_info intel_device_info_adl_gt05 = {
    GFX12_GT05_FEATURES,
    .platform = INTEL_PLATFORM_ADL,
+   .display_ver = 13,
 };
 
 static const struct intel_device_info intel_device_info_adl_gt1 = {
    GFX12_GT_FEATURES(1),
    .platform = INTEL_PLATFORM_ADL,
+   .display_ver = 13,
 };
 
 static const struct intel_device_info intel_device_info_adl_n = {
@@ -1027,6 +1028,13 @@ static const struct intel_device_info intel_device_info_rpl = {
    GFX12_FEATURES(1, 1, 4),
    .num_subslices = dual_subslices(2),
    .platform = INTEL_PLATFORM_RPL,
+   .display_ver = 13,
+};
+
+static const struct intel_device_info intel_device_info_rpl_p = {
+   GFX12_GT_FEATURES(2),
+   .platform = INTEL_PLATFORM_RPL,
+   .display_ver = 13,
 };
 
 #define GFX12_DG1_SG1_FEATURES                  \
@@ -1047,31 +1055,63 @@ static const struct intel_device_info intel_device_info_sg1 = {
 
 #define XEHP_FEATURES(_gt, _slices, _l3)                        \
    GFX12_FEATURES(_gt, _slices, _l3),                           \
+   .num_thread_per_eu = 8 /* BSpec 44472 */,                    \
    .verx10 = 125,                                               \
    .has_llc = false,                                            \
+   .has_lsc = true,                                             \
    .has_local_mem = true,                                       \
    .has_aux_map = false,                                        \
-   .simulator_id = 29,                                          \
-   .cs_prefetch_size = 1024
+   .simulator_id = 29
 
 #define DG2_FEATURES                                            \
    /* (Sub)slice info comes from the kernel topology info */    \
    XEHP_FEATURES(0, 1, 0),                                      \
+   .display_ver = 13,                                           \
    .revision = 4, /* For offline compiler */                    \
    .num_subslices = dual_subslices(1),                          \
-   .has_lsc = true,                                             \
    .apply_hwconfig = true,                                      \
    .has_coarse_pixel_primitive_and_cb = true,                   \
-   .has_mesh_shading = true
+   .has_mesh_shading = true,                                    \
+   .has_ray_tracing = true,                                     \
+   .has_flat_ccs = true
 
-UNUSED static const struct intel_device_info intel_device_info_dg2_g10 = {
+static const struct intel_device_info intel_device_info_dg2_g10 = {
    DG2_FEATURES,
    .platform = INTEL_PLATFORM_DG2_G10,
 };
 
-UNUSED static const struct intel_device_info intel_device_info_dg2_g11 = {
+static const struct intel_device_info intel_device_info_dg2_g11 = {
    DG2_FEATURES,
    .platform = INTEL_PLATFORM_DG2_G11,
+};
+
+static const struct intel_device_info intel_device_info_dg2_g12 = {
+   DG2_FEATURES,
+   .platform = INTEL_PLATFORM_DG2_G12,
+};
+
+#define MTL_FEATURES                                            \
+   /* (Sub)slice info comes from the kernel topology info */    \
+   XEHP_FEATURES(0, 1, 0),                                      \
+   .num_subslices = dual_subslices(1),                          \
+   .has_local_mem = false,                                      \
+   .has_aux_map = true,                                         \
+   .apply_hwconfig = true,                                      \
+   .has_64bit_float = true,                                     \
+   .has_64bit_float_via_math_pipe = true,                       \
+   .has_integer_dword_mul = false,                              \
+   .has_coarse_pixel_primitive_and_cb = true,                   \
+   .has_mesh_shading = true,                                    \
+   .has_ray_tracing = true
+
+UNUSED static const struct intel_device_info intel_device_info_mtl_m = {
+   MTL_FEATURES,
+   .platform = INTEL_PLATFORM_MTL_M,
+};
+
+UNUSED static const struct intel_device_info intel_device_info_mtl_p = {
+   MTL_FEATURES,
+   .platform = INTEL_PLATFORM_MTL_P,
 };
 
 static void
@@ -1110,7 +1150,7 @@ update_slice_subslice_counts(struct intel_device_info *devinfo)
 }
 
 static void
-update_pixel_pipes(struct intel_device_info *devinfo)
+update_pixel_pipes(struct intel_device_info *devinfo, uint8_t *subslice_masks)
 {
    if (devinfo->ver < 11)
       return;
@@ -1139,26 +1179,9 @@ update_pixel_pipes(struct intel_device_info *devinfo)
 
       if (subslice_idx < ARRAY_SIZE(devinfo->subslice_masks))
          devinfo->ppipe_subslices[p] =
-            __builtin_popcount(devinfo->subslice_masks[subslice_idx] & ppipe_mask);
+            __builtin_popcount(subslice_masks[subslice_idx] & ppipe_mask);
       else
          devinfo->ppipe_subslices[p] = 0;
-   }
-
-   /* From the "Fusing information" BSpec page regarding DG2 configurations
-    * where at least a slice has a single pixel pipe fused off:
-    *
-    * "Fault disable any 2 DSS in a Gslice and disable that Gslice (incl.
-    *  geom/color/Z)"
-    *
-    * XXX - Query geometry topology from hardware once kernel interface is
-    *       available instead of trying to do guesswork here.
-    */
-   if (intel_device_info_is_dg2(devinfo)) {
-      for (unsigned p = 0; p < INTEL_DEVICE_MAX_PIXEL_PIPES; p++) {
-         if (devinfo->ppipe_subslices[p] < 2 ||
-             devinfo->ppipe_subslices[p ^ 1] < 2)
-            devinfo->ppipe_subslices[p] = 0;
-      }
    }
 }
 
@@ -1192,7 +1215,7 @@ update_l3_banks(struct intel_device_info *devinfo)
 
 /* At some point in time, some people decided to redefine what topology means,
  * from useful HW related information (slice, subslice, etc...), to much less
- * useful generic stuff that noone cares about (a single slice with lots of
+ * useful generic stuff that no one cares about (a single slice with lots of
  * subslices). Of course all of this was done without asking the people who
  * defined the topology query in the first place, to solve a lack of
  * information Gfx10+. This function is here to workaround the fact it's not
@@ -1201,8 +1224,16 @@ update_l3_banks(struct intel_device_info *devinfo)
  */
 static void
 update_from_single_slice_topology(struct intel_device_info *devinfo,
-                                  const struct drm_i915_query_topology_info *topology)
+                                  const struct drm_i915_query_topology_info *topology,
+                                  const struct drm_i915_query_topology_info *geom_topology)
 {
+   /* An array of bit masks of the subslices available for 3D
+    * workloads, analogous to intel_device_info::subslice_masks.  This
+    * may differ from the set of enabled subslices on XeHP+ platforms
+    * with compute-only subslices.
+    */
+   uint8_t geom_subslice_masks[ARRAY_SIZE(devinfo->subslice_masks)] = { 0 };
+
    assert(devinfo->verx10 >= 125);
 
    reset_masks(devinfo);
@@ -1221,15 +1252,28 @@ update_from_single_slice_topology(struct intel_device_info *devinfo,
    devinfo->eu_subslice_stride = DIV_ROUND_UP(16, 8);
 
    for (uint32_t ss_idx = 0; ss_idx < topology->max_subslices; ss_idx++) {
+      const uint32_t s = ss_idx / 4;
+      const uint32_t ss = ss_idx % 4;
+
+      /* Determine whether ss_idx is enabled (ss_idx_available) and
+       * available for 3D workloads (geom_ss_idx_available), which may
+       * differ on XeHP+ if ss_idx is a compute-only DSS.
+       */
       const bool ss_idx_available =
          (topology->data[topology->subslice_offset + ss_idx / 8] >>
           (ss_idx % 8)) & 1;
+      const bool geom_ss_idx_available =
+         (geom_topology->data[geom_topology->subslice_offset + ss_idx / 8] >>
+          (ss_idx % 8)) & 1;
+
+      if (geom_ss_idx_available) {
+         assert(ss_idx_available);
+         geom_subslice_masks[s * devinfo->subslice_slice_stride +
+                             ss / 8] |= 1u << (ss % 8);
+      }
 
       if (!ss_idx_available)
          continue;
-
-      uint32_t s = ss_idx / 4;
-      uint32_t ss = ss_idx % 4;
 
       devinfo->max_slices = MAX2(devinfo->max_slices, s + 1);
       devinfo->slice_masks |= 1u << s;
@@ -1253,7 +1297,7 @@ update_from_single_slice_topology(struct intel_device_info *devinfo,
    }
 
    update_slice_subslice_counts(devinfo);
-   update_pixel_pipes(devinfo);
+   update_pixel_pipes(devinfo, geom_subslice_masks);
    update_l3_banks(devinfo);
 }
 
@@ -1291,7 +1335,7 @@ update_from_topology(struct intel_device_info *devinfo,
 
    /* Now that all the masks are in place, update the counts. */
    update_slice_subslice_counts(devinfo);
-   update_pixel_pipes(devinfo);
+   update_pixel_pipes(devinfo, devinfo->subslice_masks);
    update_l3_banks(devinfo);
 }
 
@@ -1503,6 +1547,7 @@ intel_get_device_info_from_pci_id(int pci_id,
       devinfo->display_ver = devinfo->ver;
 
    update_cs_workgroup_threads(devinfo);
+   intel_device_info_init_was(devinfo);
 
    return true;
 }
@@ -1549,15 +1594,126 @@ query_topology(struct intel_device_info *devinfo, int fd)
    if (topo_info == NULL)
       return false;
 
-   if (devinfo->verx10 >= 125)
-      update_from_single_slice_topology(devinfo, topo_info);
-   else
+   if (devinfo->verx10 >= 125) {
+      struct drm_i915_query_topology_info *geom_topo_info =
+         intel_i915_query_alloc(fd, DRM_I915_QUERY_GEOMETRY_SUBSLICES, NULL);
+      if (geom_topo_info == NULL) {
+         free(topo_info);
+         return false;
+      }
+
+      update_from_single_slice_topology(devinfo, topo_info, geom_topo_info);
+      free(geom_topo_info);
+   } else {
       update_from_topology(devinfo, topo_info);
+   }
 
    free(topo_info);
 
    return true;
 
+}
+
+/**
+ * Reports memory region info, and allows buffers to target system-memory,
+ * and/or device local memory.
+ */
+static bool
+i915_query_regions(struct intel_device_info *devinfo, int fd, bool update)
+{
+   struct drm_i915_query_memory_regions *meminfo =
+      intel_i915_query_alloc(fd, DRM_I915_QUERY_MEMORY_REGIONS, NULL);
+   if (meminfo == NULL)
+      return false;
+
+   for (int i = 0; i < meminfo->num_regions; i++) {
+      const struct drm_i915_memory_region_info *mem = &meminfo->regions[i];
+      switch (mem->region.memory_class) {
+      case I915_MEMORY_CLASS_SYSTEM: {
+         if (!update) {
+            devinfo->mem.sram.mem_class = mem->region.memory_class;
+            devinfo->mem.sram.mem_instance = mem->region.memory_instance;
+            devinfo->mem.sram.mappable.size = mem->probed_size;
+         } else {
+            assert(devinfo->mem.sram.mem_class == mem->region.memory_class);
+            assert(devinfo->mem.sram.mem_instance == mem->region.memory_instance);
+            assert(devinfo->mem.sram.mappable.size == mem->probed_size);
+         }
+         /* The kernel uAPI only reports an accurate unallocated_size value
+          * for I915_MEMORY_CLASS_DEVICE.
+          */
+         uint64_t available;
+         if (os_get_available_system_memory(&available))
+            devinfo->mem.sram.mappable.free = MIN2(available, mem->probed_size);
+         break;
+      }
+      case I915_MEMORY_CLASS_DEVICE:
+         if (!update) {
+            devinfo->mem.vram.mem_class = mem->region.memory_class;
+            devinfo->mem.vram.mem_instance = mem->region.memory_instance;
+            if (mem->probed_cpu_visible_size > 0) {
+               devinfo->mem.vram.mappable.size = mem->probed_cpu_visible_size;
+               devinfo->mem.vram.unmappable.size =
+                  mem->probed_size - mem->probed_cpu_visible_size;
+            } else {
+               /* We are running on an older kernel without support for the
+                * small-bar uapi. These kernels only support systems where the
+                * entire vram is mappable.
+                */
+               devinfo->mem.vram.mappable.size = mem->probed_size;
+               devinfo->mem.vram.unmappable.size = 0;
+            }
+         } else {
+            assert(devinfo->mem.vram.mem_class == mem->region.memory_class);
+            assert(devinfo->mem.vram.mem_instance == mem->region.memory_instance);
+            assert((devinfo->mem.vram.mappable.size +
+                    devinfo->mem.vram.unmappable.size) == mem->probed_size);
+         }
+         if (mem->unallocated_cpu_visible_size > 0) {
+            if (mem->unallocated_size != -1) {
+               devinfo->mem.vram.mappable.free = mem->unallocated_cpu_visible_size;
+               devinfo->mem.vram.unmappable.free =
+                  mem->unallocated_size - mem->unallocated_cpu_visible_size;
+            }
+         } else {
+            /* We are running on an older kernel without support for the
+             * small-bar uapi. These kernels only support systems where the
+             * entire vram is mappable.
+             */
+            if (mem->unallocated_size != -1) {
+               devinfo->mem.vram.mappable.free = mem->unallocated_size;
+               devinfo->mem.vram.unmappable.free = 0;
+            }
+         }
+         break;
+      default:
+         break;
+      }
+   }
+
+   free(meminfo);
+   devinfo->mem.use_class_instance = true;
+   return true;
+}
+
+static bool
+compute_system_memory(struct intel_device_info *devinfo, bool update)
+{
+   uint64_t total_phys;
+   if (!os_get_total_physical_memory(&total_phys))
+      return false;
+
+   uint64_t available = 0;
+   os_get_available_system_memory(&available);
+
+   if (!update)
+      devinfo->mem.sram.mappable.size = total_phys;
+   else
+      assert(devinfo->mem.sram.mappable.size == total_phys);
+
+   devinfo->mem.sram.mappable.free = available;
+
+   return true;
 }
 
 static int
@@ -1697,6 +1853,22 @@ fixup_chv_device_info(struct intel_device_info *devinfo)
 }
 
 static void
+fixup_adl_device_info(struct intel_device_info *devinfo)
+{
+   assert(devinfo->platform == INTEL_PLATFORM_ADL);
+   const uint32_t eu_total = intel_device_info_eu_total(devinfo);
+
+   if (eu_total >= 32)
+      return;
+
+   /* Fixes issues with:
+    * dEQP-GLES31.functional.geometry_shading.layered.render_with_default_layer_cubemap
+    * when running on ADL-N platform.
+    */
+   devinfo->urb.max_entries[MESA_SHADER_GEOMETRY] = 1024;
+}
+
+static void
 init_max_scratch_ids(struct intel_device_info *devinfo)
 {
    /* Determine the max number of subslices that potentially might be used in
@@ -1800,81 +1972,41 @@ init_max_scratch_ids(struct intel_device_info *devinfo)
    }
 }
 
-bool
-intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo)
+static unsigned
+intel_device_info_calc_engine_prefetch(const struct intel_device_info *devinfo,
+                                       enum intel_engine_class engine_class)
 {
-   int devid = 0;
-   const char *devid_override = getenv("INTEL_DEVID_OVERRIDE");
-   if (devid_override && strlen(devid_override) > 0) {
-      if (geteuid() == getuid()) {
-         devid = intel_device_name_to_pci_device_id(devid_override);
-         /* Fallback to PCI ID. */
-         if (devid <= 0)
-            devid = strtol(devid_override, NULL, 0);
-         if (devid <= 0) {
-            mesa_loge("Invalid INTEL_DEVID_OVERRIDE=\"%s\". "
-                    "Use a valid numeric PCI ID or one of the supported "
-                    "platform names:", devid_override);
-            for (unsigned i = 0; i < ARRAY_SIZE(name_map); i++)
-               mesa_loge("   %s", name_map[i].name);
-            return false;
-         }
-      } else {
-         mesa_logi("Ignoring INTEL_DEVID_OVERRIDE=\"%s\" because "
-                   "real and effective user ID don't match.", devid_override);
+   if (devinfo->verx10 < 125)
+      return 512;
+
+   if (intel_device_info_is_mtl(devinfo)) {
+      switch (engine_class) {
+      case INTEL_ENGINE_CLASS_RENDER:
+         return 2048;
+      case INTEL_ENGINE_CLASS_COMPUTE:
+         return 1024;
+      default:
+         return 512;
       }
    }
 
-   if (devid > 0) {
-      if (!intel_get_device_info_from_pci_id(devid, devinfo))
-         return false;
-      devinfo->no_hw = true;
-   } else {
-      /* Get PCI info.
-       *
-       * Some callers may already have a valid drm device which holds
-       * values of PCI fields queried here prior to calling this function.
-       * But making this query optional leads to a more cumbersome
-       * implementation. These callers still need to initialize the fields
-       * somewhere out of this function and rely on an ioctl to get PCI
-       * device id for the next step when skipping this drm query.
-       */
-      drmDevicePtr drmdev = NULL;
-      if (drmGetDevice2(fd, DRM_DEVICE_GET_PCI_REVISION, &drmdev)) {
-         mesa_loge("Failed to query drm device.");
-         return false;
-      }
-      if (!intel_get_device_info_from_pci_id
-            (drmdev->deviceinfo.pci->device_id, devinfo)) {
-         drmFreeDevice(&drmdev);
-         return false;
-      }
-      devinfo->pci_domain = drmdev->businfo.pci->domain;
-      devinfo->pci_bus = drmdev->businfo.pci->bus;
-      devinfo->pci_dev = drmdev->businfo.pci->dev;
-      devinfo->pci_func = drmdev->businfo.pci->func;
-      devinfo->pci_device_id = drmdev->deviceinfo.pci->device_id;
-      devinfo->pci_revision_id = drmdev->deviceinfo.pci->revision_id;
-      drmFreeDevice(&drmdev);
-      devinfo->no_hw = env_var_as_boolean("INTEL_NO_HW", false);
+   return 1024;
+}
+
+static bool
+intel_i915_get_device_info_from_fd(int fd, struct intel_device_info *devinfo)
+{
+   if (intel_get_and_process_hwconfig_table(fd, devinfo)) {
+      /* After applying hwconfig values, some items need to be recalculated. */
+      devinfo->max_cs_threads =
+         devinfo->max_eus_per_subslice * devinfo->num_thread_per_eu;
+
+      update_cs_workgroup_threads(devinfo);
    }
 
-   if (devinfo->ver == 10) {
-      mesa_loge("Gfx10 support is redacted.");
-      return false;
-   }
-
-   /* remaining initializion queries the kernel for device info */
-   if (devinfo->no_hw) {
-      /* Provide some sensible values for NO_HW. */
-      devinfo->gtt_size = 2ull * 1024 * 1024 * 1024;
-      return true;
-   }
-
-   int timestamp_frequency;
-   if (getparam(fd, I915_PARAM_CS_TIMESTAMP_FREQUENCY,
-                &timestamp_frequency))
-      devinfo->timestamp_frequency = timestamp_frequency;
+   int val;
+   if (getparam(fd, I915_PARAM_CS_TIMESTAMP_FREQUENCY, &val))
+      devinfo->timestamp_frequency = val;
    else if (devinfo->ver >= 10) {
       mesa_loge("Kernel 4.15 required to read the CS timestamp frequency.");
       return false;
@@ -1895,8 +2027,17 @@ intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo)
       getparam_topology(devinfo, fd);
    }
 
+   /* If the memory region uAPI query is not available, try to generate some
+    * numbers out of os_* utils for sram only.
+    */
+   if (!i915_query_regions(devinfo, fd, false))
+      compute_system_memory(devinfo, false);
+
    if (devinfo->platform == INTEL_PLATFORM_CHV)
       fixup_chv_device_info(devinfo);
+
+   if (devinfo->platform == INTEL_PLATFORM_ADL)
+      fixup_adl_device_info(devinfo);
 
    /* Broadwell PRM says:
     *
@@ -1914,6 +2055,71 @@ intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo)
    intel_get_aperture_size(fd, &devinfo->aperture_bytes);
    get_context_param(fd, 0, I915_CONTEXT_PARAM_GTT_SIZE, &devinfo->gtt_size);
    devinfo->has_tiling_uapi = has_get_tiling(fd);
+   devinfo->has_caching_uapi =
+      devinfo->platform < INTEL_PLATFORM_DG2_START && !devinfo->has_local_mem;
+
+   if (getparam(fd, I915_PARAM_MMAP_GTT_VERSION, &val))
+      devinfo->has_mmap_offset = val >= 4;
+   if (getparam(fd, I915_PARAM_HAS_USERPTR_PROBE, &val))
+      devinfo->has_userptr_probe = val;
+   if (getparam(fd, I915_PARAM_HAS_CONTEXT_ISOLATION, &val))
+      devinfo->has_context_isolation = val;
+
+   return true;
+}
+
+bool
+intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo)
+{
+   /* Get PCI info.
+    *
+    * Some callers may already have a valid drm device which holds values of
+    * PCI fields queried here prior to calling this function. But making this
+    * query optional leads to a more cumbersome implementation. These callers
+    * still need to initialize the fields somewhere out of this function and
+    * rely on an ioctl to get PCI device id for the next step when skipping
+    * this drm query.
+    */
+   drmDevicePtr drmdev = NULL;
+   if (drmGetDevice2(fd, DRM_DEVICE_GET_PCI_REVISION, &drmdev)) {
+      mesa_loge("Failed to query drm device.");
+      return false;
+   }
+   if (!intel_get_device_info_from_pci_id
+       (drmdev->deviceinfo.pci->device_id, devinfo)) {
+      drmFreeDevice(&drmdev);
+      return false;
+   }
+   devinfo->pci_domain = drmdev->businfo.pci->domain;
+   devinfo->pci_bus = drmdev->businfo.pci->bus;
+   devinfo->pci_dev = drmdev->businfo.pci->dev;
+   devinfo->pci_func = drmdev->businfo.pci->func;
+   devinfo->pci_device_id = drmdev->deviceinfo.pci->device_id;
+   devinfo->pci_revision_id = drmdev->deviceinfo.pci->revision_id;
+   drmFreeDevice(&drmdev);
+   devinfo->no_hw = debug_get_bool_option("INTEL_NO_HW", false);
+
+   if (devinfo->ver == 10) {
+      mesa_loge("Gfx10 support is redacted.");
+      return false;
+   }
+
+   /* remaining initializion queries the kernel for device info */
+   if (devinfo->no_hw) {
+      /* Provide some sensible values for NO_HW. */
+      devinfo->gtt_size =
+         devinfo->ver >= 8 ? (1ull << 48) : 2ull * 1024 * 1024 * 1024;
+      compute_system_memory(devinfo, false);
+      return true;
+   }
+
+   intel_i915_get_device_info_from_fd(fd, devinfo);
+
+   /* region info is required for lmem support */
+   if (devinfo->has_local_mem && !devinfo->mem.use_class_instance) {
+      mesa_logw("Could not query local memory size.");
+      return false;
+   }
 
    /* Gfx7 and older do not support EU/Subslice info */
    assert(devinfo->subslice_total >= 1 || devinfo->ver <= 7);
@@ -1921,5 +2127,28 @@ intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo)
 
    init_max_scratch_ids(devinfo);
 
+   for (enum intel_engine_class engine = INTEL_ENGINE_CLASS_RENDER;
+        engine < ARRAY_SIZE(devinfo->engine_class_prefetch); engine++)
+      devinfo->engine_class_prefetch[engine] =
+            intel_device_info_calc_engine_prefetch(devinfo, engine);
+
    return true;
+}
+
+bool intel_device_info_update_memory_info(struct intel_device_info *devinfo, int fd)
+{
+   return i915_query_regions(devinfo, fd, true) || compute_system_memory(devinfo, true);
+}
+
+enum intel_wa_steppings
+intel_device_info_wa_stepping(struct intel_device_info *devinfo)
+{
+   if (intel_device_info_is_mtl(devinfo)) {
+      if (devinfo->revision < 4)
+         return INTEL_STEPPING_A0;
+      return INTEL_STEPPING_B0;
+   }
+
+   /* all other platforms support only released steppings */
+   return INTEL_STEPPING_RELEASE;
 }

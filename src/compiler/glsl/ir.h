@@ -147,12 +147,10 @@ public:
    #define AS_BASE(TYPE)                                \
    class ir_##TYPE *as_##TYPE()                         \
    {                                                    \
-      assume(this != NULL);                             \
       return is_##TYPE() ? (ir_##TYPE *) this : NULL;   \
    }                                                    \
    const class ir_##TYPE *as_##TYPE() const             \
    {                                                    \
-      assume(this != NULL);                             \
       return is_##TYPE() ? (ir_##TYPE *) this : NULL;   \
    }
 
@@ -164,12 +162,10 @@ public:
    #define AS_CHILD(TYPE) \
    class ir_##TYPE * as_##TYPE() \
    { \
-      assume(this != NULL);                                         \
       return ir_type == ir_type_##TYPE ? (ir_##TYPE *) this : NULL; \
    }                                                                      \
    const class ir_##TYPE * as_##TYPE() const                              \
    {                                                                      \
-      assume(this != NULL);                                               \
       return ir_type == ir_type_##TYPE ? (const ir_##TYPE *) this : NULL; \
    }
    AS_CHILD(variable)
@@ -616,6 +612,13 @@ public:
              this->name != this->name_storage;
    }
 
+   inline bool is_fb_fetch_color_output() const
+   {
+      return this->data.fb_fetch_output &&
+             this->data.location != FRAG_RESULT_DEPTH &&
+             this->data.location != FRAG_RESULT_STENCIL;
+   }
+
    /**
     * Enable emitting extension warnings for this variable
     */
@@ -762,15 +765,6 @@ public:
        * Is the initializer created by the compiler (glsl_zero_init)
        */
       unsigned is_implicit_initializer:1;
-
-      /**
-       * Is this variable a generic output or input that has not yet been matched
-       * up to a variable in another stage of the pipeline?
-       *
-       * This is used by the linker as scratch storage while assigning locations
-       * to generic inputs and outputs.
-       */
-      unsigned is_unmatched_generic_inout:1;
 
       /**
        * Is this varying used by transform feedback?
@@ -1133,17 +1127,6 @@ enum ir_intrinsic_id {
    ir_intrinsic_image_atomic_inc_wrap,
    ir_intrinsic_image_atomic_dec_wrap,
    ir_intrinsic_image_sparse_load,
-
-   ir_intrinsic_ssbo_load,
-   ir_intrinsic_ssbo_store = MAKE_INTRINSIC_FOR_TYPE(store, ssbo),
-   ir_intrinsic_ssbo_atomic_add = MAKE_INTRINSIC_FOR_TYPE(atomic_add, ssbo),
-   ir_intrinsic_ssbo_atomic_and = MAKE_INTRINSIC_FOR_TYPE(atomic_and, ssbo),
-   ir_intrinsic_ssbo_atomic_or = MAKE_INTRINSIC_FOR_TYPE(atomic_or, ssbo),
-   ir_intrinsic_ssbo_atomic_xor = MAKE_INTRINSIC_FOR_TYPE(atomic_xor, ssbo),
-   ir_intrinsic_ssbo_atomic_min = MAKE_INTRINSIC_FOR_TYPE(atomic_min, ssbo),
-   ir_intrinsic_ssbo_atomic_max = MAKE_INTRINSIC_FOR_TYPE(atomic_max, ssbo),
-   ir_intrinsic_ssbo_atomic_exchange = MAKE_INTRINSIC_FOR_TYPE(atomic_exchange, ssbo),
-   ir_intrinsic_ssbo_atomic_comp_swap = MAKE_INTRINSIC_FOR_TYPE(atomic_comp_swap, ssbo),
 
    ir_intrinsic_memory_barrier,
    ir_intrinsic_shader_clock,
@@ -2518,10 +2501,6 @@ _mesa_glsl_initialize_variables(exec_list *instructions,
 
 extern void
 reparent_ir(exec_list *list, void *mem_ctx);
-
-extern void
-do_set_program_inouts(exec_list *instructions, struct gl_program *prog,
-                      gl_shader_stage shader_stage);
 
 extern char *
 prototype_string(const glsl_type *return_type, const char *name,

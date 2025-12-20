@@ -45,7 +45,7 @@ struct amdgpu_ctx {
    uint64_t *user_fence_cpu_address_base;
    int refcount;
    unsigned initial_num_total_rejected_cs;
-   unsigned num_rejected_cs;
+   bool rejected_any_cs;
 };
 
 struct amdgpu_cs_buffer {
@@ -131,8 +131,12 @@ struct amdgpu_cs {
    struct amdgpu_ib main; /* must be first because this is inherited */
    struct amdgpu_winsys *ws;
    struct amdgpu_ctx *ctx;
-   enum ring_type ring_type;
+
+   /*
+    * Ensure a 64-bit alignment for drm_amdgpu_cs_chunk_fence.
+    */
    struct drm_amdgpu_cs_chunk_fence fence_chunk;
+   enum amd_ip_type ip_type;
 
    /* We flip between these two CS. While one is being consumed
     * by the kernel in another thread, the other one is being filled
@@ -154,7 +158,7 @@ struct amdgpu_cs {
    /* Flush CS. */
    void (*flush_cs)(void *ctx, unsigned flags, struct pipe_fence_handle **fence);
    void *flush_data;
-   bool stop_exec_on_failure;
+   bool allow_context_lost;
    bool noop;
    bool has_chaining;
 

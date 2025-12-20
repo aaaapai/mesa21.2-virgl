@@ -46,6 +46,7 @@
 #endif
 
 #include "util/os_misc.h"
+#include "util/u_atomic.h"
 #include "util/detect_os.h"
 #include "util/macros.h"
 
@@ -54,7 +55,7 @@
 #include <OS.h>
 #endif
 
-#ifdef	__cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -165,18 +166,6 @@ debug_printf(const char *format, ...)
 #define debug_vprintf(_format, _ap) ((void)0)
 #endif
 
-
-#ifdef DEBUG
-/**
- * Dump a blob in hex to the same place that debug_printf sends its
- * messages.
- */
-void debug_print_blob( const char *name, const void *blob, unsigned size );
-#else
-#define debug_print_blob(_name, _blob, _size) ((void)0)
-#endif
-
-
 #ifdef _WIN32
 /**
  * Disable Win32 interactive error message boxes.
@@ -198,46 +187,8 @@ debug_disable_win32_error_dialogs(void);
 #endif /* !DEBUG */
 
 
-long
-debug_get_num_option(const char *name, long dfault);
-
 void
 debug_get_version_option(const char *name, unsigned *major, unsigned *minor);
-
-#ifdef _MSC_VER
-__declspec(noreturn)
-#endif
-void _debug_assert_fail(const char *expr,
-                        const char *file,
-                        unsigned line,
-                        const char *function)
-#if defined(__GNUC__) && !defined(DEBUG)
-   __attribute__((noreturn))
-#endif
-;
-
-
-/**
- * Assert macro
- *
- * Do not expect that the assert call terminates -- errors must be handled
- * regardless of assert behavior.
- *
- * For non debug builds the assert macro will expand to a no-op, so do not
- * call functions with side effects in the assert expression.
- */
-#ifndef NDEBUG
-#define debug_assert(expr) ((expr) ? (void)0 : _debug_assert_fail(#expr, __FILE__, __LINE__, __FUNCTION__))
-#else
-#define debug_assert(expr) (void)(0 && (expr))
-#endif
-
-
-/** Override standard assert macro */
-#ifdef assert
-#undef assert
-#endif
-#define assert(expr) debug_assert(expr)
 
 
 /**
@@ -245,7 +196,7 @@ void _debug_assert_fail(const char *expr,
  */
 #ifdef DEBUG
 #define debug_checkpoint() \
-   _debug_printf("%s\n", __FUNCTION__)
+   _debug_printf("%s\n", __func__)
 #else
 #define debug_checkpoint() \
    ((void)0)
@@ -257,7 +208,7 @@ void _debug_assert_fail(const char *expr,
  */
 #ifdef DEBUG
 #define debug_checkpoint_full() \
-   _debug_printf("%s:%u:%s\n", __FILE__, __LINE__, __FUNCTION__)
+   _debug_printf("%s:%u:%s\n", __FILE__, __LINE__, __func__)
 #else
 #define debug_checkpoint_full() \
    ((void)0)
@@ -269,7 +220,7 @@ void _debug_assert_fail(const char *expr,
  */
 #ifdef DEBUG
 #define debug_warning(__msg) \
-   _debug_printf("%s:%u:%s: warning: %s\n", __FILE__, __LINE__, __FUNCTION__, __msg)
+   _debug_printf("%s:%u:%s: warning: %s\n", __FILE__, __LINE__, __func__, __msg)
 #else
 #define debug_warning(__msg) \
    ((void)0)
@@ -285,7 +236,7 @@ void _debug_assert_fail(const char *expr,
       static bool warned = false; \
       if (!warned) { \
          _debug_printf("%s:%u:%s: one time warning: %s\n", \
-                       __FILE__, __LINE__, __FUNCTION__, __msg); \
+                       __FILE__, __LINE__, __func__, __msg); \
          warned = true; \
       } \
    } while (0)
@@ -300,7 +251,7 @@ void _debug_assert_fail(const char *expr,
  */
 #ifdef DEBUG
 #define debug_error(__msg) \
-   _debug_printf("%s:%u:%s: error: %s\n", __FILE__, __LINE__, __FUNCTION__, __msg)
+   _debug_printf("%s:%u:%s: error: %s\n", __FILE__, __LINE__, __func__, __msg)
 #else
 #define debug_error(__msg) \
    _debug_printf("error: %s\n", __msg)
@@ -311,11 +262,9 @@ void _debug_assert_fail(const char *expr,
  */
 #define util_debug_message(cb, type, fmt, ...) do { \
    static unsigned id = 0; \
-   if ((cb) && (cb)->debug_message) { \
-      _util_debug_message(cb, &id, \
-                          UTIL_DEBUG_TYPE_ ## type, \
-                          fmt, ##__VA_ARGS__); \
-   } \
+   _util_debug_message(cb, &id, \
+                        UTIL_DEBUG_TYPE_ ## type, \
+                        fmt, ##__VA_ARGS__); \
 } while (0)
 
 void
@@ -356,8 +305,8 @@ struct debug_named_value
  *    ...
  * @endcode
  */
-#define DEBUG_NAMED_VALUE(__symbol) {#__symbol, (unsigned long)__symbol, NULL}
-#define DEBUG_NAMED_VALUE_WITH_DESCRIPTION(__symbol, __desc) {#__symbol, (unsigned long)__symbol, __desc}
+#define DEBUG_NAMED_VALUE(__symbol) {#__symbol, (uint64_t)__symbol, NULL}
+#define DEBUG_NAMED_VALUE_WITH_DESCRIPTION(__symbol, __desc) {#__symbol, (uint64_t)__symbol, __desc}
 #define DEBUG_NAMED_VALUE_END {NULL, 0, NULL}
 
 
@@ -366,79 +315,64 @@ struct debug_named_value
  */
 const char *
 debug_dump_enum(const struct debug_named_value *names,
-                unsigned long value);
-
-const char *
-debug_dump_enum_noprefix(const struct debug_named_value *names,
-                         const char *prefix,
-                         unsigned long value);
-
+                uint64_t value);
 
 /**
  * Convert binary flags value to a string.
  */
 const char *
 debug_dump_flags(const struct debug_named_value *names,
-                 unsigned long value);
+                 uint64_t value);
 
 
-/**
- * Function enter exit loggers
- */
-#ifdef DEBUG
-int debug_funclog_enter(const char* f, const int line, const char* file);
-void debug_funclog_exit(const char* f, const int line, const char* file);
-void debug_funclog_enter_exit(const char* f, const int line, const char* file);
+struct debug_control {
+    const char * string;
+    uint64_t     flag;
+};
 
-#define DEBUG_FUNCLOG_ENTER() \
-   int __debug_decleration_work_around = \
-      debug_funclog_enter(__FUNCTION__, __LINE__, __FILE__)
-#define DEBUG_FUNCLOG_EXIT() \
-   do { \
-      (void)__debug_decleration_work_around; \
-      debug_funclog_exit(__FUNCTION__, __LINE__, __FILE__); \
-      return; \
-   } while(0)
-#define DEBUG_FUNCLOG_EXIT_RET(ret) \
-   do { \
-      (void)__debug_decleration_work_around; \
-      debug_funclog_exit(__FUNCTION__, __LINE__, __FILE__); \
-      return ret; \
-   } while(0)
-#define DEBUG_FUNCLOG_ENTER_EXIT() \
-   debug_funclog_enter_exit(__FUNCTION__, __LINE__, __FILE__)
+uint64_t
+parse_debug_string(const char *debug,
+                   const struct debug_control *control);
 
-#else
-#define DEBUG_FUNCLOG_ENTER() \
-   int __debug_decleration_work_around
-#define DEBUG_FUNCLOG_EXIT() \
-   do { (void)__debug_decleration_work_around; return; } while(0)
-#define DEBUG_FUNCLOG_EXIT_RET(ret) \
-   do { (void)__debug_decleration_work_around; return ret; } while(0)
-#define DEBUG_FUNCLOG_ENTER_EXIT()
-#endif
 
+uint64_t
+parse_enable_string(const char *debug,
+                    uint64_t default_value,
+                    const struct debug_control *control);
+
+
+bool
+comma_separated_list_contains(const char *list, const char *s);
 
 /**
  * Get option.
  *
- * It is an alias for getenv on Linux.
+ * It is an alias for getenv on Unix and Windows.
  *
- * On Windows it reads C:\gallium.cfg, which is a text file with CR+LF line
- * endings with one option per line as
- *
- *   NAME=value
- *
- * This file must be terminated with an extra empty line.
  */
 const char *
 debug_get_option(const char *name, const char *dfault);
 
+const char *
+debug_get_option_cached(const char *name, const char *dfault);
+
+bool
+debug_parse_bool_option(const char *str, bool dfault);
+
 bool
 debug_get_bool_option(const char *name, bool dfault);
 
-long
-debug_get_num_option(const char *name, long dfault);
+int64_t
+debug_parse_num_option(const char *str, int64_t dfault);
+
+int64_t
+debug_get_num_option(const char *name, int64_t dfault);
+
+uint64_t
+debug_parse_flags_option(const char *name,
+                         const char *str,
+                         const struct debug_named_value *flags,
+                         uint64_t dfault);
 
 uint64_t
 debug_get_flags_option(const char *name,
@@ -449,11 +383,12 @@ debug_get_flags_option(const char *name,
 static const char * \
 debug_get_option_ ## suffix (void) \
 { \
-   static bool first = true; \
+   static bool initialized = false; \
    static const char * value; \
-   if (first) { \
-      first = false; \
-      value = debug_get_option(name, dfault); \
+   if (unlikely(!p_atomic_read_relaxed(&initialized))) { \
+      const char *str = debug_get_option_cached(name, dfault); \
+      p_atomic_set(&value, str); \
+      p_atomic_set(&initialized, true); \
    } \
    return value; \
 }
@@ -468,70 +403,53 @@ __check_suid(void)
    return false;
 }
 
-/**
- * Define a getter for a debug option which specifies a 'FILE *'
- * to open, with additional checks for suid executables.  Note
- * that if the return is not NULL, the caller owns the 'FILE *'
- * reference.
- */
-#define DEBUG_GET_ONCE_FILE_OPTION(suffix, name, dfault, mode) \
-static FILE * \
-debug_get_option_ ## suffix (void) \
-{ \
-   static bool first = true; \
-   static const char * value; \
-   if (__check_suid()) \
-      return NULL; \
-   if (first) { \
-      first = false; \
-      value = debug_get_option(name, dfault); \
-   } \
-   if (!value) \
-      return NULL; \
-   return fopen(value, mode); \
-}
-
 #define DEBUG_GET_ONCE_BOOL_OPTION(sufix, name, dfault) \
 static bool \
 debug_get_option_ ## sufix (void) \
 { \
-   static bool first = true; \
+   static bool initialized = false; \
    static bool value; \
-   if (first) { \
-      first = false; \
-      value = debug_get_bool_option(name, dfault); \
+   if (unlikely(!p_atomic_read_relaxed(&initialized))) { \
+      const char *str = debug_get_option_cached(name, NULL); \
+      bool parsed_value = debug_parse_bool_option(str, dfault); \
+      p_atomic_set(&value, parsed_value); \
+      p_atomic_set(&initialized, true); \
    } \
    return value; \
 }
 
 #define DEBUG_GET_ONCE_NUM_OPTION(sufix, name, dfault) \
-static long \
+static int64_t \
 debug_get_option_ ## sufix (void) \
 { \
-   static bool first = true; \
-   static long value; \
-   if (first) { \
-      first = false; \
-      value = debug_get_num_option(name, dfault); \
+   static bool initialized = false; \
+   static int64_t value; \
+   if (unlikely(!p_atomic_read_relaxed(&initialized))) { \
+      const char *str = debug_get_option_cached(name, NULL); \
+      int64_t parsed_value = debug_parse_num_option(str, dfault); \
+      p_atomic_set(&value, parsed_value); \
+      p_atomic_set(&initialized, true); \
    } \
    return value; \
 }
 
 #define DEBUG_GET_ONCE_FLAGS_OPTION(sufix, name, flags, dfault) \
-static unsigned long \
+static uint64_t \
 debug_get_option_ ## sufix (void) \
 { \
-   static bool first = true; \
-   static unsigned long value; \
-   if (first) { \
-      first = false; \
-      value = debug_get_flags_option(name, flags, dfault); \
+   static bool initialized = false; \
+   static uint64_t value; \
+   if (unlikely(!p_atomic_read_relaxed(&initialized))) { \
+      const char *str = debug_get_option_cached(name, NULL); \
+      uint64_t parsed_value = debug_parse_flags_option(name, str, flags, dfault); \
+      p_atomic_set(&value, parsed_value); \
+      p_atomic_set(&initialized, true); \
    } \
    return value; \
 }
 
 
-#ifdef	__cplusplus
+#ifdef __cplusplus
 }
 #endif
 

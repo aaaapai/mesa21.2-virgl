@@ -35,13 +35,13 @@
 #include "tgsi/tgsi_info.h"
 #include "tgsi/tgsi_dump.h"
 #include "tgsi/tgsi_sanity.h"
+#include "util/glheader.h"
 #include "util/u_debug.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 #include "util/u_math.h"
 #include "util/u_prim.h"
 #include "util/u_bitmask.h"
-#include "GL/gl.h"
 #include "compiler/shader_info.h"
 
 union tgsi_any_token {
@@ -98,7 +98,7 @@ struct const_decl {
 };
 
 struct hw_atomic_decl {
-   struct {
+   struct hw_atomic_decl_range {
       unsigned first;
       unsigned last;
       unsigned array_id;
@@ -308,6 +308,8 @@ ureg_DECL_fs_input_centroid_layout(struct ureg_program *ureg,
          assert(ureg->input[i].interp_location == interp_location);
          if (ureg->input[i].array_id == array_id) {
             ureg->input[i].usage_mask |= usage_mask;
+            ureg->input[i].last = MAX2(ureg->input[i].last, ureg->input[i].first + array_size - 1);
+            ureg->nr_input_regs = MAX2(ureg->nr_input_regs, ureg->input[i].last + 1);
             goto out;
          }
          assert((ureg->input[i].usage_mask & usage_mask) == 0);
@@ -445,6 +447,8 @@ ureg_DECL_output_layout(struct ureg_program *ureg,
           ureg->output[i].semantic_index == semantic_index) {
          if (ureg->output[i].array_id == array_id) {
             ureg->output[i].usage_mask |= usage_mask;
+            ureg->output[i].last = MAX2(ureg->output[i].last, ureg->output[i].first + array_size - 1);
+            ureg->nr_output_regs = MAX2(ureg->nr_output_regs, ureg->output[i].last + 1);
             goto out;
          }
          assert((ureg->output[i].usage_mask & usage_mask) == 0);
@@ -1831,6 +1835,14 @@ output_sort(const void *in_a, const void *in_b)
    return a->first - b->first;
 }
 
+static int
+atomic_decl_range_sort(const void *in_a, const void *in_b)
+{
+   const struct hw_atomic_decl_range *a = in_a, *b = in_b;
+
+   return a->first - b->first;
+}
+
 static void emit_decls( struct ureg_program *ureg )
 {
    unsigned i,j;
@@ -2014,6 +2026,11 @@ static void emit_decls( struct ureg_program *ureg )
       if (decl->nr_hw_atomic_ranges) {
          uint j;
 
+         /* GLSL-to-TGSI generated HW atomic counters in order, and r600 depends
+          * on it.
+          */
+         qsort(decl->hw_atomic_range, decl->nr_hw_atomic_ranges, sizeof(struct hw_atomic_decl_range), atomic_decl_range_sort);
+
          for (j = 0; j < decl->nr_hw_atomic_ranges; j++) {
             emit_decl_atomic_2d(ureg,
                                 decl->hw_atomic_range[j].first,
@@ -2114,7 +2131,7 @@ const struct tgsi_token *ureg_finalize( struct ureg_program *ureg )
 
    if (ureg->domain[0].tokens == error_tokens ||
        ureg->domain[1].tokens == error_tokens) {
-      debug_printf("%s: error in generated shader\n", __FUNCTION__);
+      debug_printf("%s: error in generated shader\n", __func__);
       assert(0);
       return NULL;
    }
@@ -2122,7 +2139,7 @@ const struct tgsi_token *ureg_finalize( struct ureg_program *ureg )
    tokens = &ureg->domain[DOMAIN_DECL].tokens[0].token;
 
    if (0) {
-      debug_printf("%s: emitted shader %d tokens:\n", __FUNCTION__,
+      debug_printf("%s: emitted shader %d tokens:\n", __func__,
                    ureg->domain[DOMAIN_DECL].count);
       tgsi_dump( tokens, 0 );
    }

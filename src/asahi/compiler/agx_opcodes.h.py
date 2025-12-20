@@ -26,6 +26,7 @@ template = """/*
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "util/macros.h"
 
 /* Listing of opcodes */
 
@@ -38,10 +39,22 @@ enum agx_opcode {
 
 % for name in enums:
 enum agx_${name} {
-% for k in enums[name]:
-   AGX_${name.upper()}_${enums[name][k].replace('.', '_').upper()} = ${k},
+% for k, v in enums[name].items():
+   AGX_${name.upper()}_${v.replace('.', '_').upper()} = ${k},
 % endfor
 };
+
+static inline const char *
+agx_${name}_as_str(enum agx_${name} x)
+{
+    switch (x) {
+% for k, v in enums[name].items():
+    case AGX_${name.upper()}_${v.replace('.', '_').upper()}: return "${v}";
+% endfor
+    default: unreachable("Nonexhaustive enum");
+    }
+}
+
 % endfor
 
 /* Runtime accessible info on each defined opcode */
@@ -69,6 +82,7 @@ struct agx_opcode_info {
    struct agx_encoding encoding_16;
    bool is_float : 1;
    bool can_eliminate : 1;
+   bool can_reorder : 1;
 };
 
 extern const struct agx_opcode_info agx_opcodes_info[AGX_NUM_OPCODES];

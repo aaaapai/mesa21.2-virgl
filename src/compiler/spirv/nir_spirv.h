@@ -75,6 +75,19 @@ struct spirv_to_nir_options {
     */
    uint16_t float_controls_execution_mode;
 
+   /* Initial subgroup size.  This may be overwritten for CL kernels */
+   enum gl_subgroup_size subgroup_size;
+
+   /* True if RelaxedPrecision-decorated ALU result values should be performed
+    * with 16-bit math.
+    */
+   bool mediump_16bit_alu;
+
+   /* When mediump_16bit_alu is set, determines whether nir_op_fddx/fddy can be
+    * performed in 16-bit math.
+    */
+   bool mediump_16bit_derivatives;
+
    struct spirv_supported_capabilities caps;
 
    /* Address format for various kinds of pointers. */
@@ -97,6 +110,9 @@ struct spirv_to_nir_options {
                    const char *message);
       void *private_data;
    } debug;
+
+   /* Force texture sampling to be non-uniform. */
+   bool force_tex_non_uniform;
 };
 
 bool gl_spirv_validation(const uint32_t *words, size_t word_count,

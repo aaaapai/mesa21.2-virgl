@@ -13,8 +13,9 @@
 
 
 #include <stdlib.h>
-#include "c99_math.h"
-#include "glheader.h"
+#include <math.h>
+
+#include "util/glheader.h"
 #include "main/get.h"
 #include "util/macros.h"
 #include "api_exec_decl.h"

@@ -1,9 +1,9 @@
 /**************************************************************************
- * 
+ *
  * Copyright 2008 VMware, Inc.
  * Copyright 2009-2010 VMware, Inc.
  * All Rights Reserved.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the
  * "Software"), to deal in the Software without restriction, including
@@ -11,11 +11,11 @@
  * distribute, sub license, and/or sell copies of the Software, and to
  * permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice (including the
  * next paragraph) shall be included in all copies or substantial portions
  * of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
@@ -23,7 +23,7 @@
  * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- * 
+ *
  **************************************************************************/
 
 #ifndef P_SHADER_TOKENS_H
@@ -298,11 +298,12 @@ enum tgsi_property_name {
    TGSI_PROPERTY_CS_FIXED_BLOCK_WIDTH,
    TGSI_PROPERTY_CS_FIXED_BLOCK_HEIGHT,
    TGSI_PROPERTY_CS_FIXED_BLOCK_DEPTH,
-   TGSI_PROPERTY_MUL_ZERO_WINS,
+   TGSI_PROPERTY_LEGACY_MATH_RULES,
    TGSI_PROPERTY_VS_BLIT_SGPRS_AMD,
    TGSI_PROPERTY_CS_USER_DATA_COMPONENTS_AMD,
    TGSI_PROPERTY_LAYER_VIEWPORT_RELATIVE,
    TGSI_PROPERTY_FS_BLEND_EQUATION_ADVANCED,
+   TGSI_PROPERTY_SEPARABLE_PROGRAM,
    TGSI_PROPERTY_COUNT,
 };
 
@@ -654,9 +655,9 @@ struct tgsi_instruction
  * If tgsi_instruction::Texture is TRUE, tgsi_instruction_texture follows.
  *   if texture instruction has a number of offsets,
  *   then tgsi_instruction::Texture::NumOffset of tgsi_texture_offset follow.
- * 
+ *
  * Then, tgsi_instruction::NumDstRegs of tgsi_dst_register follow.
- * 
+ *
  * Then, tgsi_instruction::NumSrcRegs of tgsi_src_register follow.
  *
  * tgsi_instruction::NrTokens contains the total number of words that make the

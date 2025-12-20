@@ -30,11 +30,11 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <sys/poll.h>
 #include <unistd.h>
 #include <time.h>
 
@@ -131,7 +131,7 @@ static inline int sync_wait(int fd, int timeout)
 
 static inline int sync_merge(const char *name, int fd1, int fd2)
 {
-	struct sync_merge_data data = {0};
+	struct sync_merge_data data = {{0}};
 	int ret;
 
 	data.fd2 = fd2;

@@ -25,6 +25,8 @@
  *    Rob Clark <robclark@freedesktop.org>
  */
 
+#define FD_BO_NO_HARDPIN 1
+
 #include "freedreno_query_acc.h"
 #include "freedreno_state.h"
 
@@ -47,9 +49,6 @@ static void
 fd6_context_destroy(struct pipe_context *pctx) in_dt
 {
    struct fd6_context *fd6_ctx = fd6_context(fd_context(pctx));
-
-   u_upload_destroy(fd6_ctx->border_color_uploader);
-   pipe_resource_reference(&fd6_ctx->border_color_buf, NULL);
 
    if (fd6_ctx->streamout_disable_stateobj)
       fd_ringbuffer_del(fd6_ctx->streamout_disable_stateobj);
@@ -88,7 +87,7 @@ fd6_vertex_state_create(struct pipe_context *pctx, unsigned num_elements,
       enum pipe_format pfmt = elem->src_format;
       enum a6xx_format fmt = fd6_vertex_format(pfmt);
       bool isint = util_format_is_pure_integer(pfmt);
-      debug_assert(fmt != FMT6_NONE);
+      assert(fmt != FMT6_NONE);
 
       OUT_RING(ring, A6XX_VFD_DECODE_INSTR_IDX(elem->vertex_buffer_index) |
                         A6XX_VFD_DECODE_INSTR_OFFSET(elem->src_offset) |
@@ -150,9 +149,11 @@ setup_state_map(struct fd_context *ctx)
    fd_context_add_map(ctx, FD_DIRTY_ZSA | FD_DIRTY_RASTERIZER,
                       BIT(FD6_GROUP_ZSA));
    fd_context_add_map(ctx, FD_DIRTY_ZSA | FD_DIRTY_BLEND | FD_DIRTY_PROG,
-                      BIT(FD6_GROUP_LRZ) | BIT(FD6_GROUP_LRZ_BINNING));
+                      BIT(FD6_GROUP_LRZ));
    fd_context_add_map(ctx, FD_DIRTY_PROG | FD_DIRTY_RASTERIZER_CLIP_PLANE_ENABLE,
-                      BIT(FD6_GROUP_PROG));
+                      BIT(FD6_GROUP_PROG) | BIT(FD6_GROUP_PROG_KEY));
+   fd_context_add_map(ctx, FD_DIRTY_RASTERIZER | FD_DIRTY_MIN_SAMPLES | FD_DIRTY_FRAMEBUFFER,
+                      BIT(FD6_GROUP_PROG_KEY));
    fd_context_add_map(ctx, FD_DIRTY_RASTERIZER, BIT(FD6_GROUP_RASTERIZER));
    fd_context_add_map(ctx,
                       FD_DIRTY_FRAMEBUFFER | FD_DIRTY_RASTERIZER_DISCARD |
@@ -162,7 +163,7 @@ setup_state_map(struct fd_context *ctx)
                       BIT(FD6_GROUP_BLEND));
    fd_context_add_map(ctx, FD_DIRTY_BLEND_COLOR, BIT(FD6_GROUP_BLEND_COLOR));
    fd_context_add_map(ctx, FD_DIRTY_SSBO | FD_DIRTY_IMAGE | FD_DIRTY_PROG,
-                      BIT(FD6_GROUP_IBO));
+                      BIT(FD6_GROUP_IBO) | BIT(FD6_GROUP_FS_TEX));
    fd_context_add_map(ctx, FD_DIRTY_PROG,
                       BIT(FD6_GROUP_VS_TEX) | BIT(FD6_GROUP_HS_TEX) |
                          BIT(FD6_GROUP_DS_TEX) | BIT(FD6_GROUP_GS_TEX) |
@@ -185,7 +186,8 @@ setup_state_map(struct fd_context *ctx)
    /* NOTE: scissor enabled bit is part of rasterizer state, but
     * fd_rasterizer_state_bind() will mark scissor dirty if needed:
     */
-   fd_context_add_map(ctx, FD_DIRTY_SCISSOR, BIT(FD6_GROUP_SCISSOR));
+   fd_context_add_map(ctx, FD_DIRTY_SCISSOR | FD_DIRTY_PROG,
+                      BIT(FD6_GROUP_SCISSOR));
 
    /* Stuff still emit in IB2
     *
@@ -193,7 +195,7 @@ setup_state_map(struct fd_context *ctx)
     * move it into FD6_GROUP_RASTERIZER?
     */
    fd_context_add_map(
-      ctx, FD_DIRTY_STENCIL_REF | FD_DIRTY_VIEWPORT | FD_DIRTY_RASTERIZER,
+      ctx, FD_DIRTY_STENCIL_REF | FD_DIRTY_VIEWPORT | FD_DIRTY_RASTERIZER | FD_DIRTY_PROG,
       BIT(FD6_GROUP_NON_GROUP));
 }
 
@@ -265,9 +267,6 @@ fd6_context_create(struct pipe_screen *pscreen, void *priv,
    fd_context_setup_common_vbos(&fd6_ctx->base);
 
    fd6_blitter_init(pctx);
-
-   fd6_ctx->border_color_uploader =
-      u_upload_create(pctx, 4096, 0, PIPE_USAGE_STREAM, 0);
 
    return fd_context_init_tc(pctx, flags);
 }

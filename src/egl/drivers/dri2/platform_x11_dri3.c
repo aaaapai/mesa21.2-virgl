@@ -101,7 +101,6 @@ static const struct loader_dri3_vtable egl_dri3_vtable = {
    .get_dri_context = egl_dri3_get_dri_context,
    .get_dri_screen = egl_dri3_get_dri_screen,
    .flush_drawable = egl_dri3_flush_drawable,
-   .show_fps = NULL,
 };
 
 static EGLBoolean
@@ -527,6 +526,7 @@ struct dri2_egl_display_vtbl dri3_x11_display_vtbl = {
    .query_buffer_age = dri3_query_buffer_age,
    .query_surface = dri3_query_surface,
    .get_sync_values = dri3_get_sync_values,
+   .get_msc_rate = dri2_x11_get_msc_rate,
    .get_dri_drawable = dri3_get_dri_drawable,
    .close_screen_notify = dri3_close_screen_notify,
 };

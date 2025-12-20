@@ -26,7 +26,7 @@
 #define NIR_BLEND_H
 
 #include "compiler/nir/nir.h"
-#include "pipe/p_format.h"
+#include "util/format/u_formats.h"
 
 /* These structs encapsulates the blend state such that it can be lowered
  * cleanly
@@ -64,6 +64,7 @@ typedef struct {
    bool scalar_blend_const;
 } nir_lower_blend_options;
 
-void nir_lower_blend(nir_shader *shader, nir_lower_blend_options options);
+void nir_lower_blend(nir_shader *shader,
+                     const nir_lower_blend_options *options);
 
 #endif

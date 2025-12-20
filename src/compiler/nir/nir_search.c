@@ -144,7 +144,6 @@ nir_op_matches_search_op(nir_op nop, uint16_t sop)
    MATCH_ICONV_CASE(i2i)
    MATCH_FCONV_CASE(b2f)
    MATCH_ICONV_CASE(b2i)
-   MATCH_BCONV_CASE(i2b)
    MATCH_BCONV_CASE(f2b)
    default:
       unreachable("Invalid nir_search_op");
@@ -187,7 +186,6 @@ nir_search_op_for_nir_op(nir_op nop)
    MATCH_ICONV_CASE(i2i)
    MATCH_FCONV_CASE(b2f)
    MATCH_ICONV_CASE(b2i)
-   MATCH_BCONV_CASE(i2b)
    MATCH_BCONV_CASE(f2b)
    default:
       return nop;
@@ -241,7 +239,6 @@ nir_op_for_search_op(uint16_t sop, unsigned bit_size)
    RET_ICONV_CASE(i2i)
    RET_FCONV_CASE(b2f)
    RET_ICONV_CASE(b2i)
-   RET_BCONV_CASE(i2b)
    RET_BCONV_CASE(f2b)
    default:
       unreachable("Invalid nir_search_op");
@@ -526,7 +523,7 @@ construct_value(nir_builder *build,
       assert(state->variables_seen & (1 << var->variable));
 
       nir_alu_src val = { NIR_SRC_INIT };
-      nir_alu_src_copy(&val, &state->variables[var->variable]);
+      nir_alu_src_copy(&val, &state->variables[var->variable], NULL);
       assert(!var->is_constant);
 
       for (unsigned i = 0; i < NIR_MAX_VEC_COMPONENTS; i++)
@@ -621,7 +618,6 @@ UNUSED static void dump_value(const nir_algebraic_table *table, const nir_search
       CASE(f2b)
       CASE(b2f)
       CASE(b2i)
-      CASE(i2b)
       CASE(i2i)
       CASE(f2i)
       CASE(i2f)
@@ -685,14 +681,15 @@ nir_algebraic_update_automaton(nir_instr *new_instr,
    nir_instr_worklist_destroy(automaton_worklist);
 }
 
-nir_ssa_def *
+static nir_ssa_def *
 nir_replace_instr(nir_builder *build, nir_alu_instr *instr,
                   struct hash_table *range_ht,
                   struct util_dynarray *states,
                   const nir_algebraic_table *table,
                   const nir_search_expression *search,
                   const nir_search_value *replace,
-                  nir_instr_worklist *algebraic_worklist)
+                  nir_instr_worklist *algebraic_worklist,
+                  struct exec_list *dead_instrs)
 {
    uint8_t swizzle[NIR_MAX_VEC_COMPONENTS] = { 0 };
 
@@ -803,7 +800,10 @@ nir_replace_instr(nir_builder *build, nir_alu_instr *instr,
     * that the instr may be in the worklist still, so we can't free it
     * directly.
     */
+   assert(instr->instr.pass_flags == 0);
+   instr->instr.pass_flags = 1;
    nir_instr_remove(&instr->instr);
+   exec_list_push_tail(dead_instrs, &instr->instr.node);
 
    return ssa_val;
 }
@@ -865,7 +865,8 @@ nir_algebraic_instr(nir_builder *build, nir_instr *instr,
                     const bool *condition_flags,
                     const nir_algebraic_table *table,
                     struct util_dynarray *states,
-                    nir_instr_worklist *worklist)
+                    nir_instr_worklist *worklist,
+                    struct exec_list *dead_instrs)
 {
 
    if (instr->type != nir_instr_type_alu)
@@ -891,7 +892,7 @@ nir_algebraic_instr(nir_builder *build, nir_instr *instr,
           !(table->values[xform->search].expression.inexact && ignore_inexact) &&
           nir_replace_instr(build, alu, range_ht, states, table,
                             &table->values[xform->search].expression,
-                            &table->values[xform->replace].value, worklist)) {
+                            &table->values[xform->replace].value, worklist, dead_instrs)) {
          _mesa_hash_table_clear(range_ht, NULL);
          return true;
       }
@@ -938,10 +939,14 @@ nir_algebraic_impl(nir_function_impl *impl,
     */
    nir_foreach_block_reverse(block, impl) {
       nir_foreach_instr_reverse(instr, block) {
+         instr->pass_flags = 0;
          if (instr->type == nir_instr_type_alu)
             nir_instr_worklist_push_tail(worklist, instr);
       }
    }
+
+   struct exec_list dead_instrs;
+   exec_list_make_empty(&dead_instrs);
 
    nir_instr *instr;
    while ((instr = nir_instr_worklist_pop_head(worklist))) {
@@ -949,13 +954,15 @@ nir_algebraic_impl(nir_function_impl *impl,
        * the src of multiple instrs that also got optimized, so make sure that
        * we don't try to re-optimize an instr we already handled.
        */
-      if (exec_node_is_tail_sentinel(&instr->node))
+      if (instr->pass_flags)
          continue;
 
       progress |= nir_algebraic_instr(&build, instr,
                                       range_ht, condition_flags,
-                                      table, &states, worklist);
+                                      table, &states, worklist, &dead_instrs);
    }
+
+   nir_instr_free_list(&dead_instrs);
 
    nir_instr_worklist_destroy(worklist);
    ralloc_free(range_ht);

@@ -43,7 +43,7 @@ resize_deref(nir_builder *b, nir_deref_instr *deref,
       if (nir_src_is_const(deref->arr.index)) {
          idx = nir_imm_intN_t(b, nir_src_as_int(deref->arr.index), bit_size);
       } else {
-         idx = nir_i2i(b, deref->arr.index.ssa, bit_size);
+         idx = nir_i2iN(b, deref->arr.index.ssa, bit_size);
       }
       nir_instr_rewrite_src(&deref->instr, &deref->arr.index,
                             nir_src_for_ssa(idx));
@@ -225,9 +225,8 @@ lower_rt_io_and_scratch(nir_shader *nir)
 static void
 build_terminate_ray(nir_builder *b)
 {
-   nir_ssa_def *skip_closest_hit =
-      nir_i2b(b, nir_iand_imm(b, nir_load_ray_flags(b),
-                              BRW_RT_RAY_FLAG_SKIP_CLOSEST_HIT_SHADER));
+   nir_ssa_def *skip_closest_hit = nir_test_mask(b, nir_load_ray_flags(b),
+      BRW_RT_RAY_FLAG_SKIP_CLOSEST_HIT_SHADER);
    nir_push_if(b, skip_closest_hit);
    {
       /* The shader that calls traceRay() is unable to access any ray hit
@@ -308,9 +307,8 @@ lower_ray_walk_intrinsics(nir_shader *shader,
          case nir_intrinsic_accept_ray_intersection: {
             b.cursor = nir_instr_remove(&intrin->instr);
 
-            nir_ssa_def *terminate =
-               nir_i2b(&b, nir_iand_imm(&b, nir_load_ray_flags(&b),
-                                        BRW_RT_RAY_FLAG_TERMINATE_ON_FIRST_HIT));
+            nir_ssa_def *terminate = nir_test_mask(&b, nir_load_ray_flags(&b),
+               BRW_RT_RAY_FLAG_TERMINATE_ON_FIRST_HIT);
             nir_push_if(&b, terminate);
             {
                build_terminate_ray(&b);
@@ -441,12 +439,28 @@ brw_nir_create_raygen_trampoline(const struct brw_compiler *compiler,
     * raygen BSR address here; the global data we'll deal with later.
     */
    b.shader->num_uniforms = 32;
-   nir_ssa_def *raygen_bsr_addr =
+   nir_ssa_def *raygen_param_bsr_addr =
       load_trampoline_param(&b, raygen_bsr_addr, 1, 64);
+   nir_ssa_def *is_indirect =
+      nir_i2b(&b, load_trampoline_param(&b, is_indirect, 1, 8));
    nir_ssa_def *local_shift =
       nir_u2u32(&b, load_trampoline_param(&b, local_group_size_log2, 3, 8));
 
-   nir_ssa_def *global_id = nir_load_workgroup_id(&b, 32);
+   nir_ssa_def *raygen_indirect_bsr_addr;
+   nir_push_if(&b, is_indirect);
+   {
+      raygen_indirect_bsr_addr =
+         nir_load_global_constant(&b, raygen_param_bsr_addr,
+                                  8 /* align */,
+                                  1 /* components */,
+                                  64 /* bit_size */);
+   }
+   nir_pop_if(&b, NULL);
+
+   nir_ssa_def *raygen_bsr_addr =
+      nir_if_phi(&b, raygen_indirect_bsr_addr, raygen_param_bsr_addr);
+
+   nir_ssa_def *global_id = nir_load_workgroup_id_zero_base(&b);
    nir_ssa_def *simd_channel = nir_load_subgroup_invocation(&b);
    nir_ssa_def *local_x =
       nir_ubfe(&b, simd_channel, nir_imm_int(&b, 0),
@@ -487,10 +501,13 @@ brw_nir_create_raygen_trampoline(const struct brw_compiler *compiler,
    nir_shader *nir = b.shader;
    nir->info.name = ralloc_strdup(nir, "RT: TraceRay trampoline");
    nir_validate_shader(nir, "in brw_nir_create_raygen_trampoline");
-   brw_preprocess_nir(compiler, nir, NULL);
+
+   struct brw_nir_compiler_opts opts = {};
+   brw_preprocess_nir(compiler, nir, &opts);
 
    NIR_PASS_V(nir, brw_nir_lower_rt_intrinsics, devinfo);
 
+   nir_builder_init(&b, nir_shader_get_entrypoint(b.shader));
    /* brw_nir_lower_rt_intrinsics will leave us with a btd_global_arg_addr
     * intrinsic which doesn't exist in compute shaders.  We also created one
     * above when we generated the BTD spawn intrinsic.  Now we go through and

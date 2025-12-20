@@ -97,10 +97,12 @@ VkResult anv_QueuePresentKHR(
 
    if (device->debug_frame_desc) {
       device->debug_frame_desc->frame_id++;
-      if (!device->info.has_llc) {
+#ifdef SUPPORT_INTEL_INTEGRATED_GPUS
+      if (device->physical->memory.need_clflush) {
          intel_clflush_range(device->debug_frame_desc,
                            sizeof(*device->debug_frame_desc));
       }
+#endif
    }
 
    result = vk_queue_wait_before_present(&queue->vk, pPresentInfo);
@@ -111,17 +113,6 @@ VkResult anv_QueuePresentKHR(
                                      anv_device_to_handle(queue->device),
                                      _queue, 0,
                                      pPresentInfo);
-
-   for (uint32_t i = 0; i < pPresentInfo->waitSemaphoreCount; i++) {
-      VK_FROM_HANDLE(vk_semaphore, semaphore, pPresentInfo->pWaitSemaphores[i]);
-      /* From the Vulkan 1.0.53 spec:
-       *
-       *    "If the import is temporary, the implementation must restore the
-       *    semaphore to its prior permanent state after submitting the next
-       *    semaphore wait operation."
-       */
-      vk_semaphore_reset_temporary(&queue->device->vk, semaphore);
-   }
 
    u_trace_context_process(&device->ds.trace_context, true);
 

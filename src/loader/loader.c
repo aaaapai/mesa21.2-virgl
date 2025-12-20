@@ -46,8 +46,11 @@
 #endif
 #include <GL/gl.h>
 #include <GL/internal/dri_interface.h>
+#include <GL/internal/mesa_interface.h>
 #include "loader.h"
 #include "util/os_file.h"
+#include "util/os_misc.h"
+#include "git_sha1.h"
 
 #ifdef HAVE_LIBDRM
 #include <xf86drm.h>
@@ -240,8 +243,11 @@ static char *loader_get_dri_config_device_id(void)
                       ARRAY_SIZE(__driConfigOptionsLoader));
    driParseConfigFiles(&userInitOptions, &defaultInitOptions, 0,
                        "loader", NULL, NULL, NULL, 0, NULL, 0);
-   if (driCheckOption(&userInitOptions, "device_id", DRI_STRING))
-      prime = strdup(driQueryOptionstr(&userInitOptions, "device_id"));
+   if (driCheckOption(&userInitOptions, "device_id", DRI_STRING)) {
+      char *opt = driQueryOptionstr(&userInitOptions, "device_id");
+      if (*opt)
+         prime = strdup(opt);
+   }
    driDestroyOptionCache(&userInitOptions);
    driDestroyOptionInfo(&defaultInitOptions);
 
@@ -325,6 +331,8 @@ int loader_get_user_preferred_fd(int default_fd, bool *different_device)
    char *default_tag, *prime = NULL;
    drmDevicePtr devices[MAX_DRM_DEVICES];
    int i, num_devices, fd = -1;
+   bool prime_is_vid_did;
+   uint16_t vendor_id, device_id;
 
    if (dri_prime)
       prime = strdup(dri_prime);
@@ -336,6 +344,8 @@ int loader_get_user_preferred_fd(int default_fd, bool *different_device)
    if (prime == NULL) {
       *different_device = false;
       return default_fd;
+   } else {
+      prime_is_vid_did = sscanf(prime, "%hx:%hx", &vendor_id, &device_id) == 2;
    }
 
    default_tag = drm_get_id_path_tag_for_fd(default_fd);
@@ -350,17 +360,27 @@ int loader_get_user_preferred_fd(int default_fd, bool *different_device)
       if (!(devices[i]->available_nodes & 1 << DRM_NODE_RENDER))
          continue;
 
-      /* two formats of DRI_PRIME are supported:
+      /* three formats of DRI_PRIME are supported:
        * "1": choose any other card than the card used by default.
        * id_path_tag: (for example "pci-0000_02_00_0") choose the card
        * with this id_path_tag.
+       * vendor_id:device_id
        */
       if (!strcmp(prime,"1")) {
          if (drm_device_matches_tag(devices[i], default_tag))
             continue;
       } else {
-         if (!drm_device_matches_tag(devices[i], prime))
-            continue;
+         if (prime_is_vid_did && devices[i]->bustype == DRM_BUS_PCI &&
+             devices[i]->deviceinfo.pci->vendor_id == vendor_id &&
+             devices[i]->deviceinfo.pci->device_id == device_id) {
+            /* Update prime for the "different_device"
+             * determination below. */
+            free(prime);
+            prime = drm_construct_id_path_tag(devices[i]);
+         } else {
+            if (!drm_device_matches_tag(devices[i], prime))
+               continue;
+         }
       }
 
       fd = loader_open_device(devices[i]->nodes[DRM_NODE_RENDER]);
@@ -544,9 +564,9 @@ loader_get_driver_for_fd(int fd)
     * and may be useful for some touch testing of i915 on an i965 host.
     */
    if (geteuid() == getuid()) {
-      driver = getenv("MESA_LOADER_DRIVER_OVERRIDE");
-      if (driver)
-         return strdup(driver);
+      const char *override = os_get_option("MESA_LOADER_DRIVER_OVERRIDE");
+      if (override)
+         return strdup(override);
    }
 
 #if defined(HAVE_LIBDRM) && defined(USE_DRICONF)
@@ -585,6 +605,47 @@ loader_get_extensions_name(const char *driver_name)
    return name;
 }
 
+bool
+loader_bind_extensions(void *data,
+                       const struct dri_extension_match *matches, size_t num_matches,
+                       const __DRIextension **extensions)
+{
+   bool ret = true;
+
+   for (size_t j = 0; j < num_matches; j++) {
+      const struct dri_extension_match *match = &matches[j];
+      const __DRIextension **field = (const __DRIextension **)((char *)data + matches[j].offset);
+      for (size_t i = 0; extensions[i]; i++) {
+         if (strcmp(extensions[i]->name, match->name) == 0 &&
+             extensions[i]->version >= match->version) {
+            *field = extensions[i];
+            break;
+         }
+      }
+
+      if (!*field) {
+         log_(match->optional ? _LOADER_DEBUG : _LOADER_FATAL, "did not find extension %s version %d\n",
+               match->name, match->version);
+         if (!match->optional)
+            ret = false;
+         continue;
+      }
+
+      /* The loaders rely on the loaded DRI drivers being from the same Mesa
+       * build so that we can reference the same structs on both sides.
+       */
+      if (strcmp(match->name, __DRI_MESA) == 0) {
+         const __DRImesaCoreExtension *mesa = (const __DRImesaCoreExtension *)*field;
+         if (strcmp(mesa->version_string, MESA_INTERFACE_VERSION_STRING) != 0) {
+            log_(_LOADER_FATAL, "DRI driver not from this Mesa build ('%s' vs '%s')\n",
+                 mesa->version_string, MESA_INTERFACE_VERSION_STRING);
+            ret = false;
+         }
+      }
+   }
+
+   return ret;
+}
 /**
  * Opens a driver or backend using its name, returning the library handle.
  *
@@ -627,11 +688,9 @@ loader_open_driver_lib(const char *driver_name,
          next = end;
 
       len = next - p;
-#if USE_ELF_TLS
       snprintf(path, sizeof(path), "%.*s/tls/%s%s.so", len,
                p, driver_name, lib_suffix);
       driver = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
-#endif
       if (driver == NULL) {
          snprintf(path, sizeof(path), "%.*s/%s%s.so", len,
                   p, driver_name, lib_suffix);

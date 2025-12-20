@@ -34,6 +34,7 @@
 #ifdef HAVE_X11_PLATFORM
 #include <xcb/xcb.h>
 #include <xcb/dri2.h>
+#include <xcb/randr.h>
 #include <xcb/xfixes.h>
 #include <X11/Xlib-xcb.h>
 
@@ -58,6 +59,7 @@ struct zwp_linux_dmabuf_feedback_v1;
 
 #include <GL/gl.h>
 #include <GL/internal/dri_interface.h>
+#include <GL/internal/mesa_interface.h>
 #include "kopper_interface.h"
 
 #ifdef HAVE_DRM_PLATFORM
@@ -160,6 +162,10 @@ struct dri2_egl_display_vtbl {
                                  EGLuint64KHR *ust, EGLuint64KHR *msc,
                                  EGLuint64KHR *sbc);
 
+   /* optional */
+   EGLBoolean (*get_msc_rate)(_EGLDisplay *display, _EGLSurface *surface,
+                              EGLint *numerator, EGLint *denominator);
+
    /* mandatory */
    __DRIdrawable *(*get_dri_drawable)(_EGLSurface *surf);
 
@@ -212,6 +218,8 @@ struct dri2_egl_display
 {
    const struct dri2_egl_display_vtbl *vtbl;
 
+   mtx_t lock;
+
    int dri2_major;
    int dri2_minor;
    __DRIscreen *dri_screen;
@@ -219,6 +227,7 @@ struct dri2_egl_display
    const __DRIconfig **driver_configs;
    void *driver;
    const __DRIcoreExtension *core;
+   const __DRImesaCoreExtension *mesa;
    const __DRIimageDriverExtension *image_driver;
    const __DRIdri2Extension *dri2;
    const __DRIswrastExtension *swrast;
@@ -227,12 +236,10 @@ struct dri2_egl_display
    const __DRI2flushControlExtension *flush_control;
    const __DRItexBufferExtension *tex_buffer;
    const __DRIimageExtension *image;
-   const __DRIrobustnessExtension *robustness;
    const __DRI2configQueryExtension *config;
    const __DRI2fenceExtension *fence;
    const __DRI2bufferDamageExtension *buffer_damage;
    const __DRI2blobExtension *blob;
-   const __DRI2rendererQueryExtension *rendererQuery;
    const __DRI2interopExtension *interop;
    const __DRIconfigOptionsExtension *configOptions;
    const __DRImutableRenderBufferDriverExtension *mutable_render_buffer;
@@ -267,6 +274,7 @@ struct dri2_egl_display
    int present_major_version;
    int present_minor_version;
    struct loader_dri3_extensions loader_dri3_ext;
+   struct loader_dri3_screen_resources screen_resources;
 #endif
 #endif
 
@@ -417,16 +425,28 @@ struct dri2_egl_sync {
    void *fence;
 };
 
-/* From driconf.h, user exposed so should be stable */
-#define DRI_CONF_VBLANK_NEVER 0
-#define DRI_CONF_VBLANK_DEF_INTERVAL_0 1
-#define DRI_CONF_VBLANK_DEF_INTERVAL_1 2
-#define DRI_CONF_VBLANK_ALWAYS_SYNC 3
-
 /* standard typecasts */
 _EGL_DRIVER_STANDARD_TYPECASTS(dri2_egl)
 _EGL_DRIVER_TYPECAST(dri2_egl_image, _EGLImage, obj)
 _EGL_DRIVER_TYPECAST(dri2_egl_sync, _EGLSync, obj)
+
+static inline struct dri2_egl_display *
+dri2_egl_display_lock(_EGLDisplay *disp)
+{
+   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+
+   if (dri2_dpy)
+      mtx_lock(&dri2_dpy->lock);
+
+   return dri2_dpy;
+}
+
+static inline EGLBoolean
+dri2_egl_error_unlock(struct dri2_egl_display *dri2_dpy, EGLint err, const char *msg)
+{
+   mtx_unlock(&dri2_dpy->lock);
+   return _eglError(err, msg);
+}
 
 extern const __DRIimageLookupExtension image_lookup_extension;
 extern const __DRIuseInvalidateExtension use_invalidate;

@@ -134,6 +134,16 @@ struct _util_cpu_caps_state_t {
    struct util_cpu_caps_t caps;
 };
 
+struct _util_cpu_caps_state_t {
+   once_flag once_flag;
+   /**
+    * Initialized to 0 and set to non-zero with an atomic after the entire
+    * struct has been initialized.
+    */
+   uint32_t detect_done;
+   struct util_cpu_caps_t caps;
+};
+
 #define U_CPU_INVALID_L3 0xffff
 
 static inline ATTRIBUTE_CONST const struct util_cpu_caps_t *

@@ -26,16 +26,16 @@ PUBLIC
 const struct sw_driver_descriptor swrast_driver_descriptor = {
    .create_screen = swrast_create_screen,
    .winsys = {
-#ifdef HAVE_PIPE_LOADER_DRI
+#ifdef HAVE_DRI
       {
          .name = "dri",
-         .create_winsys = dri_create_sw_winsys,
+         .create_winsys_dri = dri_create_sw_winsys,
       },
 #endif
-#ifdef HAVE_PIPE_LOADER_KMS
+#ifdef HAVE_DRISW_KMS
       {
          .name = "kms_dri",
-         .create_winsys = kms_dri_create_winsys,
+         .create_winsys_kms_dri = kms_dri_create_winsys,
       },
 #endif
       {
@@ -44,7 +44,7 @@ const struct sw_driver_descriptor swrast_driver_descriptor = {
       },
       {
          .name = "wrapped",
-         .create_winsys = wrapper_sw_winsys_wrap_pipe_screen,
+         .create_winsys_wrapped = wrapper_sw_winsys_wrap_pipe_screen,
       },
       { 0 },
    }

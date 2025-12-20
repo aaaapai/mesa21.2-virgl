@@ -21,8 +21,8 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 #include <stdio.h>
-#include "agx_state.h"
 #include "asahi/lib/agx_pack.h"
+#include "agx_state.h"
 
 /* Computes the address for a push uniform, adding referenced BOs to the
  * current batch as necessary. Note anything uploaded via the batch's pool does
@@ -30,32 +30,32 @@
  * once at submit time. */
 
 static uint64_t
-agx_const_buffer_ptr(struct agx_batch *batch,
-                     struct pipe_constant_buffer *cb)
+agx_const_buffer_ptr(struct agx_batch *batch, struct pipe_constant_buffer *cb)
 {
    if (cb->buffer) {
-      struct agx_bo *bo = agx_resource(cb->buffer)->bo;
-      agx_batch_add_bo(batch, bo);
+      struct agx_resource *rsrc = agx_resource(cb->buffer);
+      agx_batch_reads(batch, rsrc);
 
-      return bo->ptr.gpu + cb->buffer_offset;
+      return rsrc->bo->ptr.gpu + cb->buffer_offset;
    } else {
-      return agx_pool_upload_aligned(&batch->pool,
-                                     ((uint8_t *) cb->user_buffer) + cb->buffer_offset,
-                                     cb->buffer_size - cb->buffer_offset, 64);
+      return agx_pool_upload_aligned(
+         &batch->pool, ((uint8_t *)cb->user_buffer) + cb->buffer_offset,
+         cb->buffer_size - cb->buffer_offset, 64);
    }
 }
 
 static uint64_t
-agx_push_location_direct(struct agx_context *ctx, struct agx_push push,
+agx_push_location_direct(struct agx_batch *batch, struct agx_push push,
                          enum pipe_shader_type stage)
 {
-   struct agx_batch *batch = ctx->batch;
+   struct agx_context *ctx = batch->ctx;
    struct agx_stage *st = &ctx->stage[stage];
 
    switch (push.type) {
    case AGX_PUSH_UBO_BASES: {
       unsigned count = util_last_bit(st->cb_mask);
-      struct agx_ptr ptr = agx_pool_alloc_aligned(&batch->pool, count * sizeof(uint64_t), 8);
+      struct agx_ptr ptr =
+         agx_pool_alloc_aligned(&batch->pool, count * sizeof(uint64_t), 8);
       uint64_t *addresses = ptr.cpu;
 
       for (unsigned i = 0; i < count; ++i) {
@@ -66,45 +66,38 @@ agx_push_location_direct(struct agx_context *ctx, struct agx_push push,
       return ptr.gpu;
    }
 
-   case AGX_PUSH_VBO_BASES: {
-      unsigned count = util_last_bit(ctx->vb_mask);
-      struct agx_ptr ptr = agx_pool_alloc_aligned(&batch->pool, count * sizeof(uint64_t), 8);
-      uint64_t *addresses = ptr.cpu;
+   case AGX_PUSH_VBO_BASE: {
+      struct agx_ptr ptr =
+         agx_pool_alloc_aligned(&batch->pool, sizeof(uint64_t), 8);
+      uint64_t *address = ptr.cpu;
 
-      u_foreach_bit(i, ctx->vb_mask) {
-         struct pipe_vertex_buffer vb = ctx->vertex_buffers[i];
-         assert(!vb.is_user_buffer);
+      assert(ctx->vb_mask & BITFIELD_BIT(push.vbo) && "oob");
 
-         struct agx_bo *bo = agx_resource(vb.buffer.resource)->bo;
-         agx_batch_add_bo(batch, bo);
+      struct pipe_vertex_buffer vb = ctx->vertex_buffers[push.vbo];
+      assert(!vb.is_user_buffer);
 
-         addresses[i] = bo->ptr.gpu + vb.buffer_offset;
+      if (!vb.buffer.resource) {
+         *address = 0;
+         return ptr.gpu;
       }
 
+      struct agx_resource *rsrc = agx_resource(vb.buffer.resource);
+      agx_batch_reads(batch, rsrc);
+
+      *address = rsrc->bo->ptr.gpu + vb.buffer_offset;
       return ptr.gpu;
    }
 
-   case AGX_PUSH_BLEND_CONST:
-   {
+   case AGX_PUSH_BLEND_CONST: {
       return agx_pool_upload_aligned(&batch->pool, &ctx->blend_color,
-            sizeof(ctx->blend_color), 8);
+                                     sizeof(ctx->blend_color), 8);
    }
 
-   case AGX_PUSH_ARRAY_SIZE_MINUS_1: {
-      struct agx_stage *st = &ctx->stage[stage];
-      unsigned count = st->texture_count;
-      struct agx_ptr ptr = agx_pool_alloc_aligned(&batch->pool, count * sizeof(uint16_t), 8);
-      uint16_t *d1 = ptr.cpu;
-
-      for (unsigned i = 0; i < count; ++i) {
-         unsigned array_size = 1;
-
-         if (st->textures[i])
-            array_size = st->textures[i]->base.texture->array_size;
-
-         d1[i] = array_size - 1;
-      }
-
+   case AGX_PUSH_TEXTURE_BASE: {
+      struct agx_ptr ptr =
+         agx_pool_alloc_aligned(&batch->pool, sizeof(uint64_t), 8);
+      uint64_t *address = ptr.cpu;
+      *address = batch->textures;
       return ptr.gpu;
    }
 
@@ -114,11 +107,11 @@ agx_push_location_direct(struct agx_context *ctx, struct agx_push push,
 }
 
 uint64_t
-agx_push_location(struct agx_context *ctx, struct agx_push push,
+agx_push_location(struct agx_batch *batch, struct agx_push push,
                   enum pipe_shader_type stage)
 {
-   uint64_t direct = agx_push_location_direct(ctx, push, stage);
-   struct agx_pool *pool = &ctx->batch->pool;
+   uint64_t direct = agx_push_location_direct(batch, push, stage);
+   struct agx_pool *pool = &batch->pool;
 
    if (push.indirect)
       return agx_pool_upload(pool, &direct, sizeof(direct));

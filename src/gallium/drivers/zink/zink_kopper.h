@@ -28,25 +28,40 @@
 #define ZINK_KOPPER_H
 
 #include "kopper_interface.h"
+#include "util/u_queue.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct kopper_swapchain_image {
+   bool init;
+   bool acquired;
+   bool dt_has_data;
+   int age;
+   VkImage image;
+   VkSemaphore acquire;
+};
 
 struct kopper_swapchain {
+   struct kopper_swapchain *next;
    VkSwapchainKHR swapchain;
-   VkImage *images;
-   bool *inits;
+
    unsigned last_present;
    unsigned num_images;
-   VkSemaphore *acquires;
    uint32_t last_present_prune;
    struct hash_table *presents;
    VkSwapchainCreateInfoKHR scci;
    unsigned num_acquires;
    unsigned max_acquires;
+   unsigned async_presents;
+   struct kopper_swapchain_image *images;
 };
 
 enum kopper_type {
    KOPPER_X11,
    KOPPER_WAYLAND,
-   KOPPER_ANDROID
+   KOPPER_WIN32
 };
 
 struct kopper_displaytarget
@@ -59,14 +74,18 @@ struct kopper_displaytarget
    void *loader_private;
 
    VkSurfaceKHR surface;
+   uint32_t present_modes; //VkPresentModeKHR bitmask
    struct kopper_swapchain *swapchain;
    struct kopper_swapchain *old_swapchain;
 
    struct kopper_loader_info info;
+   struct util_queue_fence present_fence;
 
    VkSurfaceCapabilitiesKHR caps;
-   VkImageFormatListCreateInfoKHR format_list;
+   VkImageFormatListCreateInfo format_list;
    enum kopper_type type;
+   bool is_kill;
+   VkPresentModeKHR present_mode;
 };
 
 struct zink_context;
@@ -83,6 +102,12 @@ static inline bool
 zink_kopper_last_present_eq(const struct kopper_displaytarget *cdt, uint32_t idx)
 {
    return cdt->swapchain->last_present == idx;
+}
+
+static inline bool
+zink_kopper_acquired(const struct kopper_displaytarget *cdt, uint32_t idx)
+{
+   return idx != UINT32_MAX && cdt->swapchain->images[idx].acquired;
 }
 
 struct kopper_displaytarget *
@@ -110,4 +135,19 @@ void
 zink_kopper_deinit_displaytarget(struct zink_screen *screen, struct kopper_displaytarget *cdt);
 bool
 zink_kopper_update(struct pipe_screen *pscreen, struct pipe_resource *pres, int *w, int *h);
+bool
+zink_kopper_is_cpu(const struct pipe_screen *pscreen);
+void
+zink_kopper_fixup_depth_buffer(struct zink_context *ctx);
+bool
+zink_kopper_check(struct pipe_resource *pres);
+void
+zink_kopper_set_swap_interval(struct pipe_screen *pscreen, struct pipe_resource *pres, int interval);
+int
+zink_kopper_query_buffer_age(struct pipe_context *pctx, struct pipe_resource *pres);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif

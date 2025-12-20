@@ -2,30 +2,7 @@
  * SGI FREE SOFTWARE LICENSE B (Version 2.0, Sept. 18, 2008)
  * Copyright (C) 1991-2000 Silicon Graphics, Inc. All Rights Reserved.
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice including the dates of first publication and
- * either this permission notice or a reference to
- * http://oss.sgi.com/projects/FreeB/
- * shall be included in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * SILICON GRAPHICS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
- * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
- * OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
- * Except as contained in this notice, the name of Silicon Graphics, Inc.
- * shall not be used in advertising or otherwise to promote the sale, use or
- * other dealings in this Software without prior written authorization from
- * Silicon Graphics, Inc.
+ * SPDX-License-Identifier: SGI-B-2.0
  */
 
 /**
@@ -50,7 +27,7 @@
 #endif
 #include "glxextensions.h"
 
-#include "util/debug.h"
+#include "util/u_debug.h"
 #ifndef GLX_USE_APPLEGL
 #include "dri_common.h"
 #endif
@@ -125,7 +102,7 @@ static /* const */ char *error_list[] = {
 };
 
 #ifdef GLX_USE_APPLEGL
-static char *__glXErrorString(Display *dpy, int code, XExtCodes *codes, 
+static char *__glXErrorString(Display *dpy, int code, XExtCodes *codes,
                               char *buf, int n);
 #endif
 
@@ -303,22 +280,22 @@ glx_display_free(struct glx_display *priv)
 
    /* Free the direct rendering per display data */
    if (priv->driswDisplay)
-      (*priv->driswDisplay->destroyDisplay) (priv->driswDisplay);
+      priv->driswDisplay->destroyDisplay(priv->driswDisplay);
    priv->driswDisplay = NULL;
 
 #if defined (GLX_USE_DRM)
    if (priv->dri2Display)
-      (*priv->dri2Display->destroyDisplay) (priv->dri2Display);
+      priv->dri2Display->destroyDisplay(priv->dri2Display);
    priv->dri2Display = NULL;
 
    if (priv->dri3Display)
-      (*priv->dri3Display->destroyDisplay) (priv->dri3Display);
+      priv->dri3Display->destroyDisplay(priv->dri3Display);
    priv->dri3Display = NULL;
 #endif /* GLX_USE_DRM */
 
 #if defined(GLX_USE_WINDOWSGL)
    if (priv->windowsdriDisplay)
-      (*priv->windowsdriDisplay->destroyDisplay) (priv->windowsdriDisplay);
+      priv->windowsdriDisplay->destroyDisplay(priv->windowsdriDisplay);
    priv->windowsdriDisplay = NULL;
 #endif /* GLX_USE_WINDOWSGL */
 
@@ -376,8 +353,8 @@ QueryVersion(Display * dpy, int opcode, int *major, int *minor)
    return GL_TRUE;
 }
 
-/* 
- * We don't want to enable this GLX_OML_swap_method in glxext.h, 
+/*
+ * We don't want to enable this GLX_OML_swap_method in glxext.h,
  * because we can't support it.  The X server writes it out though,
  * so we should handle it somehow, to avoid false warnings.
  */
@@ -462,7 +439,7 @@ __glXInitializeVisualConfigFromTags(struct glx_config * config, int count,
 
    for (i = 0; i < count; i += 2) {
       long int tag = *bp++;
-      
+
       switch (tag) {
       case GLX_RGBA:
          if (fbconfig_style_tags)
@@ -546,7 +523,7 @@ __glXInitializeVisualConfigFromTags(struct glx_config * config, int count,
          config->drawableType = *bp++;
 #ifdef GLX_USE_APPLEGL
          /* AppleSGLX supports pixmap and pbuffers with all config. */
-         config->drawableType |= GLX_WINDOW_BIT | GLX_PIXMAP_BIT | GLX_PBUFFER_BIT;              
+         config->drawableType |= GLX_WINDOW_BIT | GLX_PIXMAP_BIT | GLX_PBUFFER_BIT;
 #endif
          break;
       case GLX_RENDER_TYPE: /* fbconfig render type bits */
@@ -678,7 +655,7 @@ createConfigsFromProperties(Display * dpy, int nvisuals, int nprops,
        /* Older X servers don't send this so we default it here. */
       m->drawableType = GLX_WINDOW_BIT;
 #else
-      /* 
+      /*
        * The XQuartz 2.3.2.1 X server doesn't set this properly, so
        * set the proper bits here.
        * AppleSGLX supports windows, pixmaps, and pbuffers with all config.
@@ -730,8 +707,6 @@ static GLboolean
 getFBConfigs(struct glx_screen *psc, struct glx_display *priv, int screen)
 {
    xGLXGetFBConfigsReq *fb_req;
-   xGLXGetFBConfigsSGIXReq *sgi_req;
-   xGLXVendorPrivateWithReplyReq *vpreq;
    xGLXGetFBConfigsReply reply;
    Display *dpy = priv->dpy;
 
@@ -744,24 +719,10 @@ getFBConfigs(struct glx_screen *psc, struct glx_display *priv, int screen)
    LockDisplay(dpy);
 
    psc->configs = NULL;
-   if (priv->minorVersion >= 3) {
-      GetReq(GLXGetFBConfigs, fb_req);
-      fb_req->reqType = priv->codes.major_opcode;
-      fb_req->glxCode = X_GLXGetFBConfigs;
-      fb_req->screen = screen;
-   }
-   else if (strstr(psc->serverGLXexts, "GLX_SGIX_fbconfig") != NULL) {
-      GetReqExtra(GLXVendorPrivateWithReply,
-                  sz_xGLXGetFBConfigsSGIXReq -
-                  sz_xGLXVendorPrivateWithReplyReq, vpreq);
-      sgi_req = (xGLXGetFBConfigsSGIXReq *) vpreq;
-      sgi_req->reqType = priv->codes.major_opcode;
-      sgi_req->glxCode = X_GLXVendorPrivateWithReply;
-      sgi_req->vendorCode = X_GLXvop_GetFBConfigsSGIX;
-      sgi_req->screen = screen;
-   }
-   else
-      goto out;
+   GetReq(GLXGetFBConfigs, fb_req);
+   fb_req->reqType = priv->codes.major_opcode;
+   fb_req->glxCode = X_GLXGetFBConfigs;
+   fb_req->screen = screen;
 
    if (!_XReply(dpy, (xReply *) & reply, 0, False))
       goto out;
@@ -836,29 +797,36 @@ AllocAndFetchScreenConfigs(Display * dpy, struct glx_display * priv)
 #if defined(GLX_USE_DRM)
 #if defined(HAVE_DRI3)
       if (priv->dri3Display)
-         psc = (*priv->dri3Display->createScreen) (i, priv);
+         psc = priv->dri3Display->createScreen(i, priv);
 #endif /* HAVE_DRI3 */
       if (psc == NULL && priv->dri2Display)
-	 psc = (*priv->dri2Display->createScreen) (i, priv);
+	 psc = priv->dri2Display->createScreen(i, priv);
 #endif /* GLX_USE_DRM */
 
 #ifdef GLX_USE_WINDOWSGL
       if (psc == NULL && priv->windowsdriDisplay)
-	 psc = (*priv->windowsdriDisplay->createScreen) (i, priv);
+	 psc = priv->windowsdriDisplay->createScreen(i, priv);
 #endif
 
       if (psc == NULL && priv->driswDisplay)
-	 psc = (*priv->driswDisplay->createScreen) (i, priv);
+	 psc = priv->driswDisplay->createScreen(i, priv);
 #endif /* GLX_DIRECT_RENDERING && !GLX_USE_APPLEGL */
 
 #if defined(GLX_USE_APPLEGL)
       if (psc == NULL)
          psc = applegl_create_screen(i, priv);
 #else
+      bool indirect = false;
       if (psc == NULL)
-	 psc = indirect_create_screen(i, priv);
+      {
+         psc = indirect_create_screen(i, priv);
+         indirect = true;
+      }
 #endif
       priv->screens[i] = psc;
+
+      if(indirect) /* Load extensions required only for indirect glx */
+         glxSendClientInfo(priv, i);
    }
    SyncHandle();
    return GL_TRUE;
@@ -872,9 +840,6 @@ __glXInitialize(Display * dpy)
 {
    XExtCodes *codes;
    struct glx_display *dpyPriv, *d;
-#if defined(GLX_DIRECT_RENDERING) && !defined(GLX_USE_APPLEGL)
-   Bool glx_direct, glx_accel;
-#endif
    int i, majorVersion = 0;
 
    _XLockMutex(_Xglobal_lock);
@@ -902,13 +867,11 @@ __glXInitialize(Display * dpy)
    dpyPriv->codes = *codes;
    dpyPriv->dpy = dpy;
 
-   /* This GLX implementation requires X_GLXQueryExtensionsString
-    * and X_GLXQueryServerString, which are new in GLX 1.1.
-    */
+   /* This GLX implementation requires GLX 1.3 */
    if (!QueryVersion(dpy, dpyPriv->codes.major_opcode,
 		     &majorVersion, &dpyPriv->minorVersion)
        || (majorVersion != 1)
-       || (majorVersion == 1 && dpyPriv->minorVersion < 1)) {
+       || (majorVersion == 1 && dpyPriv->minorVersion < 3)) {
       free(dpyPriv);
       return NULL;
    }
@@ -924,8 +887,8 @@ __glXInitialize(Display * dpy)
    dpyPriv->glXDrawHash = __glxHashCreate();
 
 #if defined(GLX_DIRECT_RENDERING) && !defined(GLX_USE_APPLEGL)
-   glx_direct = !env_var_as_boolean("LIBGL_ALWAYS_INDIRECT", false);
-   glx_accel = !env_var_as_boolean("LIBGL_ALWAYS_SOFTWARE", false);
+   Bool glx_direct = !debug_get_bool_option("LIBGL_ALWAYS_INDIRECT", false);
+   Bool glx_accel = !debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false);
    Bool zink;
    const char *env = getenv("MESA_LOADER_DRIVER_OVERRIDE");
    zink = env && !strcmp(env, "zink");
@@ -934,10 +897,8 @@ __glXInitialize(Display * dpy)
 
    dpyPriv->zombieGLXDrawable = _mesa_pointer_set_create(NULL);
 
-#ifndef GLX_USE_APPLEGL
    /* Set the logger before the *CreateDisplay functions. */
    loader_set_logger(glx_message);
-#endif
 
    /*
     ** Initialize the direct rendering per display data and functions.
@@ -947,15 +908,20 @@ __glXInitialize(Display * dpy)
 #if defined(GLX_USE_DRM)
    if (glx_direct && glx_accel && !zink) {
 #if defined(HAVE_DRI3)
-      if (!env_var_as_boolean("LIBGL_DRI3_DISABLE", false))
+      if (!debug_get_bool_option("LIBGL_DRI3_DISABLE", false))
          dpyPriv->dri3Display = dri3_create_display(dpy);
 #endif /* HAVE_DRI3 */
-      if (!env_var_as_boolean("LIBGL_DRI2_DISABLE", false))
+      if (!debug_get_bool_option("LIBGL_DRI2_DISABLE", false))
          dpyPriv->dri2Display = dri2CreateDisplay(dpy);
    }
 #endif /* GLX_USE_DRM */
    if (glx_direct)
       dpyPriv->driswDisplay = driswCreateDisplay(dpy, zink);
+
+#ifdef GLX_USE_WINDOWSGL
+   if (glx_direct && glx_accel)
+      dpyPriv->windowsdriDisplay = driwindowsCreateDisplay(dpy);
+#endif
 #endif /* GLX_DIRECT_RENDERING && !GLX_USE_APPLEGL */
 
 #ifdef GLX_USE_APPLEGL
@@ -965,17 +931,12 @@ __glXInitialize(Display * dpy)
    }
 #endif
 
-#ifdef GLX_USE_WINDOWSGL
-   if (glx_direct && glx_accel)
-      dpyPriv->windowsdriDisplay = driwindowsCreateDisplay(dpy);
-#endif
-
    if (!AllocAndFetchScreenConfigs(dpy, dpyPriv)) {
       free(dpyPriv);
       return NULL;
    }
 
-   __glX_send_client_info(dpyPriv);
+   glxSendClientInfo(dpyPriv, -1);
 
    /* Grab the lock again and add the dispay private, unless somebody
     * beat us to initializing on this display in the meantime. */

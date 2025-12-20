@@ -12,7 +12,17 @@ Features
 --------
 
 The feature-level of Zink depends on two things; what's implemented in Zink,
-as well as the features of the Vulkan driver.
+as well as the capabilities of the Vulkan driver. 
+
+The feature-levels implemented by Zink are exposed by `Vulkan Profiles
+<https://dev.vulkan.org/tools#vulkan-profiles>`__ in the
+:file:`VP_ZINK_requirements.json` profiles file.
+
+Used with the `Vulkan Profiles tools <https://github.com/KhronosGroup/Vulkan-Profiles>`__,
+we can compare the ZINK profiles with Vulkan devices profiles generated with 
+`Vulkaninfo <https://vulkan.lunarg.com/doc/view/latest/windows/vulkaninfo.html>`__
+or `downloaded from GPUinfo.org`_
+to establish the feature-levels supported by these drivers.
 
 OpenGL 2.1
 ^^^^^^^^^^
@@ -29,20 +39,18 @@ Here's a list of those requirements:
 
   * ``logicOp``
   * ``fillModeNonSolid``
-  * ``wideLines``
-  * ``largePoints``
   * ``alphaToOne``
   * ``shaderClipDistance``
 
 * Device extensions:
 
-  * `VK_KHR_maintenance1`_
-  * ``VK_KHR_create_renderpass2``
-  * ``VK_KHR_imageless_framebuffer``
-  * ``VK_KHR_timeline_semaphore``
-  * `VK_EXT_custom_border_color`_
-  * `VK_EXT_provoking_vertex`_
-  * `VK_EXT_line_rasterization`_, with the following ``VkPhysicalDeviceLineRasterizationFeaturesEXT``:
+  * :ext:`VK_KHR_maintenance1`
+  * :ext:`VK_KHR_create_renderpass2`
+  * :ext:`VK_KHR_imageless_framebuffer`
+  * :ext:`VK_KHR_timeline_semaphore`
+  * :ext:`VK_EXT_custom_border_color` with ``customBorderColorWithoutFormat``
+  * :ext:`VK_EXT_provoking_vertex`
+  * :ext:`VK_EXT_line_rasterization`, with the following ``VkPhysicalDeviceLineRasterizationFeaturesEXT``:
 
     * ``rectangularLines``
     * ``bresenhamLines``
@@ -51,10 +59,14 @@ Here's a list of those requirements:
     * ``stippledBresenhamLines``
     * ``stippledSmoothLines``
 
-In addition to this, `VK_KHR_external_memory`_ is required to support the
+  * :ext:`VK_KHR_swapchain_mutable_format`
+  * :ext:`VK_EXT_border_color_swizzle`
+  * :ext:`VK_KHR_descriptor_update_template`
+
+In addition to this, :ext:`VK_KHR_external_memory` is required to support the
 DRI code-path.
 
-We also require either the `VK_EXT_scalar_block_layout`_ extension or
+We also require either the :ext:`VK_EXT_scalar_block_layout` extension or
 Vulkan 1.2, with the ``scalarBlockLayout`` feature.
 
 OpenGL 3.0
@@ -70,9 +82,8 @@ supported:
 
 * Device extensions:
 
-  * `VK_EXT_transform_feedback`_
-  * `VK_EXT_conditional_rendering`_
-
+  * :ext:`VK_EXT_transform_feedback`
+  * :ext:`VK_EXT_conditional_rendering`
 
 OpenGL 3.1
 ^^^^^^^^^^
@@ -85,13 +96,18 @@ are required:
 OpenGL 3.2
 ^^^^^^^^^^
 
-For OpenGL 3.2 support, the following additional ``VkPhysicalDeviceFeatures``
-are required to be supported, although some of these might not actually get
-verified:
+For OpenGL 3.2 support, the following additional requirements must be
+supported, although some of these might not actually get verified:
 
-* ``depthClamp``
-* ``geometryShader``
-* ``shaderTessellationAndGeometryPointSize``
+* ``VkPhysicalDeviceFeatures``:
+
+  * ``depthClamp``
+  * ``geometryShader``
+  * ``shaderTessellationAndGeometryPointSize``
+
+* Device extensions:
+
+  * :ext:`VK_EXT_depth_clip_enable`
 
 OpenGL 3.3
 ^^^^^^^^^^
@@ -101,11 +117,11 @@ supported, although some of these might not actually get verified:
 
 * ``VkPhysicalDeviceFeatures``:
 
-  * ``occlusionQueryPrecise``
+  * ``dualSrcBlend``
 
 * Device extensions:
 
-  * `VK_EXT_vertex_attribute_divisor`_
+  * :ext:`VK_EXT_vertex_attribute_divisor`
 
 OpenGL 4.0
 ^^^^^^^^^^
@@ -121,9 +137,9 @@ supported:
 
 * Device extensions:
 
-  * `VK_KHR_maintenance2`_
+  * :ext:`VK_KHR_maintenance2`
 
-* Formats requiring ``VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT``:
+* Formats requiring ``VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT``:
 
       * ``VK_FORMAT_R32G32B32_SFLOAT``
       * ``VK_FORMAT_R32G32B32_SINT``
@@ -141,7 +157,11 @@ supported:
 
 * ``VkPhysicalDeviceLimits``
 
+  * ``maxImageDimension1D`` ≥ 16384
   * ``maxImageDimension2D`` ≥ 16384
+  * ``maxImageDimension3D`` ≥ 2048
+  * ``maxImageDimensionCube`` ≥ 16384
+  * ``maxImageArrayLayers`` ≥ 2048
   * ``maxViewports`` ≥ 16
 
 OpenGL 4.2
@@ -150,32 +170,27 @@ OpenGL 4.2
 For OpenGL 4.2 support, the following additional requirements must be
 supported:
 
+* Device extensions:
+    * :ext:`VK_EXT_image_2d_view_of_3d`
+
 * ``VkPhysicalDeviceLimits``:
 
   * ``shaderStorageImageExtendedFormats``
   * ``shaderStorageImageWriteWithoutFormat``
+  * ``vertexPipelineStoresAndAtomics``
+  * ``fragmentStoresAndAtomics``
 
 * For Vulkan 1.2 and above:
-  
+
   * ``VkPhysicalDeviceVulkan11Features``:
 
     * ``shaderDrawParameters``
-    * ``vertexPipelineStoresAndAtomics``
-    * ``fragmentStoresAndAtomics``
-    * ``textureCompressionBC``
 
 * For Vulkan 1.1 and below:
 
   * Device extensions:
 
-    * `VK_KHR_shader_draw_parameters`_
-
-* Formats requiring ``VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT``:
-
-   * ``VK_FORMAT_BC7_UNORM_BLOCK``
-   * ``VK_FORMAT_BC7_SRGB_BLOCK``
-   * ``VK_FORMAT_BC6H_SFLOAT_BLOCK``
-   * ``VK_FORMAT_BC6H_UFLOAT_BLOCK``
+    * :ext:`VK_KHR_shader_draw_parameters`
 
 OpenGL 4.3
 ^^^^^^^^^^
@@ -209,7 +224,7 @@ supported:
 
 * Device extensions:
 
-  * `VK_KHR_sampler_mirror_clamp_to_edge`_
+  * :ext:`VK_KHR_sampler_mirror_clamp_to_edge`
 
 OpenGL 4.5
 ^^^^^^^^^^
@@ -222,18 +237,17 @@ are required to be supported
 OpenGL 4.6
 ^^^^^^^^^^
 
-For OpenGL 4.6 support, the following additional ``VkPhysicalDeviceFeatures``
-are required to be supported
+For OpenGL 4.6 support, the following additional requirements must be
+supported:
 
 * ``VkPhysicalDeviceFeatures``:
 
   * ``samplerAnisotropy``
-  * ``pipelineStatisticsQuery``
   * ``depthBiasClamp``
 
 * Device extensions:
 
-  * `VK_KHR_draw_indirect_count`_
+  * :ext:`VK_KHR_draw_indirect_count`
 
 Performance
 -----------
@@ -246,11 +260,9 @@ changing the descriptor manager may improve performance:
 ``auto``
    Automatically detect best mode. This is the default.
 ``lazy``
-   Disable caching and attempt to use the least amount of CPU.
-``nofallback``
-   Always use caching to try reducing GPU churn.
-``notemplates``
-   The same as `auto`, but disables the use of `VK_KHR_descriptor_templates`.
+   Attempt to use the least amount of CPU by binding descriptors opportunistically.
+``db``
+   Use EXT_descriptor_buffer when possible.
 
 Debugging
 ---------
@@ -258,23 +270,33 @@ Debugging
 There's a few tools that are useful for debugging Zink, like this environment
 variable:
 
-.. envvar:: ZINK_DEBUG <flags> ("")
+.. envvar:: ZINK_DEBUG
 
-``nir``
-   Print the NIR form of all shaders to stderr.
-``spirv``
-   Write the binary SPIR-V form of all compiled shaders to a file in the
-   current directory, and print a message with the filename to stderr.
-``tgsi``
-   Print the TGSI form of TGSI shaders to stderr.
-``validation``
-   Dump Validation layer output.
+  Accepts the following comma-separated list of flags:
+
+  ``nir``
+    Print the NIR form of all shaders to stderr.
+  ``spirv``
+    Write the binary SPIR-V form of all compiled shaders to a file in the
+    current directory, and print a message with the filename to stderr.
+  ``tgsi``
+    Print the TGSI form of TGSI shaders to stderr.
+  ``validation``
+    Dump Validation layer output.
+  ``sync``
+    Emit full synchronization barriers before every draw and dispatch.
+  ``compact``
+    Use a maximum of 4 descriptor sets
+  ``noreorder``
+    Do not reorder or optimize GL command streams
+  ``gpl``
+    Force using Graphics Pipeline Library for all shaders
 
 Vulkan Validation Layers
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 Another useful tool for debugging is the `Vulkan Validation Layers
-<https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/master/README.md>`_.
+<https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/master/README.md>`__.
 
 The validation layers effectively insert extra checking between Zink and the
 Vulkan driver, pointing out incorrect usage of the Vulkan API. The layers can
@@ -291,16 +313,4 @@ questions, don't hesitate to visit `#zink on OFTC
 <irc://irc.oftc.net/zink>`__ and say hi!
 
 
-.. _VK_KHR_maintenance1: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_maintenance1.html
-.. _VK_KHR_external_memory: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_external_memory.html
-.. _VK_EXT_scalar_block_layout: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_EXT_scalar_block_layout.html
-.. _VK_EXT_transform_feedback: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_EXT_transform_feedback.html
-.. _VK_EXT_conditional_rendering: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_EXT_conditional_rendering.html
-.. _VK_EXT_vertex_attribute_divisor: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_EXT_vertex_attribute_divisor.html
-.. _VK_KHR_maintenance2: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_maintenance2.html
-.. _VK_KHR_shader_draw_parameters: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_shader_draw_parameters.html
-.. _VK_KHR_draw_indirect_count: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_draw_indirect_count.html
-.. _VK_KHR_sampler_mirror_clamp_to_edge: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_sampler_mirror_clamp_to_edge.html
-.. _VK_EXT_custom_border_color: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_EXT_custom_border_color.html
-.. _VK_EXT_provoking_vertex: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_EXT_provoking_vertex.html
-.. _VK_EXT_line_rasterization: https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_EXT_line_rasterization.html
+.. _downloaded from GPUinfo.org: https://www.saschawillems.de/blog/2022/03/12/vulkan-profiles-support-for-the-vulkan-hardware-capability-viewer-and-database/

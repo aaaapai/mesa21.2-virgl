@@ -63,6 +63,8 @@ static const driOptionDescription vn_dri_options[] = {
       DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(false)
       DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(0)
       DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(false)
+      DRI_CONF_VK_XWAYLAND_WAIT_READY(true)
+      DRI_CONF_VENUS_IMPLICIT_FENCING(false)
    DRI_CONF_SECTION_END
    DRI_CONF_SECTION_DEBUG
       DRI_CONF_VK_WSI_FORCE_BGRA8_UNORM_FIRST(false)
@@ -217,15 +219,23 @@ vn_instance_init_experimental_features(struct vn_instance *instance)
       &reply_dec, &struct_size, &instance->experimental);
    vn_renderer_shmem_unref(instance->renderer, reply_shmem);
 
+   /* if renderer supports multiple_timelines, the driver will use it and
+    * globalFencing support can be assumed.
+    */
+   if (instance->renderer->info.supports_multiple_timelines)
+      instance->experimental.globalFencing = VK_TRUE;
+
    if (VN_DEBUG(INIT)) {
       vn_log(instance,
              "VkVenusExperimentalFeatures100000MESA is as below:"
              "\n\tmemoryResourceAllocationSize = %u"
              "\n\tglobalFencing = %u"
-             "\n\tlargeRing = %u",
+             "\n\tlargeRing = %u"
+             "\n\tsyncFdFencing = %u",
              instance->experimental.memoryResourceAllocationSize,
              instance->experimental.globalFencing,
-             instance->experimental.largeRing);
+             instance->experimental.largeRing,
+             instance->experimental.syncFdFencing);
    }
 
    return VK_SUCCESS;
@@ -291,6 +301,10 @@ vn_instance_init_renderer(struct vn_instance *instance)
              renderer_info->vk_mesa_venus_protocol_spec_version);
       vn_log(instance, "supports blob id 0: %d",
              renderer_info->supports_blob_id_0);
+      vn_log(instance, "allow_vk_wait_syncs: %d",
+             renderer_info->allow_vk_wait_syncs);
+      vn_log(instance, "supports_multiple_timelines: %d",
+             renderer_info->supports_multiple_timelines);
    }
 
    return VK_SUCCESS;
@@ -687,12 +701,13 @@ vn_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
                   const VkAllocationCallbacks *pAllocator,
                   VkInstance *pInstance)
 {
+   VN_TRACE_FUNC();
    const VkAllocationCallbacks *alloc =
       pAllocator ? pAllocator : vk_default_allocator();
    struct vn_instance *instance;
    VkResult result;
 
-   vn_debug_init();
+   vn_env_init();
    vn_trace_init();
 
    instance = vk_zalloc(alloc, sizeof(*instance), VN_DEFAULT_ALIGN,
@@ -713,8 +728,12 @@ vn_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
       return vn_error(NULL, result);
    }
 
+   /* ring_idx = 0 reserved for CPU timeline */
+   instance->ring_idx_used_mask = 0x1;
+
    mtx_init(&instance->physical_device.mutex, mtx_plain);
    mtx_init(&instance->cs_shmem.mutex, mtx_plain);
+   mtx_init(&instance->ring_idx_mutex, mtx_plain);
 
    if (!vn_icd_supports_api_version(
           instance->base.base.app_info.api_version)) {
@@ -786,6 +805,9 @@ vn_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
                        instance->base.base.app_info.engine_name,
                        instance->base.base.app_info.engine_version);
 
+   instance->renderer->info.has_implicit_fencing =
+      driQueryOptionb(&instance->dri_options, "venus_implicit_fencing");
+
    *pInstance = instance_handle;
 
    return VK_SUCCESS;
@@ -813,6 +835,7 @@ fail:
       vn_renderer_destroy(instance->renderer, alloc);
 
    mtx_destroy(&instance->physical_device.mutex);
+   mtx_destroy(&instance->ring_idx_mutex);
    mtx_destroy(&instance->cs_shmem.mutex);
 
    vn_instance_base_fini(&instance->base);
@@ -825,6 +848,7 @@ void
 vn_DestroyInstance(VkInstance _instance,
                    const VkAllocationCallbacks *pAllocator)
 {
+   VN_TRACE_FUNC();
    struct vn_instance *instance = vn_instance_from_handle(_instance);
    const VkAllocationCallbacks *alloc =
       pAllocator ? pAllocator : &instance->base.base.alloc;
@@ -839,6 +863,7 @@ vn_DestroyInstance(VkInstance _instance,
       vk_free(alloc, instance->physical_device.groups);
    }
    mtx_destroy(&instance->physical_device.mutex);
+   mtx_destroy(&instance->ring_idx_mutex);
 
    vn_call_vkDestroyInstance(instance, _instance, NULL);
 

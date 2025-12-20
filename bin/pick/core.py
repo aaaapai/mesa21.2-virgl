@@ -21,6 +21,7 @@
 """Core data structures and routines for pick."""
 
 import asyncio
+import contextlib
 import enum
 import json
 import pathlib
@@ -40,10 +41,11 @@ if typing.TYPE_CHECKING:
         sha: str
         description: str
         nominated: bool
-        nomination_type: typing.Optional[int]
+        nomination_type: int
         resolution: typing.Optional[int]
         main_sha: typing.Optional[str]
         because_sha: typing.Optional[str]
+        notes: typing.Optional[str]
 
 IS_FIX = re.compile(r'^\s*fixes:\s*([a-f0-9]{6,40})', flags=re.MULTILINE | re.IGNORECASE)
 # FIXME: I dislike the duplication in this regex, but I couldn't get it to work otherwise
@@ -51,14 +53,46 @@ IS_CC = re.compile(r'^\s*cc:\s*["\']?([0-9]{2}\.[0-9])?["\']?\s*["\']?([0-9]{2}\
                    flags=re.MULTILINE | re.IGNORECASE)
 IS_REVERT = re.compile(r'This reverts commit ([0-9a-f]{40})')
 
-# XXX: hack
-SEM = asyncio.Semaphore(50)
-
-COMMIT_LOCK = asyncio.Lock()
-
 git_toplevel = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'],
                                        stderr=subprocess.DEVNULL).decode("ascii").strip()
 pick_status_json = pathlib.Path(git_toplevel) / '.pick_status.json'
+
+
+@attr.s(slots=True, cmp=False)
+class AsyncRWLock:
+
+    """An asynchronous Read/Write lock.
+    
+    This is a very simple read/write lock that prioritizes reads.
+
+    As an implementation detail, this relies on python's global locking to drop
+    the need for a lock to protect the `readers` attribute.
+    """
+
+    readers: int = attr.ib(0, init=False)
+    global_lock: asyncio.Lock = attr.ib(factory=asyncio.Lock, init=False)
+    read_lock: asyncio.Lock = attr.ib(factory=asyncio.Lock, init=False)
+
+    @contextlib.asynccontextmanager
+    async def read(self) -> typing.AsyncIterator[None]:
+        async with self.read_lock:
+            self.readers += 1
+            if self.readers == 1:
+                await self.global_lock.acquire()
+        yield
+        async with self.read_lock:
+            self.readers -= 1
+            if self.readers == 0:
+                self.global_lock.release()
+
+    @contextlib.asynccontextmanager
+    async def write(self) -> typing.AsyncIterator[None]:
+        async with self.global_lock:
+            yield
+
+
+GIT_LOCK = AsyncRWLock()
+STATE_LOCK = AsyncRWLock()
 
 
 class PickUIException(Exception):
@@ -71,6 +105,7 @@ class NominationType(enum.Enum):
     CC = 0
     FIXES = 1
     REVERT = 2
+    NONE = 3
 
 
 @enum.unique
@@ -85,7 +120,7 @@ class Resolution(enum.Enum):
 
 async def commit_state(*, amend: bool = False, message: str = 'Update') -> bool:
     """Commit the .pick_status.json file."""
-    async with COMMIT_LOCK:
+    async with STATE_LOCK.write():
         p = await asyncio.create_subprocess_exec(
             'git', 'add', pick_status_json.as_posix(),
             stdout=asyncio.subprocess.DEVNULL,
@@ -116,24 +151,26 @@ class Commit:
     sha: str = attr.ib()
     description: str = attr.ib()
     nominated: bool = attr.ib(False)
-    nomination_type: typing.Optional[NominationType] = attr.ib(None)
+    nomination_type: NominationType = attr.ib(NominationType.NONE)
     resolution: Resolution = attr.ib(Resolution.UNRESOLVED)
     main_sha: typing.Optional[str] = attr.ib(None)
     because_sha: typing.Optional[str] = attr.ib(None)
+    notes: typing.Optional[str] = attr.ib(None)
 
     def to_json(self) -> 'CommitDict':
         d: typing.Dict[str, typing.Any] = attr.asdict(self)
-        if self.nomination_type is not None:
-            d['nomination_type'] = self.nomination_type.value
+        d['nomination_type'] = self.nomination_type.value
         if self.resolution is not None:
             d['resolution'] = self.resolution.value
         return typing.cast('CommitDict', d)
 
     @classmethod
     def from_json(cls, data: 'CommitDict') -> 'Commit':
-        c = cls(data['sha'], data['description'], data['nominated'], main_sha=data['main_sha'], because_sha=data['because_sha'])
-        if data['nomination_type'] is not None:
-            c.nomination_type = NominationType(data['nomination_type'])
+        c = cls(data['sha'], data['description'], data['nominated'], main_sha=data['main_sha'],
+                because_sha=data['because_sha'], notes=data['notes'])
+        if (d := data['nomination_type']) is None:
+            d = NominationType.NONE.value
+        c.nomination_type = NominationType(d)
         if data['resolution'] is not None:
             c.resolution = Resolution(data['resolution'])
         return c
@@ -146,31 +183,25 @@ class Commit:
             stderr=subprocess.DEVNULL
         ).decode("ascii").strip()
 
-    async def apply(self, ui: 'UI') -> typing.Tuple[bool, str]:
+    async def apply(self) -> typing.Tuple[bool, str]:
         # FIXME: This isn't really enough if we fail to cherry-pick because the
         # git tree will still be dirty
-        async with COMMIT_LOCK:
-            p = await asyncio.create_subprocess_exec(
-                'git', 'cherry-pick', '-x', self.sha,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, err = await p.communicate()
+        # We'll end up with a recursive locking situation here if we take the git lock
+        p = await asyncio.create_subprocess_exec(
+            'git', 'cherry-pick', '-x', self.sha,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await p.communicate()
 
-        if p.returncode != 0:
-            return (False, err.decode())
-
-        self.resolution = Resolution.MERGED
-        await ui.feedback(f'{self.sha} ({self.description}) applied successfully')
-
-        # Append the changes to the .pickstatus.json file
-        ui.save()
-        v = await commit_state(amend=True)
-        return (v, '')
+        ret = p.returncode == 0
+        if ret:
+            self.resolution = Resolution.MERGED
+        return ret, err.decode()
 
     async def abort_cherry(self, ui: 'UI', err: str) -> None:
         await ui.feedback(f'{self.sha} ({self.description}) failed to apply\n{err}')
-        async with COMMIT_LOCK:
+        async with GIT_LOCK.write():
             p = await asyncio.create_subprocess_exec(
                 'git', 'cherry-pick', '--abort',
                 stdout=asyncio.subprocess.DEVNULL,
@@ -179,44 +210,43 @@ class Commit:
             r = await p.wait()
         await ui.feedback(f'{"Successfully" if r == 0 else "Failed to"} abort cherry-pick.')
 
-    async def denominate(self, ui: 'UI') -> bool:
+    async def denominate(self) -> None:
         self.resolution = Resolution.DENOMINATED
-        ui.save()
-        v = await commit_state(message=f'Mark {self.sha} as denominated')
-        assert v
-        await ui.feedback(f'{self.sha} ({self.description}) denominated successfully')
-        return True
 
-    async def backport(self, ui: 'UI') -> bool:
+    async def backport(self) -> None:
         self.resolution = Resolution.BACKPORTED
-        ui.save()
-        v = await commit_state(message=f'Mark {self.sha} as backported')
-        assert v
-        await ui.feedback(f'{self.sha} ({self.description}) backported successfully')
-        return True
 
     async def resolve(self, ui: 'UI') -> None:
         self.resolution = Resolution.MERGED
-        ui.save()
+        await ui.save()
         v = await commit_state(amend=True)
         assert v
         await ui.feedback(f'{self.sha} ({self.description}) committed successfully')
 
+    async def update_notes(self, ui: 'UI', notes: typing.Optional[str]) -> None:
+        self.notes = notes
+        await ui.save()
+        v = await commit_state(message=f'Updates notes for {self.sha}')
+        assert v
+        await ui.feedback(f'{self.sha} ({self.description}) notes updated successfully')
+
 
 async def get_new_commits(sha: str) -> typing.List[typing.Tuple[str, str]]:
     # Try to get the authoritative upstream main
-    p = await asyncio.create_subprocess_exec(
-        'git', 'for-each-ref', '--format=%(upstream)', 'refs/heads/main',
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL)
-    out, _ = await p.communicate()
+    async with GIT_LOCK.read():
+        p = await asyncio.create_subprocess_exec(
+            'git', 'for-each-ref', '--format=%(upstream)', 'refs/heads/main',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await p.communicate()
     upstream = out.decode().strip()
 
-    p = await asyncio.create_subprocess_exec(
-        'git', 'log', '--pretty=oneline', f'{sha}..{upstream}',
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL)
-    out, _ = await p.communicate()
+    async with GIT_LOCK.read():
+        p = await asyncio.create_subprocess_exec(
+            'git', 'log', '--pretty=oneline', f'{sha}..{upstream}',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await p.communicate()
     assert p.returncode == 0, f"git log didn't work: {sha}"
     return list(split_commit_list(out.decode().strip()))
 
@@ -231,7 +261,7 @@ def split_commit_list(commits: str) -> typing.Generator[typing.Tuple[str, str], 
 
 
 async def is_commit_in_branch(sha: str) -> bool:
-    async with SEM:
+    async with GIT_LOCK.read():
         p = await asyncio.create_subprocess_exec(
             'git', 'merge-base', '--is-ancestor', sha, 'HEAD',
             stdout=asyncio.subprocess.DEVNULL,
@@ -242,7 +272,7 @@ async def is_commit_in_branch(sha: str) -> bool:
 
 
 async def full_sha(sha: str) -> str:
-    async with SEM:
+    async with GIT_LOCK.read():
         p = await asyncio.create_subprocess_exec(
             'git', 'rev-parse', sha,
             stdout=asyncio.subprocess.PIPE,
@@ -255,7 +285,7 @@ async def full_sha(sha: str) -> str:
 
 
 async def resolve_nomination(commit: 'Commit', version: str) -> 'Commit':
-    async with SEM:
+    async with GIT_LOCK.read():
         p = await asyncio.create_subprocess_exec(
             'git', 'log', '--format=%B', '-1', commit.sha,
             stdout=asyncio.subprocess.PIPE,
@@ -304,38 +334,25 @@ async def resolve_nomination(commit: 'Commit', version: str) -> 'Commit':
     return commit
 
 
-async def resolve_fixes(commits: typing.List['Commit'], previous: typing.List['Commit']) -> None:
-    """Determine if any of the undecided commits fix/revert a staged commit.
+async def changes_commit(commit: Commit, commits: typing.List['Commit']) -> typing.List[Commit]:
+    """Find all reverts and fixes for a given commit.
 
-    The are still needed if they apply to a commit that is staged for
-    inclusion, but not yet included.
-
-    This must be done in order, because a commit 3 might fix commit 2 which
-    fixes commit 1.
     """
-    shas: typing.Set[str] = set(c.sha for c in previous if c.nominated)
-    assert None not in shas, 'None in shas'
+    new_commits: typing.List[Commit] = []
+    for c in reversed(commits):
+        if c is commit:
+            break
+        new_commits.append(c)
 
-    for commit in reversed(commits):
-        if not commit.nominated and commit.nomination_type is NominationType.FIXES:
-            commit.nominated = commit.because_sha in shas
+    ret: typing.List[Commit] = []
 
-        if commit.nominated:
-            shas.add(commit.sha)
-
-    for commit in commits:
-        if (commit.nomination_type is NominationType.REVERT and
-                commit.because_sha in shas):
-            for oldc in reversed(commits):
-                if oldc.sha == commit.because_sha:
-                    # In this case a commit that hasn't yet been applied is
-                    # reverted, we don't want to apply that commit at all
-                    oldc.nominated = False
-                    oldc.resolution = Resolution.DENOMINATED
-                    commit.nominated = False
-                    commit.resolution = Resolution.DENOMINATED
-                    shas.remove(commit.because_sha)
-                    break
+    for c in reversed(new_commits):
+        if (c.nomination_type in {NominationType.REVERT, NominationType.FIXES} and
+                c.because_sha == commit.sha):
+            c.nominated = True
+            ret.append(c)
+    
+    return ret
 
 
 async def gather_commits(version: str, previous: typing.List['Commit'],
@@ -361,8 +378,6 @@ async def gather_commits(version: str, previous: typing.List['Commit'],
     await asyncio.gather(*tasks)
     assert None not in m_commits
     commits = typing.cast(typing.List[Commit], m_commits)
-
-    await resolve_fixes(commits, previous)
 
     for commit in commits:
         if commit.resolution is Resolution.UNRESOLVED and not commit.nominated:

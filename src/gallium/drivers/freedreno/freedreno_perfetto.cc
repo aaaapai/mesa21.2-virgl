@@ -23,7 +23,7 @@
 
 #include <perfetto.h>
 
-#include "util/u_perfetto.h"
+#include "util/perf/u_perfetto.h"
 
 #include "freedreno_tracepoints.h"
 
@@ -232,6 +232,62 @@ stage_end(struct pipe_context *pctx, uint64_t ts_ns, enum fd_stage_id stage)
             data->set_name("binHeight");
             data->set_value(std::to_string(p->binh));
          }
+      } else if (stage == COMPUTE_STAGE_ID) {
+         {
+            auto data = event->add_extra_data();
+
+            data->set_name("indirect");
+            data->set_value(std::to_string(p->indirect));
+         }
+
+         {
+            auto data = event->add_extra_data();
+
+            data->set_name("work_dim");
+            data->set_value(std::to_string(p->work_dim));
+         }
+
+         {
+            auto data = event->add_extra_data();
+
+            data->set_name("local_size_x");
+            data->set_value(std::to_string(p->local_size_x));
+         }
+
+         {
+            auto data = event->add_extra_data();
+
+            data->set_name("local_size_y");
+            data->set_value(std::to_string(p->local_size_y));
+         }
+
+         {
+            auto data = event->add_extra_data();
+
+            data->set_name("local_size_z");
+            data->set_value(std::to_string(p->local_size_z));
+         }
+
+         {
+            auto data = event->add_extra_data();
+
+            data->set_name("num_groups_x");
+            data->set_value(std::to_string(p->num_groups_x));
+         }
+
+         {
+            auto data = event->add_extra_data();
+
+            data->set_name("num_groups_y");
+            data->set_value(std::to_string(p->num_groups_y));
+         }
+
+         {
+            auto data = event->add_extra_data();
+
+            data->set_name("num_groups_z");
+            data->set_value(std::to_string(p->num_groups_z));
+         }
       }
    });
 }
@@ -263,6 +319,9 @@ sync_timestamp(struct fd_context *ctx)
       PERFETTO_ELOG("Could not sync CPU and GPU clocks");
       return;
    }
+
+   /* get cpu timestamp again because FD_TIMESTAMP can take >100us */
+   cpu_ts = perfetto::base::GetBootTimeNs().count();
 
    /* convert GPU ts into ns: */
    gpu_ts = ctx->ts_to_ns(gpu_ts);
@@ -407,6 +466,17 @@ fd_start_compute(struct pipe_context *pctx, uint64_t ts_ns,
                  const struct trace_start_compute *payload)
 {
    stage_start(pctx, ts_ns, COMPUTE_STAGE_ID);
+
+   struct fd_perfetto_state *p = &fd_context(pctx)->perfetto;
+
+   p->indirect = payload->indirect;
+   p->work_dim = payload->work_dim;
+   p->local_size_x = payload->local_size_x;
+   p->local_size_y = payload->local_size_y;
+   p->local_size_z = payload->local_size_z;
+   p->num_groups_x = payload->num_groups_x;
+   p->num_groups_y = payload->num_groups_y;
+   p->num_groups_z = payload->num_groups_z;
 }
 
 void
@@ -447,6 +517,54 @@ fd_end_resolve(struct pipe_context *pctx, uint64_t ts_ns,
                const struct trace_end_resolve *payload)
 {
    stage_end(pctx, ts_ns, RESOLVE_STAGE_ID);
+}
+
+void
+fd_start_state_restore(struct pipe_context *pctx, uint64_t ts_ns,
+                       const void *flush_data,
+                       const struct trace_start_state_restore *payload)
+{
+   stage_start(pctx, ts_ns, STATE_RESTORE_STAGE_ID);
+}
+
+void
+fd_end_state_restore(struct pipe_context *pctx, uint64_t ts_ns,
+                     const void *flush_data,
+                     const struct trace_end_state_restore *payload)
+{
+   stage_end(pctx, ts_ns, STATE_RESTORE_STAGE_ID);
+}
+
+void
+fd_start_vsc_overflow_test(struct pipe_context *pctx, uint64_t ts_ns,
+                           const void *flush_data,
+                           const struct trace_start_vsc_overflow_test *payload)
+{
+   stage_start(pctx, ts_ns, VSC_OVERFLOW_STAGE_ID);
+}
+
+void
+fd_end_vsc_overflow_test(struct pipe_context *pctx, uint64_t ts_ns,
+                         const void *flush_data,
+                         const struct trace_end_vsc_overflow_test *payload)
+{
+   stage_end(pctx, ts_ns, VSC_OVERFLOW_STAGE_ID);
+}
+
+void
+fd_start_prologue(struct pipe_context *pctx, uint64_t ts_ns,
+                  const void *flush_data,
+                  const struct trace_start_prologue *payload)
+{
+   stage_start(pctx, ts_ns, PROLOGUE_STAGE_ID);
+}
+
+void
+fd_end_prologue(struct pipe_context *pctx, uint64_t ts_ns,
+                const void *flush_data,
+                const struct trace_end_prologue *payload)
+{
+   stage_end(pctx, ts_ns, PROLOGUE_STAGE_ID);
 }
 
 #ifdef __cplusplus

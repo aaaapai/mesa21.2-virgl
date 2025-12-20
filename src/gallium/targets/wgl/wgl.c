@@ -37,7 +37,6 @@
 #include <windows.h>
 
 #include "util/u_debug.h"
-#include "util/debug.h"
 #include "stw_winsys.h"
 #include "stw_device.h"
 #include "gdi/gdi_sw_winsys.h"
@@ -115,7 +114,7 @@ static struct pipe_screen *
 wgl_screen_create(HDC hDC)
 {
    struct sw_winsys *winsys;
-   UNUSED bool sw_only = env_var_as_boolean("LIBGL_ALWAYS_SOFTWARE", false);
+   UNUSED bool sw_only = debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false);
 
    winsys = gdi_create_sw_winsys();
    if (!winsys)
@@ -125,6 +124,9 @@ wgl_screen_create(HDC hDC)
       debug_get_option("GALLIUM_DRIVER", ""),
 #ifdef GALLIUM_D3D12
       sw_only ? "" : "d3d12",
+#endif
+#ifdef GALLIUM_ZINK
+      sw_only ? "" : "zink",
 #endif
 #if defined(GALLIUM_LLVMPIPE)
       "llvmpipe",
@@ -168,8 +170,10 @@ wgl_present(struct pipe_screen *screen,
     * other structs such as this stw_winsys as well...
     */
 
+#if defined(GALLIUM_LLVMPIPE) || defined(GALLIUM_SOFTPIPE)
    struct sw_winsys *winsys = NULL;
    struct sw_displaytarget *dt = NULL;
+#endif
 
 #ifdef GALLIUM_LLVMPIPE
    if (use_llvmpipe) {

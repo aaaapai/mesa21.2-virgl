@@ -265,9 +265,8 @@ handle_stateobj_relocs(struct msm_submit *submit, struct msm_ringbuffer *ring)
    return relocs;
 }
 
-static int
-msm_submit_flush(struct fd_submit *submit, int in_fence_fd,
-                 struct fd_submit_fence *out_fence)
+static struct fd_fence *
+msm_submit_flush(struct fd_submit *submit, int in_fence_fd, bool use_fence_fd)
 {
    struct msm_submit *msm_submit = to_msm_submit(submit);
    struct msm_pipe *msm_pipe = to_msm_pipe(submit->pipe);
@@ -303,19 +302,19 @@ msm_submit_flush(struct fd_submit *submit, int in_fence_fd,
       struct fd_ringbuffer *ring = (void *)entry->key;
       struct msm_ringbuffer *msm_ring = to_msm_ringbuffer(ring);
 
-      debug_assert(i < nr_cmds);
+      assert(i < nr_cmds);
 
       // TODO handle relocs:
       if (ring->flags & _FD_RINGBUFFER_OBJECT) {
 
-         debug_assert(o < nr_objs);
+         assert(o < nr_objs);
 
          void *relocs = handle_stateobj_relocs(msm_submit, msm_ring);
          obj_relocs[o++] = relocs;
 
          cmds[i].type = MSM_SUBMIT_CMD_IB_TARGET_BUF;
          cmds[i].submit_idx = append_bo(msm_submit, msm_ring->ring_bo);
-         cmds[i].submit_offset = msm_ring->offset;
+         cmds[i].submit_offset = submit_offset(msm_ring->ring_bo, msm_ring->offset);
          cmds[i].size = offset_bytes(ring->cur, ring->start);
          cmds[i].pad = 0;
          cmds[i].nr_relocs = msm_ring->cmd->nr_relocs;
@@ -329,9 +328,9 @@ msm_submit_flush(struct fd_submit *submit, int in_fence_fd,
             } else {
                cmds[i].type = MSM_SUBMIT_CMD_IB_TARGET_BUF;
             }
-            cmds[i].submit_idx =
-               append_bo(msm_submit, msm_ring->u.cmds[j]->ring_bo);
-            cmds[i].submit_offset = msm_ring->offset;
+            struct fd_bo *ring_bo = msm_ring->u.cmds[j]->ring_bo;
+            cmds[i].submit_idx = append_bo(msm_submit, ring_bo);
+            cmds[i].submit_offset = submit_offset(ring_bo, msm_ring->offset);
             cmds[i].size = msm_ring->u.cmds[j]->size;
             cmds[i].pad = 0;
             cmds[i].nr_relocs = msm_ring->u.cmds[j]->nr_relocs;
@@ -342,18 +341,20 @@ msm_submit_flush(struct fd_submit *submit, int in_fence_fd,
       }
    }
 
-   simple_mtx_lock(&table_lock);
+   struct fd_fence *out_fence = fd_fence_new(submit->pipe, use_fence_fd);
+
+   simple_mtx_lock(&fence_lock);
    for (unsigned j = 0; j < msm_submit->nr_bos; j++) {
-      fd_bo_add_fence(msm_submit->bos[j], submit->pipe, submit->fence);
+      fd_bo_add_fence(msm_submit->bos[j], out_fence);
    }
-   simple_mtx_unlock(&table_lock);
+   simple_mtx_unlock(&fence_lock);
 
    if (in_fence_fd != -1) {
       req.flags |= MSM_SUBMIT_FENCE_FD_IN | MSM_SUBMIT_NO_IMPLICIT;
       req.fence_fd = in_fence_fd;
    }
 
-   if (out_fence && out_fence->use_fence_fd) {
+   if (out_fence->use_fence_fd) {
       req.flags |= MSM_SUBMIT_FENCE_FD_OUT;
    }
 
@@ -368,17 +369,19 @@ msm_submit_flush(struct fd_submit *submit, int in_fence_fd,
                              sizeof(req));
    if (ret) {
       ERROR_MSG("submit failed: %d (%s)", ret, strerror(errno));
+      fd_fence_del(out_fence);
+      out_fence = NULL;
       msm_dump_submit(&req);
    } else if (!ret && out_fence) {
-      out_fence->fence.kfence = req.fence;
-      out_fence->fence.ufence = submit->fence;
+      out_fence->kfence = req.fence;
+      out_fence->ufence = submit->fence;
       out_fence->fence_fd = req.fence_fd;
    }
 
    for (unsigned o = 0; o < nr_objs; o++)
       free(obj_relocs[o]);
 
-   return ret;
+   return out_fence;
 }
 
 static void
@@ -399,7 +402,7 @@ msm_submit_destroy(struct fd_submit *submit)
    _mesa_hash_table_destroy(msm_submit->bo_table, NULL);
    _mesa_set_destroy(msm_submit->ring_set, unref_rings);
 
-   // TODO it would be nice to have a way to debug_assert() if all
+   // TODO it would be nice to have a way to assert() if all
    // rb's haven't been free'd back to the slab, because that is
    // an indication that we are leaking bo's
    slab_destroy(&msm_submit->ring_pool);
@@ -442,12 +445,12 @@ finalize_current_cmd(struct fd_ringbuffer *ring)
 {
    struct msm_ringbuffer *msm_ring = to_msm_ringbuffer(ring);
 
-   debug_assert(!(ring->flags & _FD_RINGBUFFER_OBJECT));
+   assert(!(ring->flags & _FD_RINGBUFFER_OBJECT));
 
    if (!msm_ring->cmd)
       return;
 
-   debug_assert(msm_ring->cmd->ring_bo == msm_ring->ring_bo);
+   assert(msm_ring->cmd->ring_bo == msm_ring->ring_bo);
 
    msm_ring->cmd->size = offset_bytes(ring->cur, ring->start);
    APPEND(&msm_ring->u, cmds, msm_ring->cmd);
@@ -460,7 +463,7 @@ msm_ringbuffer_grow(struct fd_ringbuffer *ring, uint32_t size)
    struct msm_ringbuffer *msm_ring = to_msm_ringbuffer(ring);
    struct fd_pipe *pipe = msm_ring->u.submit->pipe;
 
-   debug_assert(ring->flags & FD_RINGBUFFER_GROWABLE);
+   assert(ring->flags & FD_RINGBUFFER_GROWABLE);
 
    finalize_current_cmd(ring);
 
@@ -503,7 +506,7 @@ msm_ringbuffer_emit_reloc(struct fd_ringbuffer *ring,
           (struct drm_msm_gem_submit_reloc){
              .reloc_idx = reloc_idx,
              .reloc_offset = reloc->offset,
-             .or = reloc->orlo,
+             .or = reloc->orval,
              .shift = reloc->shift,
              .submit_offset =
                 offset_bytes(ring->cur, ring->start) + msm_ring->offset,
@@ -516,7 +519,7 @@ msm_ringbuffer_emit_reloc(struct fd_ringbuffer *ring,
              (struct drm_msm_gem_submit_reloc){
                 .reloc_idx = reloc_idx,
                 .reloc_offset = reloc->offset,
-                .or = reloc->orhi,
+                .or = reloc->orval >> 32,
                 .shift = reloc->shift - 32,
                 .submit_offset =
                    offset_bytes(ring->cur, ring->start) + msm_ring->offset,
@@ -531,7 +534,7 @@ append_stateobj_rings(struct msm_submit *submit, struct fd_ringbuffer *target)
 {
    struct msm_ringbuffer *msm_target = to_msm_ringbuffer(target);
 
-   debug_assert(target->flags & _FD_RINGBUFFER_OBJECT);
+   assert(target->flags & _FD_RINGBUFFER_OBJECT);
 
    set_foreach (msm_target->u.ring_set, entry) {
       struct fd_ringbuffer *ring = (void *)entry->key;
@@ -661,7 +664,7 @@ msm_ringbuffer_init(struct msm_ringbuffer *msm_ring, uint32_t size,
 {
    struct fd_ringbuffer *ring = &msm_ring->base;
 
-   debug_assert(msm_ring->ring_bo);
+   assert(msm_ring->ring_bo);
 
    uint8_t *base = fd_bo_map(msm_ring->ring_bo);
    ring->start = (void *)(base + msm_ring->offset);

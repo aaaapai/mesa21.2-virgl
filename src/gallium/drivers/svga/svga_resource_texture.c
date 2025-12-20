@@ -1,5 +1,5 @@
 /**********************************************************
- * Copyright 2008-2009 VMware, Inc.  All rights reserved.
+ * Copyright 2008-2023 VMware, Inc.  All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -28,7 +28,7 @@
 
 #include "pipe/p_state.h"
 #include "pipe/p_defines.h"
-#include "os/os_thread.h"
+#include "util/u_thread.h"
 #include "util/format/u_format.h"
 #include "util/u_inlines.h"
 #include "util/u_math.h"
@@ -104,7 +104,7 @@ svga_transfer_dma(struct svga_context *svga,
    assert(!st->use_direct_map);
 
    if (transfer == SVGA3D_READ_HOST_VRAM) {
-      SVGA_DBG(DEBUG_PERF, "%s: readback transfer\n", __FUNCTION__);
+      SVGA_DBG(DEBUG_PERF, "%s: readback transfer\n", __func__);
    }
 
    /* Ensure any pending operations on host surfaces are queued on the command
@@ -209,7 +209,9 @@ svga_resource_get_handle(struct pipe_screen *screen,
    if (texture->target == PIPE_BUFFER)
       return false;
 
-   assert(svga_texture(texture)->key.cachable == 0);
+   SVGA_DBG(DEBUG_DMA, "%s: texture=%p cachable=%d\n", __FUNCTION__,
+            texture, svga_texture(texture)->key.cachable);
+
    svga_texture(texture)->key.cachable = 0;
 
    stride = util_format_get_nblocksx(texture->format, texture->width0) *
@@ -293,7 +295,7 @@ svga_texture_transfer_map_dma(struct svga_context *svga,
       if (0) {
          debug_printf("%s: failed to allocate %u KB of DMA, "
                       "splitting into %u x %u KB DMA transfers\n",
-                      __FUNCTION__,
+                      __func__,
                       (nblocksy * st->base.stride + 1023) / 1024,
                       (nblocksy + st->hw_nblocksy - 1) / st->hw_nblocksy,
                       (st->hw_nblocksy * st->base.stride + 1023) / 1024);
@@ -342,9 +344,9 @@ svga_texture_transfer_map_direct(struct svga_context *svga,
 
       if (!svga->swc->force_coherent || tex->imported) {
          /* Readback the whole surface */
-	 readback_texture_surface(svga, tex, surf);
+         readback_texture_surface(svga, tex, surf);
 
-         svga_context_flush(svga, NULL);
+         svga_context_finish(svga);
       }
       /*
        * Note: if PIPE_MAP_DISCARD_WHOLE_RESOURCE were specified
@@ -355,7 +357,7 @@ svga_texture_transfer_map_direct(struct svga_context *svga,
    else {
       assert(usage & PIPE_MAP_WRITE);
       if ((usage & PIPE_MAP_UNSYNCHRONIZED) == 0) {
-         if (svga_is_texture_dirty(tex, st->slice, level)) {
+         if (svga_is_texture_level_dirty(tex, st->slice, level)) {
             /*
              * do a surface flush if the subresource has been modified
              * in this command buffer.
@@ -535,10 +537,11 @@ svga_texture_transfer_map(struct pipe_context *pipe,
       break;
    }
 
-   /* Force direct map for multisample surface */
-   if (texture->nr_samples > 1) {
-      assert(svga_have_gb_objects(svga));
-      assert(sws->have_sm4_1);
+   /* We never want to use DMA transfers on systems with GBObjects because
+    * it causes serialization issues and in SVGAv3 vram is gone which
+    * makes it impossible to support both at the same time.
+    */
+   if (svga_have_gb_objects(svga)) {
       use_direct_map = TRUE;
    }
 
@@ -564,14 +567,15 @@ svga_texture_transfer_map(struct pipe_context *pipe,
                                !(st->base.usage & PIPE_MAP_READ);
       boolean was_rendered_to =
          svga_was_texture_rendered_to(svga_texture(texture));
+      boolean is_dirty = svga_is_texture_dirty(svga_texture(texture));
 
-      /* If the texture was already rendered to and upload buffer
-       * is supported, then we will use upload buffer to
+      /* If the texture was already rendered to or has pending changes and
+       * upload buffer is supported, then we will use upload buffer to
        * avoid the need to read back the texture content; otherwise,
        * we'll first try to map directly to the GB surface, if it is blocked,
        * then we'll try the upload buffer.
        */
-      if (was_rendered_to && can_use_upload) {
+      if ((was_rendered_to || is_dirty) && can_use_upload) {
          map = svga_texture_transfer_map_upload(svga, st);
       }
       else {
@@ -744,7 +748,7 @@ svga_texture_transfer_unmap_direct(struct svga_context *svga,
 
       if (0)
          debug_printf("%s %d, %d, %d  %d x %d x %d\n",
-                      __FUNCTION__,
+                      __func__,
                       box.x, box.y, box.z,
                       box.w, box.h, box.d);
 

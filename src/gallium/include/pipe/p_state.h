@@ -44,16 +44,16 @@
 #ifndef PIPE_STATE_H
 #define PIPE_STATE_H
 
+#include "util/u_memory.h"
+
 #include "p_compiler.h"
 #include "p_defines.h"
-#include "p_format.h"
+#include "util/format/u_formats.h"
 
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-struct gl_buffer_object;
 
 /**
  * Implementation limits
@@ -67,7 +67,7 @@ struct gl_buffer_object;
 #define PIPE_MAX_SHADER_OUTPUTS   80 /* 32 GENERIC + 32 PATCH + 16 others */
 #define PIPE_MAX_SHADER_SAMPLER_VIEWS 128
 #define PIPE_MAX_SHADER_BUFFERS   32
-#define PIPE_MAX_SHADER_IMAGES    32
+#define PIPE_MAX_SHADER_IMAGES    64
 #define PIPE_MAX_TEXTURE_LEVELS   16
 #define PIPE_MAX_SO_BUFFERS        4
 #define PIPE_MAX_SO_OUTPUTS       64
@@ -183,6 +183,14 @@ struct pipe_rasterizer_state
     * This depends on PIPE_CAP_POLYGON_OFFSET_UNITS_UNSCALED.
     */
    unsigned offset_units_unscaled:1;
+
+   /**
+    * Depth values output from fragment shader may be outside 0..1.
+    * These have to be clamped for use with UNORM buffers.
+    * Vulkan can allow this with an extension,
+    * GL could with NV_depth_buffer_float, but GLES doesn't.
+    */
+   unsigned unclamped_fragment_depth_values:1;
 
    /**
     * Enable bits for clipping half-spaces.
@@ -417,7 +425,7 @@ struct pipe_sampler_state
    unsigned mag_img_filter:1;    /**< PIPE_TEX_FILTER_x */
    unsigned compare_mode:1;      /**< PIPE_TEX_COMPARE_x */
    unsigned compare_func:3;      /**< PIPE_FUNC_x */
-   unsigned normalized_coords:1; /**< Are coords normalized to [0,1]? */
+   unsigned unnormalized_coords:1; /**< Are coords normalized to [0,1]? */
    unsigned max_anisotropy:5;
    unsigned seamless_cube_map:1;
    unsigned border_color_is_integer:1;
@@ -426,6 +434,7 @@ struct pipe_sampler_state
    float lod_bias;               /**< LOD/lambda bias */
    float min_lod, max_lod;       /**< LOD clamp range, after bias */
    union pipe_color_union border_color;
+   enum pipe_format border_color_format;      /**< only with PIPE_QUIRK_TEXTURE_BORDER_COLOR_SWIZZLE_FREEDRENO, must be last */
 };
 
 union pipe_surface_desc {
@@ -501,6 +510,10 @@ struct pipe_sampler_view
 /**
  * A description of a buffer or texture image that can be bound to a shader
  * stage.
+ *
+ * Note that pipe_image_view::access comes from the frontend API, while
+ * shader_access comes from the shader and may contain additional information
+ * (ie. coherent/volatile may be set on shader_access but not on access)
  */
 struct pipe_image_view
 {
@@ -868,7 +881,6 @@ struct pipe_draw_info
     */
    union {
       struct pipe_resource *resource;  /**< real buffer */
-      struct gl_buffer_object *gl_bo; /**< for the GL frontend, not passed to drivers */
       const void *user;  /**< pointer to a user buffer */
    } index;
 
@@ -894,6 +906,7 @@ struct pipe_blit_info
 
    unsigned mask; /**< bitmask of PIPE_MASK_R/G/B/A/Z/S */
    unsigned filter; /**< PIPE_TEX_FILTER_* */
+   uint8_t dst_sample; /**< if non-zero, set sample_mask to (1 << (dst_sample - 1)) */
    bool sample0_only;
    bool scissor_enable;
    struct pipe_scissor_state scissor;
@@ -924,7 +937,14 @@ struct pipe_grid_info
     * Will be used to initialize the INPUT resource, and it should point to a
     * buffer of at least pipe_compute_state::req_input_mem bytes.
     */
-   void *input;
+   const void *input;
+
+   /**
+    * Variable shared memory used by this invocation.
+    *
+    * This comes on top of shader declared shared memory.
+    */
+   uint32_t variable_shared_mem;
 
    /**
     * Grid number of dimensions, 1-3, e.g. the work_dim parameter passed to
@@ -995,8 +1015,7 @@ struct pipe_compute_state
 {
    enum pipe_shader_ir ir_type; /**< IR type contained in prog. */
    const void *prog; /**< Compute program to be executed. */
-   unsigned req_local_mem; /**< Required size of the LOCAL resource. */
-   unsigned req_private_mem; /**< Required size of the PRIVATE resource. */
+   unsigned static_shared_mem; /**< equal to info.shared_size, used for shaders passed as TGSI */
    unsigned req_input_mem; /**< Required size of the INPUT resource. */
 };
 

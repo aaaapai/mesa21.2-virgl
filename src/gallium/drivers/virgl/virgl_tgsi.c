@@ -49,7 +49,6 @@ enum virgl_input_temps {
    INPUT_TEMP_VIEWPORT_INDEX,
    INPUT_TEMP_BLOCK_ID,
    INPUT_TEMP_HELPER_INVOCATION,
-   INPUT_TEMP_SAMPLEMASK,
    INPUT_TEMP_COUNT,
 };
 
@@ -60,6 +59,7 @@ struct virgl_transform_context {
    bool cull_enabled;
    bool has_precise;
    bool fake_fp64;
+   bool is_separable;
 
    unsigned next_temp;
 
@@ -109,8 +109,6 @@ virgl_tgsi_transform_declaration(struct tgsi_transform_context *ctx,
                                                    TGSI_SEMANTIC_BLOCK_ID);
       virgl_tgsi_transform_declaration_input_temp(decl, &vtctx->input_temp[INPUT_TEMP_HELPER_INVOCATION],
                                                    TGSI_SEMANTIC_HELPER_INVOCATION);
-      virgl_tgsi_transform_declaration_input_temp(decl, &vtctx->input_temp[INPUT_TEMP_SAMPLEMASK],
-                                                   TGSI_SEMANTIC_SAMPLEMASK);
       break;
    case TGSI_FILE_OUTPUT:
       switch (decl->Semantic.Name) {
@@ -189,6 +187,14 @@ virgl_tgsi_transform_prolog(struct tgsi_transform_context * ctx)
 {
    struct virgl_transform_context *vtctx = (struct virgl_transform_context *)ctx;
 
+   if (vtctx->is_separable) {
+      struct tgsi_full_property prop = tgsi_default_full_property();
+      prop.Property.PropertyName = TGSI_PROPERTY_SEPARABLE_PROGRAM;
+      prop.Property.NrTokens += 1;
+      prop.u[0].Data = 1;
+      ctx->emit_property(ctx, &prop);
+   }
+
    vtctx->src_temp = vtctx->next_temp;
    vtctx->next_temp += 4;
    tgsi_transform_temps_decl(ctx, vtctx->src_temp, vtctx->src_temp + 3);
@@ -219,7 +225,6 @@ virgl_tgsi_transform_prolog(struct tgsi_transform_context * ctx)
     */
    virgl_mov_input_temp_sint(ctx, &vtctx->input_temp[INPUT_TEMP_LAYER]);
    virgl_mov_input_temp_sint(ctx, &vtctx->input_temp[INPUT_TEMP_VIEWPORT_INDEX]);
-   virgl_mov_input_temp_sint(ctx, &vtctx->input_temp[INPUT_TEMP_SAMPLEMASK]);
 
    /* virglrenderer also makes mistakes in the types of block id input
     * references from signed ops, so we use a temp that we do a plain MOV to at
@@ -292,8 +297,6 @@ virgl_tgsi_transform_instruction(struct tgsi_transform_context *ctx,
           * one precise output */
          if (inst->Instruction.Precise)
             vtctx->precise_flags[index] |= bits;
-         else if (inst->Instruction.Opcode != TGSI_OPCODE_MOV)
-            vtctx->precise_flags[index] &= ~bits;
       } else if (inst->Instruction.Opcode == TGSI_OPCODE_MOV) {
          for (int i = 0; i < inst->Instruction.NumSrcRegs; ++i) {
             if (inst->Src[i].Register.File == TGSI_FILE_TEMPORARY) {
@@ -365,15 +368,16 @@ virgl_tgsi_transform_instruction(struct tgsi_transform_context *ctx,
          temp_inst.Instruction.NumDstRegs = 1;
          temp_inst.Dst[0].Register.File = TGSI_FILE_TEMPORARY,
          temp_inst.Dst[0].Register.Index = vtctx->src_temp + i;
-         temp_inst.Dst[0].Register.WriteMask = TGSI_WRITEMASK_XYZ;
+         temp_inst.Dst[0].Register.WriteMask = TGSI_WRITEMASK_XY;
          temp_inst.Instruction.NumSrcRegs = 1;
-         tgsi_transform_src_reg_xyzw(&temp_inst.Src[0], inst->Src[i].Register.File, inst->Src[i].Register.Index);
+         memcpy(&temp_inst.Src[0], &inst->Src[i], sizeof(temp_inst.Src[0]));
          temp_inst.Src[0].Register.SwizzleX = inst->Src[i].Register.SwizzleX;
          temp_inst.Src[0].Register.SwizzleY = inst->Src[i].Register.SwizzleY;
          temp_inst.Src[0].Register.SwizzleZ = inst->Src[i].Register.SwizzleZ;
          temp_inst.Src[0].Register.SwizzleW = inst->Src[i].Register.SwizzleW;
          ctx->emit_instruction(ctx, &temp_inst);
 
+         memset(&inst->Src[i], 0, sizeof(inst->Src[i]));
          inst->Src[i].Register.File = TGSI_FILE_TEMPORARY;
          inst->Src[i].Register.Index = vtctx->src_temp + i;
          inst->Src[i].Register.SwizzleX = TGSI_SWIZZLE_X;
@@ -393,6 +397,8 @@ virgl_tgsi_transform_instruction(struct tgsi_transform_context *ctx,
       struct tgsi_full_instruction op_to_temp = *inst;
       op_to_temp.Dst[0].Register.File = TGSI_FILE_TEMPORARY;
       op_to_temp.Dst[0].Register.Index = vtctx->src_temp;
+      op_to_temp.Dst[0].Dimension.Indirect = 0;
+      op_to_temp.Dst[0].Register.Indirect = 0;
       ctx->emit_instruction(ctx, &op_to_temp);
 
       inst->Instruction.Opcode = TGSI_OPCODE_MOV;
@@ -422,7 +428,8 @@ virgl_tgsi_transform_instruction(struct tgsi_transform_context *ctx,
    }
 }
 
-struct tgsi_token *virgl_tgsi_transform(struct virgl_screen *vscreen, const struct tgsi_token *tokens_in)
+struct tgsi_token *virgl_tgsi_transform(struct virgl_screen *vscreen, const struct tgsi_token *tokens_in,
+                                        bool is_separable)
 {
    struct virgl_transform_context transform;
    const uint newLen = tgsi_num_tokens(tokens_in);
@@ -435,7 +442,8 @@ struct tgsi_token *virgl_tgsi_transform(struct virgl_screen *vscreen, const stru
    transform.cull_enabled = vscreen->caps.caps.v1.bset.has_cull;
    transform.has_precise = vscreen->caps.caps.v2.capability_bits & VIRGL_CAP_TGSI_PRECISE;
    transform.fake_fp64 =
-      vscreen->caps.caps.v2.capability_bits & VIRGL_CAP_FAKE_FP64;
+      vscreen->caps.caps.v2.capability_bits & VIRGL_CAP_HOST_IS_GLES;
+   transform.is_separable = is_separable && (vscreen->caps.caps.v2.capability_bits_v2 & VIRGL_CAP_V2_SSO);
 
    for (int i = 0; i < ARRAY_SIZE(transform.input_temp); i++)
       transform.input_temp[i].index = ~0;

@@ -26,23 +26,27 @@
 
 #include "util/u_dynarray.h"
 #include "util/hash_table.h"
+#include "pipe/p_state.h"
 #include <stdint.h>
 
-#ifndef _WIN32
-#include <wsl/winadapter.h>
-#endif
-
-#define D3D12_IGNORE_SDK_LAYERS
-#include <directx/d3d12.h>
+#include "d3d12_common.h"
 
 struct d3d12_bo;
 struct d3d12_descriptor_heap;
 struct d3d12_fence;
 
+
+struct d3d12_sampler_desc_table_key
+{
+   D3D12_CPU_DESCRIPTOR_HANDLE descs[PIPE_MAX_SHADER_SAMPLER_VIEWS];
+   unsigned count;
+};
+
 struct d3d12_batch {
    struct d3d12_fence *fence;
 
    struct hash_table *bos;
+   struct hash_table *sampler_tables;
    struct set *sampler_views;
    struct set *surfaces;
    struct set *objects;
