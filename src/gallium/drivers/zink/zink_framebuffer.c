@@ -396,7 +396,6 @@ zink_get_framebuffer(struct zink_context *ctx)
    state.samples = ctx->fb_state.samples - 1;
 
    struct zink_framebuffer *fb;
-   simple_mtx_lock(&screen->framebuffer_mtx);
    struct hash_entry *entry = _mesa_hash_table_search(&screen->framebuffer_cache, &state);
    if (entry) {
       fb = (void*)entry->data;
@@ -411,7 +410,6 @@ zink_get_framebuffer(struct zink_context *ctx)
       fb = create_framebuffer(ctx, &state, attachments);
       _mesa_hash_table_insert(&screen->framebuffer_cache, &fb->state, fb);
    }
-   simple_mtx_unlock(&screen->framebuffer_mtx);
 
    return fb;
 }
