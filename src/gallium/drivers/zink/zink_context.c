@@ -164,11 +164,9 @@ zink_context_destroy(struct pipe_context *pctx)
       hash_table_foreach(&ctx->framebuffer_cache, he)
          zink_destroy_framebuffer(screen, he->data);
    } else if (ctx->framebuffer) {
-      simple_mtx_lock(&screen->framebuffer_mtx);
       struct hash_entry *entry = _mesa_hash_table_search(&screen->framebuffer_cache, &ctx->framebuffer->state);
       if (zink_framebuffer_reference(screen, &ctx->framebuffer, NULL))
          _mesa_hash_table_remove(&screen->framebuffer_cache, entry);
-      simple_mtx_unlock(&screen->framebuffer_mtx);
    }
 
    hash_table_foreach(ctx->render_pass_cache, he)
