@@ -1422,7 +1422,6 @@ zink_destroy_screen(struct pipe_screen *pscreen)
          struct zink_framebuffer* fb = (struct zink_framebuffer*)entry->data;
          zink_destroy_framebuffer(screen, fb);
       }
-      simple_mtx_destroy(&screen->framebuffer_mtx);
    }
 
    u_transfer_helper_destroy(pscreen->transfer_helper);
