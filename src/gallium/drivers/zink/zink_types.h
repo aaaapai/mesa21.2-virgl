@@ -1417,6 +1417,7 @@ struct zink_framebuffer_state {
    uint32_t samples:6;
    uint32_t num_attachments:4;
    struct zink_surface_info infos[PIPE_MAX_COLOR_BUFS + 1];
+   VkImageView attachments[PIPE_MAX_COLOR_BUFS + 1];  // 向后兼容现有 Vulkan API 调用
 };
 
 struct zink_framebuffer {
@@ -1429,8 +1430,8 @@ struct zink_framebuffer {
    struct zink_framebuffer_state state;
    VkFramebufferAttachmentImageInfo infos[PIPE_MAX_COLOR_BUFS + 1];
    struct hash_table objects;
+   struct pipe_surface *surfaces[2 * (PIPE_MAX_COLOR_BUFS + 1)];  // 用于保持引用
 };
-
 
 /** context types */
 struct zink_sampler_state {
