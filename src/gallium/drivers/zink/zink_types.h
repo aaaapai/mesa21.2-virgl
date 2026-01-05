@@ -1374,6 +1374,8 @@ struct zink_surface {
    void *obj; //backing resource object; used to determine rebinds
    void *dt_swapchain; //current swapchain object; used to determine swapchain rebinds
    uint32_t hash; //for surface caching
+
+   struct util_dynarray framebuffer_refs;
 };
 
 /* wrapper object that preserves the gallium expectation of having
@@ -1416,8 +1418,10 @@ struct zink_framebuffer_state {
    uint32_t layers:6;
    uint32_t samples:6;
    uint32_t num_attachments:4;
-   struct zink_surface_info infos[PIPE_MAX_COLOR_BUFS + 1];
-   VkImageView attachments[PIPE_MAX_COLOR_BUFS + 1];  // 向后兼容现有 Vulkan API 调用
+   union {
+      struct zink_surface_info infos[PIPE_MAX_COLOR_BUFS + 1];
+      VkImageView attachments[PIPE_MAX_COLOR_BUFS + 1];
+   }
 };
 
 struct zink_framebuffer {
@@ -1428,9 +1432,11 @@ struct zink_framebuffer {
    struct zink_render_pass *rp;
 
    struct zink_framebuffer_state state;
-   VkFramebufferAttachmentImageInfo infos[PIPE_MAX_COLOR_BUFS + 1];
+   union {
+      struct pipe_surface *surfaces[PIPE_MAX_COLOR_BUFS + 1];
+      VkFramebufferAttachmentImageInfo infos[PIPE_MAX_COLOR_BUFS + 1];
+   }
    struct hash_table objects;
-   struct pipe_surface *surfaces[2 * (PIPE_MAX_COLOR_BUFS + 1)];  // 用于保持引用
 };
 
 /** context types */
