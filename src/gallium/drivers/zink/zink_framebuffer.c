@@ -36,22 +36,6 @@ void
 zink_destroy_framebuffer(struct zink_screen *screen,
                          struct zink_framebuffer *fb)
 {
-   for (int i = 0; i < ARRAY_SIZE(fb->surfaces); i++) {
-      if (fb->surfaces[i]) {
-         struct zink_surface *surf = zink_csurface(fb->surfaces[i]);
-         if (surf) {
-            // 从 surface 的 framebuffer_refs 中移除引用
-            util_dynarray_foreach(&surf->framebuffer_refs, struct zink_framebuffer**, ref) {
-               if (*ref == fb) {
-                  util_dynarray_remove(&surf->framebuffer_refs, struct zink_framebuffer**, ref);
-                  break;
-               }
-            }
-         }
-         pipe_surface_reference(&fb->surfaces[i], NULL);
-      }
-   }
-
    hash_table_foreach(&fb->objects, he) {
 #if VK_USE_64_BIT_PTR_DEFINES
       VKSCR(DestroyFramebuffer)(screen->dev, he->data, NULL);
@@ -165,7 +149,7 @@ zink_get_framebuffer_imageless(struct zink_context *ctx)
    assert(zink_screen(ctx->base.screen)->info.have_KHR_imageless_framebuffer);
    bool have_zsbuf = ctx->fb_state.zsbuf && zink_is_zsbuf_used(ctx);
 
-   struct zink_framebuffer_state state = {0};
+   struct zink_framebuffer_state state;
    state.num_attachments = ctx->fb_state.nr_cbufs;
 
    const unsigned cresolve_offset = ctx->fb_state.nr_cbufs + !!have_zsbuf;
@@ -180,12 +164,9 @@ zink_get_framebuffer_imageless(struct zink_context *ctx)
       if (transient) {
          memcpy(&state.infos[i], &transient->info, sizeof(transient->info));
          memcpy(&state.infos[cresolve_offset + i], &surface->info, sizeof(surface->info));
-         state.attachments[i] = transient->image_view;
-         state.attachments[cresolve_offset + i] = surface->image_view;
          num_resolves++;
       } else {
          memcpy(&state.infos[i], &surface->info, sizeof(surface->info));
-         state.attachments[i] = surface->image_view;
       }
    }
 
@@ -197,12 +178,9 @@ zink_get_framebuffer_imageless(struct zink_context *ctx)
       if (transient) {
          memcpy(&state.infos[state.num_attachments], &transient->info, sizeof(transient->info));
          memcpy(&state.infos[zsresolve_offset], &surface->info, sizeof(surface->info));
-         state.attachments[state.num_attachments] = transient->image_view;
-         state.attachments[zsresolve_offset] = surface->image_view;
          num_resolves++;
       } else {
          memcpy(&state.infos[state.num_attachments], &surface->info, sizeof(surface->info));
-         state.attachments[state.num_attachments] = surface->image_view;
       }
       state.num_attachments++;
    }
@@ -253,7 +231,7 @@ zink_init_framebuffer(struct zink_screen *screen, struct zink_framebuffer *fb, s
    fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
    fci.renderPass = rp->render_pass;
    fci.attachmentCount = fb->state.num_attachments;
-   fci.pAttachments = fb->state.attachments;  // 使用 attachments 数组进行向后兼容
+   fci.pAttachments = fb->state.attachments;
    fci.width = fb->state.width;
    fci.height = fb->state.height;
    fci.layers = fb->state.layers + 1;
@@ -288,29 +266,16 @@ create_framebuffer(struct zink_context *ctx,
 
    unsigned num_attachments = 0;
    for (int i = 0; i < state->num_attachments; i++) {
-      struct pipe_surface *psurf = attachments[i];
-      if (psurf) {
-         struct zink_surface *surf = zink_csurface(psurf);
-         /* 从 pipe_surface 获取信息并填充两个数组 */
-         if (surf) {
-            // 填充 infos 数组
-            memcpy(&fb->state.infos[i], &surf->info, sizeof(surf->info));
-            // 确保 attachments 数组已被填充
-            fb->state.attachments[i] = surf->image_view;
-         }
-         // 保持引用
-         fb->surfaces[i] = psurf;
+      struct zink_surface *surf;
+      if (state->attachments[i]) {
+         surf = zink_csurface(attachments[i]);
+         /* no ref! */
+         fb->surfaces[i] = attachments[i];
          num_attachments++;
-         if (surf) {
-            util_dynarray_append(&surf->framebuffer_refs, struct zink_framebuffer*, fb);
-         }
+         util_dynarray_append(&surf->framebuffer_refs, struct zink_framebuffer*, fb);
       } else {
-         // 处理 dummy surface
-         struct zink_surface *surf = zink_csurface(ctx->dummy_surface[util_logbase2_ceil(state->samples+1)]);
-         if (surf) {
-            memcpy(&fb->state.infos[i], &surf->info, sizeof(surf->info));
-            fb->state.attachments[i] = surf->image_view;
-         }
+         surf = zink_csurface(ctx->dummy_surface[util_logbase2_ceil(state->samples+1)]);
+         state->attachments[i] = surf->image_view;
       }
    }
    pipe_reference_init(&fb->reference, 1 + num_attachments);
@@ -318,11 +283,6 @@ create_framebuffer(struct zink_context *ctx,
    if (!_mesa_hash_table_init(&fb->objects, fb, _mesa_hash_pointer, _mesa_key_pointer_equal))
       goto fail;
    memcpy(&fb->state, state, sizeof(struct zink_framebuffer_state));
-   
-   // 为 imageless framebuffer 准备 infos 数组
-   for (int i = 0; i < state->num_attachments; i++) {
-      populate_attachment_info(&fb->infos[i], &fb->state.infos[i]);
-   }
 
    return fb;
 fail:
@@ -376,10 +336,7 @@ zink_get_framebuffer(struct zink_context *ctx)
 {
    struct zink_screen *screen = zink_screen(ctx->base.screen);
 
-   // 根据设备能力选择使用哪种 framebuffer
-   if (screen->info.have_KHR_imageless_framebuffer) {
-      return zink_get_framebuffer_imageless(ctx);
-   }
+   assert(!screen->info.have_KHR_imageless_framebuffer);
 
    struct pipe_surface *attachments[2 * (PIPE_MAX_COLOR_BUFS + 1)] = {0};
    const unsigned cresolve_offset = ctx->fb_state.nr_cbufs + !!ctx->fb_state.zsbuf;
@@ -393,22 +350,16 @@ zink_get_framebuffer(struct zink_context *ctx)
             struct zink_surface *surf = zink_csurface(psurf);
             struct zink_surface *transient = zink_transient_surface(psurf);
             if (transient) {
-               // 填充 attachments 数组
                state.attachments[i] = transient->image_view;
                state.attachments[cresolve_offset + i] = surf->image_view;
-               // 填充 infos 数组
-               memcpy(&state.infos[i], &transient->info, sizeof(transient->info));
-               memcpy(&state.infos[cresolve_offset + i], &surf->info, sizeof(surf->info));
                attachments[cresolve_offset + i] = psurf;
                psurf = &transient->base;
                num_resolves++;
             } else {
                state.attachments[i] = surf->image_view;
-               memcpy(&state.infos[i], &surf->info, sizeof(surf->info));
             }
          } else {
             state.attachments[i] = VK_NULL_HANDLE;
-            // 对于空附件，可能需要填充默认的 info
          }
          attachments[i] = psurf;
       }
@@ -424,14 +375,11 @@ zink_get_framebuffer(struct zink_context *ctx)
          if (transient) {
             state.attachments[state.num_attachments] = transient->image_view;
             state.attachments[zsresolve_offset] = surf->image_view;
-            memcpy(&state.infos[state.num_attachments], &transient->info, sizeof(transient->info));
-            memcpy(&state.infos[zsresolve_offset], &surf->info, sizeof(surf->info));
             attachments[zsresolve_offset] = psurf;
             psurf = &transient->base;
             num_resolves++;
          } else {
             state.attachments[state.num_attachments] = surf->image_view;
-            memcpy(&state.infos[state.num_attachments], &surf->info, sizeof(surf->info));
          }
       } else {
          state.attachments[state.num_attachments] = VK_NULL_HANDLE;
