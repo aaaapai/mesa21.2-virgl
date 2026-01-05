@@ -103,7 +103,7 @@ bool
 zink_screen_batch_id_wait(struct zink_screen *screen, uint32_t batch_id, uint64_t timeout);
 
 bool
-zink_screen_timeline_wait(struct zink_screen *screen, uint32_t batch_id, uint64_t timeout);
+zink_screen_timeline_wait(struct zink_screen *screen, uint64_t batch_id, uint64_t timeout);
 
 bool
 zink_is_depth_format_supported(struct zink_screen *screen, VkFormat format);
