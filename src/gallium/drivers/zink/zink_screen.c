@@ -2058,7 +2058,7 @@ noop_submit(void *data, void *gdata, int thread_index)
    struct noop_submit_info *n = data;
    VkSubmitInfo si = {0};
    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-   if (n->VKSCR(QueueSubmit)(n->screen->threaded ? n->screen->thread_queue : n->screen->queue,
+   if (n->VKSCR(QueueSubmit)(n->screen->queue,
                      1, &si, n->fence) != VK_SUCCESS) {
       mesa_loge("ZINK: vkQueueSubmit failed");
       n->screen->device_lost = true;
