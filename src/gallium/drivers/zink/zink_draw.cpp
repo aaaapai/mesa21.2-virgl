@@ -249,7 +249,7 @@ draw_indexed(struct zink_context *ctx,
    }
 }
 
-static bool
+/*static bool
 hack_conditional_render(struct pipe_context *pctx,
                         const struct pipe_draw_info *dinfo,
                         unsigned drawid_offset,
@@ -275,7 +275,7 @@ hack_conditional_render(struct pipe_context *pctx,
       return false;
    }
    return true;
-}
+}*/
 
 template <zink_multidraw HAS_MULTIDRAW>
 ALWAYS_INLINE static void
@@ -450,10 +450,10 @@ zink_draw(struct pipe_context *pctx,
    unsigned work_count = ctx->batch.work_count;
    enum pipe_prim_type mode = (enum pipe_prim_type)dinfo->mode;
 
-   if (unlikely(!screen->info.have_EXT_conditional_rendering) && getenv("ZINK_USE_CPU_BASED_CONDITIONAL_RENDERING")) {
+   /*if (unlikely(!screen->info.have_EXT_conditional_rendering) && getenv("ZINK_USE_CPU_BASED_CONDITIONAL_RENDERING")) {
       if (!hack_conditional_render(pctx, dinfo, drawid_offset, dindirect, draws, num_draws))
          return;
-   }
+   }*/
 
    if (ctx->memory_barrier)
       zink_flush_memory_barrier(ctx, false);
