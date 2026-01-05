@@ -152,8 +152,8 @@ zink_clear(struct pipe_context *pctx,
    struct zink_batch *batch = &ctx->batch;
    bool needs_rp = false;
 
-   if (unlikely(!zink_screen(pctx->screen)->info.have_EXT_conditional_rendering && !zink_check_conditional_render(ctx)))
-      return;
+   /*if (unlikely(!zink_screen(pctx->screen)->info.have_EXT_conditional_rendering && !zink_check_conditional_render(ctx)))
+      return;*/
 
    if (scissor_state) {
       struct u_rect scissor = {scissor_state->minx, scissor_state->maxx, scissor_state->miny, scissor_state->maxy};
