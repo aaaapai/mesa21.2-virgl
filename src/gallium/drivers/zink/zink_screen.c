@@ -2066,7 +2066,7 @@ noop_submit(void *data, void *gdata, int thread_index)
 }
 
 bool
-zink_screen_batch_id_wait(struct zink_screen *screen, uint32_t batch_id, uint64_t timeout)
+zink_screen_batch_id_wait(struct zink_screen *screen, uint64_t batch_id, uint64_t timeout)
 {
    if (zink_screen_check_last_finished(screen, batch_id))
       return true;
