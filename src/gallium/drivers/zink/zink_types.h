@@ -1421,7 +1421,7 @@ struct zink_framebuffer_state {
    union {
       struct zink_surface_info infos[PIPE_MAX_COLOR_BUFS + 1];
       VkImageView attachments[PIPE_MAX_COLOR_BUFS + 1];
-   }
+   };
 };
 
 struct zink_framebuffer {
@@ -1435,7 +1435,7 @@ struct zink_framebuffer {
    union {
       struct pipe_surface *surfaces[PIPE_MAX_COLOR_BUFS + 1];
       VkFramebufferAttachmentImageInfo infos[PIPE_MAX_COLOR_BUFS + 1];
-   }
+   };
    struct hash_table objects;
 };
 
