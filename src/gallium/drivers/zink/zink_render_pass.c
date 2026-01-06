@@ -105,20 +105,12 @@ create_render_pass(struct zink_screen *screen, struct zink_render_pass_state *st
    int num_attachments = state->num_cbufs;
    if (state->have_zsbuf)  {
       struct zink_rt_attrib *rt = state->rts + state->num_cbufs;
-      bool has_clear = rt->clear_color || rt->clear_stencil;
-      VkImageLayout layout;
-      if (rt->mixed_zs)
-         layout = VK_IMAGE_LAYOUT_GENERAL;
-      else
-         layout = rt->needs_write || has_clear ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+      VkImageLayout layout = get_zs_rt_layout(rt);
       attachments[num_attachments].flags = 0;
       pstate->attachments[num_attachments].format = attachments[num_attachments].format = rt->format;
       pstate->attachments[num_attachments].samples = attachments[num_attachments].samples = rt->samples;
       attachments[num_attachments].loadOp = rt->clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-      if (rt->mixed_zs)
-         attachments[num_attachments].storeOp = VK_ATTACHMENT_STORE_OP_NONE;
-      else
-         attachments[num_attachments].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      attachments[num_attachments].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       attachments[num_attachments].stencilLoadOp = rt->clear_stencil ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
       attachments[num_attachments].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
       /* if layout changes are ever handled here, need VkAttachmentSampleLocationsEXT */
@@ -126,11 +118,10 @@ create_render_pass(struct zink_screen *screen, struct zink_render_pass_state *st
       attachments[num_attachments].finalLayout = layout;
 
       dep_pipeline |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-      if (layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-         dep_access |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-      if (attachments[num_attachments].loadOp == VK_ATTACHMENT_LOAD_OP_LOAD ||
-          attachments[num_attachments].stencilLoadOp == VK_ATTACHMENT_LOAD_OP_LOAD)
+      if (!rt->clear_color && !rt->clear_stencil)
          dep_access |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+      if (rt->clear_color || rt->clear_stencil || rt->needs_write)
+         dep_access |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
       zs_ref.attachment = num_attachments++;
       zs_ref.layout = layout;
