@@ -78,10 +78,11 @@ create_render_pass(struct zink_screen *screen, struct zink_render_pass_state *st
       attachments[i].flags = 0;
       pstate->attachments[i].format = attachments[i].format = rt->format;
       pstate->attachments[i].samples = attachments[i].samples = rt->samples;
-      attachments[i].loadOp = rt->clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR :
+      /*attachments[i].loadOp = rt->clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR :
                                                 state->swapchain_init && rt->swapchain ?
                                                 VK_ATTACHMENT_LOAD_OP_DONT_CARE :
-                                                VK_ATTACHMENT_LOAD_OP_LOAD;
+                                                VK_ATTACHMENT_LOAD_OP_LOAD;*/
+      attachments[i].loadOp = get_rt_loadop(rt, rt->clear_color);
       attachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       attachments[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
       attachments[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
