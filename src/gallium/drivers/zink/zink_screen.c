@@ -765,6 +765,7 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 1;
 
    case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
+      printf("PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT\n");
       return /*screen->info.props.limits.minUniformBufferOffsetAlignment*/ 32; //我应该这么做吗？
 
    case PIPE_CAP_QUERY_TIMESTAMP:
