@@ -765,7 +765,6 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 1;
 
    case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
-      printf("PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT\n");
       return /*screen->info.props.limits.minUniformBufferOffsetAlignment*/ 32; //我应该这么做吗？
 
    case PIPE_CAP_QUERY_TIMESTAMP:
@@ -788,7 +787,7 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return zink_descriptor_mode != ZINK_DESCRIPTOR_MODE_DB && screen->info.have_EXT_descriptor_indexing;
 
    case PIPE_CAP_TEXTURE_BUFFER_OFFSET_ALIGNMENT:
-      return screen->info.props.limits.minTexelBufferOffsetAlignment;
+      return /*screen->info.props.limits.minTexelBufferOffsetAlignment*/ 32;
 
    case PIPE_CAP_TEXTURE_TRANSFER_MODES: {
       enum pipe_texture_transfer_mode mode = PIPE_TEXTURE_TRANSFER_BLIT;
@@ -872,7 +871,7 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 1;
 
    case PIPE_CAP_SHADER_BUFFER_OFFSET_ALIGNMENT:
-      return screen->info.props.limits.minStorageBufferOffsetAlignment;
+      return 32 /*screen->info.props.limits.minStorageBufferOffsetAlignment*/;
 
    case PIPE_CAP_PCI_GROUP:
    case PIPE_CAP_PCI_BUS:
