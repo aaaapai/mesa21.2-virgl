@@ -135,7 +135,7 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
 
    case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
       /* GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT default value. */
-      return 1;
+      return 32;
 
    case PIPE_CAP_START_INSTANCE:
    case PIPE_CAP_QUERY_TIMESTAMP:
