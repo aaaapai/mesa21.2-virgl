@@ -131,6 +131,8 @@ _mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
    }
    case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT:
       *p = 32;
+      return;
+   }
 
 sync:
    _mesa_glthread_finish_before(ctx, "GetIntegerv");
