@@ -34,7 +34,7 @@ _mesa_unmarshal_GetIntegerv(struct gl_context *ctx,
 
 
 void GLAPIENTRY
-glGetIntegerv(GLenum pname, GLint *params)
+whatcanisay_glGetIntegerv(GLenum pname, GLint *params)
 {
 
    switch (pname) {
@@ -49,6 +49,9 @@ glGetIntegerv(GLenum pname, GLint *params)
 void GLAPIENTRY
 _mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
 {
+
+   whatcanisay_glGetIntegerv(pname, p);
+
    GET_CURRENT_CONTEXT(ctx);
 
    /* This will generate GL_INVALID_OPERATION, as it should. */
