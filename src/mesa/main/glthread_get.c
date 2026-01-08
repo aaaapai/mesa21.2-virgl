@@ -33,8 +33,8 @@ _mesa_unmarshal_GetIntegerv(struct gl_context *ctx,
 }
 
 
-static void GLAPIENTRY
-whatcanisay_glGetIntegerv(GLenum pname, GLint *params)
+void GLAPIENTRY
+glGetIntegerv(GLenum pname, GLint *params)
 {
 
    switch (pname) {
@@ -43,11 +43,11 @@ whatcanisay_glGetIntegerv(GLenum pname, GLint *params)
          return;
    }
 
-   _mesa_marshal_GetIntegerv(pname, params);
+   yee_mesa_marshal_GetIntegerv(pname, params);
 }
 
 void GLAPIENTRY
-_mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
+yee_mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
 {
 
    whatcanisay_glGetIntegerv(pname, p);
