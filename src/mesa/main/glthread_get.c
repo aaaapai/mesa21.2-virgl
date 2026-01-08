@@ -32,6 +32,20 @@ _mesa_unmarshal_GetIntegerv(struct gl_context *ctx,
    return 0;
 }
 
+
+void GLAPIENTRY
+glGetIntegerv(GLenum pname, GLint *params)
+{
+
+   switch (pname) {
+      case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT:
+         *params = 256;
+         return;
+   }
+
+   _mesa_marshal_GetIntegerv(pname, params);
+}
+
 void GLAPIENTRY
 _mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
 {
