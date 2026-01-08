@@ -33,7 +33,7 @@ _mesa_unmarshal_GetIntegerv(struct gl_context *ctx,
 }
 
 
-void GLAPIENTRY
+static void GLAPIENTRY
 whatcanisay_glGetIntegerv(GLenum pname, GLint *params)
 {
 
