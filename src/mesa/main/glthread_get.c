@@ -129,9 +129,6 @@ _mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
    case GL_POINT_SIZE_ARRAY_OES:
       *p = (ctx->GLThread.CurrentVAO->UserEnabled & (1 << VERT_ATTRIB_POINT_SIZE)) != 0;
       return;
-   case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT:
-      *p = 32;
-      return;
    }
 
 sync:
