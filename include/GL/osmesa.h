@@ -324,7 +324,7 @@ OSMesaPostprocess(OSMesaContext osmesa, const char *filter,
                   unsigned enable_value);
 
 
-GLAPI void GLAPIENTRY OSMesaSwapBuffers(void);
+GLAPI void GLAPIENTRY OSMesaFlushFrontbuffer(void);
 
 #ifdef __cplusplus
 }
