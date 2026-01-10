@@ -86,6 +86,7 @@ struct kopper_displaytarget
    VkImageFormatListCreateInfo format_list;
    enum kopper_type type;
    bool is_kill;
+   bool pre_rotated;
    VkPresentModeKHR present_mode;
 };
 
