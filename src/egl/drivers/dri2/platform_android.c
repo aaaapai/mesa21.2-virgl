@@ -801,8 +801,8 @@ static void
 droid_get_window_size(struct dri2_egl_surface *dri2_surf, int *w, int *h) {
    struct ANativeWindow* window = dri2_surf->window;
 
-   //*w = ANativeWindow_getWidth(window);
-   //*h = ANativeWindow_getHeight(window);
+   *w = ANativeWindow_getWidth(window);
+   *h = ANativeWindow_getHeight(window);
 }
 
 static void
