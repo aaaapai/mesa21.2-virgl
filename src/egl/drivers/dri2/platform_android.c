@@ -1836,7 +1836,7 @@ dri2_initialize_android(_EGLDisplay *disp)
 {
    _EGLDevice *dev;
    bool device_opened = false;
-   struct dri2_egl_display *dri2_dpy = NULL;
+   struct dri2_egl_display *dri2_dpy;
    const char *err;
    int ret;
 
@@ -1844,11 +1844,11 @@ dri2_initialize_android(_EGLDisplay *disp)
     if (!dri2_dpy)
         return _eglError(EGL_BAD_ALLOC, "eglInitialize");
 
-    // dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_AUTO);
-   // if (dri2_dpy->gralloc == NULL) {
-      // err = "DRI2: failed to get gralloc";
-      // goto cleanup;
-   // }
+    dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_AUTO);
+    if (dri2_dpy->gralloc == NULL) {
+      err = "DRI2: failed to get gralloc";
+      goto cleanup;
+    }
 
    disp->DriverData = (void *) dri2_dpy;
     if (disp->Options.Zink) {
