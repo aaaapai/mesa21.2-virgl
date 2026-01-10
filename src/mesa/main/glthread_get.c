@@ -35,25 +35,9 @@ _mesa_unmarshal_GetIntegerv(struct gl_context *ctx,
    return 0;
 }
 
-
 void GLAPIENTRY
-glGetIntegerv(GLenum pname, GLint *params)
+_mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
 {
-
-   switch (pname) {
-      case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT:
-         *params = 256;
-         return;
-   }
-
-   yee_mesa_marshal_GetIntegerv(pname, params);
-}
-
-void GLAPIENTRY
-yee_mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
-{
-
-   whatcanisay_glGetIntegerv(pname, p);
 
    GET_CURRENT_CONTEXT(ctx);
 
@@ -147,9 +131,6 @@ yee_mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
       return;
    case GL_POINT_SIZE_ARRAY_OES:
       *p = (ctx->GLThread.CurrentVAO->UserEnabled & (1 << VERT_ATTRIB_POINT_SIZE)) != 0;
-      return;
-   case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT:
-      *p = 32;
       return;
    }
 
