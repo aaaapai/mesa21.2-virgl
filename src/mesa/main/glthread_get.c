@@ -24,9 +24,6 @@
 #include "main/glthread_marshal.h"
 #include "main/dispatch.h"
 
-void GLAPIENTRY
-glGetIntegerv(GLenum pname, GLint *params);
-
 uint32_t
 _mesa_unmarshal_GetIntegerv(struct gl_context *ctx,
                             const struct marshal_cmd_GetIntegerv *cmd)
