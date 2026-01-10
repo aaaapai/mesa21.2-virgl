@@ -1,11 +1,11 @@
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/mesa-896db04e025a2623bda7b9b6225dc565019e5a22 b/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/mesa-896db04e025a2623bda7b9b6225dc565019e5a22
+diff --git a b
 deleted file mode 100644
 index 88e0c25..0000000
-Binary files a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/mesa-896db04e025a2623bda7b9b6225dc565019e5a22 and /dev/null differ
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/android_stub/nativewindow_stub.cpp b/mesa-23.0-kopper-android/src/android_stub/nativewindow_stub.cpp
+Binary files a and /dev/null differ
+diff --git a/src/android_stub/nativewindow_stub.cpp b/src/android_stub/nativewindow_stub.cpp
 index b060077..b497aa2 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/android_stub/nativewindow_stub.cpp
-+++ b/mesa-23.0-kopper-android/src/android_stub/nativewindow_stub.cpp
+--- a/src/android_stub/nativewindow_stub.cpp
++++ b/src/android_stub/nativewindow_stub.cpp
 @@ -101,4 +101,15 @@ ANativeWindow_setSharedBufferMode(ANativeWindow *window,
  {
     return 0;
@@ -22,10 +22,10 @@ index b060077..b497aa2 100644
 +}
 +
  }
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/egl_dri2.c b/mesa-23.0-kopper-android/src/egl/drivers/dri2/egl_dri2.c
+diff --git a/src/egl/drivers/dri2/egl_dri2.c b/src/egl/drivers/dri2/egl_dri2.c
 index f8a3863..773c4a5 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/egl_dri2.c
-+++ b/mesa-23.0-kopper-android/src/egl/drivers/dri2/egl_dri2.c
+--- a/src/egl/drivers/dri2/egl_dri2.c
++++ b/src/egl/drivers/dri2/egl_dri2.c
 @@ -747,6 +747,7 @@ dri2_open_driver(_EGLDisplay *disp)
     struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
     static const char *search_path_vars[] = {
@@ -43,10 +43,10 @@ index f8a3863..773c4a5 100644
     dri2_dpy->dri_screen = dri2_dpy->mesa->createNewScreen(0, screen_fd,
                                                            dri2_dpy->loader_extensions,
                                                            dri2_dpy->driver_extensions,
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/egl_dri2.h b/mesa-23.0-kopper-android/src/egl/drivers/dri2/egl_dri2.h
+diff --git a/src/egl/drivers/dri2/egl_dri2.h b/src/egl/drivers/dri2/egl_dri2.h
 index 5074ca2..21ece3a 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/egl_dri2.h
-+++ b/mesa-23.0-kopper-android/src/egl/drivers/dri2/egl_dri2.h
+--- a/src/egl/drivers/dri2/egl_dri2.h
++++ b/src/egl/drivers/dri2/egl_dri2.h
 @@ -453,6 +453,9 @@ extern const __DRIuseInvalidateExtension use_invalidate;
  extern const __DRIbackgroundCallableExtension background_callable_extension;
  extern const __DRIswrastLoaderExtension swrast_pbuffer_loader_extension;
@@ -57,10 +57,10 @@ index 5074ca2..21ece3a 100644
  EGLBoolean
  dri2_load_driver(_EGLDisplay *disp);
  
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/platform_android.c b/mesa-23.0-kopper-android/src/egl/drivers/dri2/platform_android.c
+diff --git a/src/egl/drivers/dri2/platform_android.c b/src/egl/drivers/dri2/platform_android.c
 index af7b329..3520593 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/platform_android.c
-+++ b/mesa-23.0-kopper-android/src/egl/drivers/dri2/platform_android.c
+--- a/src/egl/drivers/dri2/platform_android.c
++++ b/src/egl/drivers/dri2/platform_android.c
 @@ -38,6 +38,9 @@
  #include <sync/sync.h>
  #include <sys/types.h>
@@ -457,10 +457,10 @@ index af7b329..3520593 100644
  
     return EGL_TRUE;
  
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/main/eglcurrent.h b/mesa-23.0-kopper-android/src/egl/main/eglcurrent.h
+diff --git a/src/egl/main/eglcurrent.h b/src/egl/main/eglcurrent.h
 index 89f47a2..8e9f8c1 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/main/eglcurrent.h
-+++ b/mesa-23.0-kopper-android/src/egl/main/eglcurrent.h
+--- a/src/egl/main/eglcurrent.h
++++ b/src/egl/main/eglcurrent.h
 @@ -72,12 +72,7 @@ struct _egl_thread_info
  static inline EGLBoolean
  _eglIsApiValid(EGLenum api)
@@ -474,10 +474,10 @@ index 89f47a2..8e9f8c1 100644
  }
  
  
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_instance.py b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_instance.py
+diff --git a/src/gallium/drivers/zink/zink_instance.py b/src/gallium/drivers/zink/zink_instance.py
 index d6f09e7..e1490fc 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_instance.py
-+++ b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_instance.py
+--- a/src/gallium/drivers/zink/zink_instance.py
++++ b/src/gallium/drivers/zink/zink_instance.py
 @@ -47,6 +47,7 @@ EXTENSIONS = [
      Extension("VK_KHR_xcb_surface",
                conditions=["!instance_info->disable_xcb_surface"]),
@@ -486,10 +486,10 @@ index d6f09e7..e1490fc 100644
  ]
  
  # constructor: Layer(name, conditions=[])
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_kopper.c b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_kopper.c
+diff --git a/src/gallium/drivers/zink/zink_kopper.c b/src/gallium/drivers/zink/zink_kopper.c
 index c76bc2d..b2bc064 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_kopper.c
-+++ b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_kopper.c
+--- a/src/gallium/drivers/zink/zink_kopper.c
++++ b/src/gallium/drivers/zink/zink_kopper.c
 @@ -69,6 +69,11 @@ init_dt_type(struct kopper_displaytarget *cdt)
     case VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR:
        cdt->type = KOPPER_WIN32;
@@ -568,10 +568,10 @@ index c76bc2d..b2bc064 100644
  #endif
     default:
        unreachable("unsupported!");
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_kopper.h b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_kopper.h
+diff --git a/src/gallium/drivers/zink/zink_kopper.h b/src/gallium/drivers/zink/zink_kopper.h
 index caf0e9a..0e09454 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_kopper.h
-+++ b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_kopper.h
+--- a/src/gallium/drivers/zink/zink_kopper.h
++++ b/src/gallium/drivers/zink/zink_kopper.h
 @@ -61,7 +61,8 @@ struct kopper_swapchain {
  enum kopper_type {
     KOPPER_X11,
@@ -582,10 +582,10 @@ index caf0e9a..0e09454 100644
  };
  
  struct kopper_displaytarget
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_resource.c b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_resource.c
+diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
 index c33d7cf..fb06c71 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_resource.c
-+++ b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_resource.c
+--- a/src/gallium/drivers/zink/zink_resource.c
++++ b/src/gallium/drivers/zink/zink_resource.c
 @@ -988,7 +988,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
        mai.memoryTypeIndex = zink_mem_type_idx_from_bits(screen, heap, reqs.memoryTypeBits);
        assert(mai.memoryTypeIndex != UINT32_MAX);
@@ -595,10 +595,10 @@ index c33d7cf..fb06c71 100644
  
     VkMemoryDedicatedAllocateInfo ded_alloc_info = {
        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_screen.c b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_screen.c
+diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
 index 4cef27b..cc3c739 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_screen.c
-+++ b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_screen.c
+--- a/src/gallium/drivers/zink/zink_screen.c
++++ b/src/gallium/drivers/zink/zink_screen.c
 @@ -936,9 +936,18 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
        return MIN2(screen->info.props.limits.maxVertexOutputComponents / 4 / 2, 16);
  
@@ -636,10 +636,10 @@ index 4cef27b..cc3c739 100644
        goto fail;
  
     screen->vk_GetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)util_dl_get_proc_address(screen->loader_lib, "vkGetInstanceProcAddr");
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/frontends/dri/kopper.c b/mesa-23.0-kopper-android/src/gallium/frontends/dri/kopper.c
+diff --git a/src/gallium/frontends/dri/kopper.c b/src/gallium/frontends/dri/kopper.c
 index 0e7acfb..228a646 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/frontends/dri/kopper.c
-+++ b/mesa-23.0-kopper-android/src/gallium/frontends/dri/kopper.c
+--- a/src/gallium/frontends/dri/kopper.c
++++ b/src/gallium/frontends/dri/kopper.c
 @@ -45,6 +45,7 @@
  #include <vulkan/vulkan.h>
  
@@ -648,10 +648,10 @@ index 0e7acfb..228a646 100644
  #include <xcb/xcb.h>
  #include <xcb/dri3.h>
  #include <xcb/present.h>
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/frontends/dri/meson.build b/mesa-23.0-kopper-android/src/gallium/frontends/dri/meson.build
+diff --git a/src/gallium/frontends/dri/meson.build b/src/gallium/frontends/dri/meson.build
 index 47dcdfd..02fbb9c 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/frontends/dri/meson.build
-+++ b/mesa-23.0-kopper-android/src/gallium/frontends/dri/meson.build
+--- a/src/gallium/frontends/dri/meson.build
++++ b/src/gallium/frontends/dri/meson.build
 @@ -1,24 +1,8 @@
  # Copyright © 2017 Dylan Baker
 -
@@ -688,10 +688,10 @@ index 47dcdfd..02fbb9c 100644
    if get_option('glvnd')
      libdri_c_args += '-DKOPPER_LIB_NAMES="libEGL_@0@ and libGLX_@0@"'.format(get_option('glvnd-vendor-name'))
    else
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/targets/dri/dri.sym b/mesa-23.0-kopper-android/src/gallium/targets/dri/dri.sym
+diff --git a/src/gallium/targets/dri/dri.sym b/src/gallium/targets/dri/dri.sym
 index 7f7a93b..13df604 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/targets/dri/dri.sym
-+++ b/mesa-23.0-kopper-android/src/gallium/targets/dri/dri.sym
+--- a/src/gallium/targets/dri/dri.sym
++++ b/src/gallium/targets/dri/dri.sym
 @@ -1,12 +1,6 @@
  {
  	global:
@@ -705,10 +705,10 @@ index 7f7a93b..13df604 100644
  	local:
  		*;
  };
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/targets/dri/target.c b/mesa-23.0-kopper-android/src/gallium/targets/dri/target.c
+diff --git a/src/gallium/targets/dri/target.c b/src/gallium/targets/dri/target.c
 index d506869..2dbfe90 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/targets/dri/target.c
-+++ b/mesa-23.0-kopper-android/src/gallium/targets/dri/target.c
+--- a/src/gallium/targets/dri/target.c
++++ b/src/gallium/targets/dri/target.c
 @@ -129,9 +129,6 @@ DEFINE_LOADER_DRM_ENTRYPOINT(lima)
  #endif
  
@@ -727,10 +727,10 @@ index d506869..2dbfe90 100644
  
  #if defined(GALLIUM_D3D12)
  DEFINE_LOADER_DRM_ENTRYPOINT(d3d12);
-diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/loader/loader.c b/mesa-23.0-kopper-android/src/loader/loader.c
+diff --git a/src/loader/loader.c b/src/loader/loader.c
 index b67af97..aa7c6b0 100644
---- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/loader/loader.c
-+++ b/mesa-23.0-kopper-android/src/loader/loader.c
+--- a/src/loader/loader.c
++++ b/src/loader/loader.c
 @@ -696,9 +696,14 @@ loader_open_driver_lib(const char *driver_name,
                    p, driver_name, lib_suffix);
           driver = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
@@ -749,3 +749,4 @@ index b67af97..aa7c6b0 100644
           }
        }
        /* not need continue to loop all paths once the driver is found */
+
