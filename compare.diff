@@ -1,0 +1,751 @@
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/mesa-896db04e025a2623bda7b9b6225dc565019e5a22 b/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/mesa-896db04e025a2623bda7b9b6225dc565019e5a22
+deleted file mode 100644
+index 88e0c25..0000000
+Binary files a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/mesa-896db04e025a2623bda7b9b6225dc565019e5a22 and /dev/null differ
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/android_stub/nativewindow_stub.cpp b/mesa-23.0-kopper-android/src/android_stub/nativewindow_stub.cpp
+index b060077..b497aa2 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/android_stub/nativewindow_stub.cpp
++++ b/mesa-23.0-kopper-android/src/android_stub/nativewindow_stub.cpp
+@@ -101,4 +101,15 @@ ANativeWindow_setSharedBufferMode(ANativeWindow *window,
+ {
+    return 0;
+ }
++
++int32_t ANativeWindow_getWidth(ANativeWindow *window)
++{
++   return 0;
++}
++
++int32_t ANativeWindow_getHeight(ANativeWindow *window)
++{
++   return 0;
++}
++
+ }
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/egl_dri2.c b/mesa-23.0-kopper-android/src/egl/drivers/dri2/egl_dri2.c
+index f8a3863..773c4a5 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/egl_dri2.c
++++ b/mesa-23.0-kopper-android/src/egl/drivers/dri2/egl_dri2.c
+@@ -747,6 +747,7 @@ dri2_open_driver(_EGLDisplay *disp)
+    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+    static const char *search_path_vars[] = {
+       "LIBGL_DRIVERS_PATH",
++      "LD_LIBRARY_PATH",
+       NULL,
+    };
+ 
+@@ -981,7 +982,7 @@ dri2_create_screen(_EGLDisplay *disp)
+ {
+    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+ 
+-   int screen_fd = dri2_dpy->swrast ? -1 : dri2_dpy->fd;
++   int screen_fd = (dri2_dpy->swrast || dri2_dpy->kopper) ? -1 : dri2_dpy->fd;
+    dri2_dpy->dri_screen = dri2_dpy->mesa->createNewScreen(0, screen_fd,
+                                                           dri2_dpy->loader_extensions,
+                                                           dri2_dpy->driver_extensions,
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/egl_dri2.h b/mesa-23.0-kopper-android/src/egl/drivers/dri2/egl_dri2.h
+index 5074ca2..21ece3a 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/egl_dri2.h
++++ b/mesa-23.0-kopper-android/src/egl/drivers/dri2/egl_dri2.h
+@@ -453,6 +453,9 @@ extern const __DRIuseInvalidateExtension use_invalidate;
+ extern const __DRIbackgroundCallableExtension background_callable_extension;
+ extern const __DRIswrastLoaderExtension swrast_pbuffer_loader_extension;
+ 
++void
++dri2_detect_swrast_kopper(_EGLDisplay *disp);
++
+ EGLBoolean
+ dri2_load_driver(_EGLDisplay *disp);
+ 
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/platform_android.c b/mesa-23.0-kopper-android/src/egl/drivers/dri2/platform_android.c
+index af7b329..3520593 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/drivers/dri2/platform_android.c
++++ b/mesa-23.0-kopper-android/src/egl/drivers/dri2/platform_android.c
+@@ -38,6 +38,9 @@
+ #include <sync/sync.h>
+ #include <sys/types.h>
+ #include <drm-uapi/drm_fourcc.h>
++#include <vulkan/vulkan_core.h>
++#include <vulkan/vulkan_android.h>
++
+ 
+ #include "util/compiler.h"
+ #include "util/os_file.h"
+@@ -46,6 +49,7 @@
+ #include "loader.h"
+ #include "egl_dri2.h"
+ #include "platform_android.h"
++#include "dri_util.h"
+ 
+ #ifdef HAVE_DRM_GRALLOC
+ #include <gralloc_drm_handle.h>
+@@ -706,6 +710,12 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
+       goto cleanup_surface;
+    }
+ 
++   /* `dri2_surf->window` will be required in dri2_create_drawable for Kopper,
++    * (in kopperSetSurfaceCreateInfo), so set it in advance here.
++    */
++    if (dri2_dpy->kopper)
++        dri2_surf->window = window;
++
+    if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
+       goto cleanup_surface;
+ 
+@@ -780,16 +790,33 @@ droid_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
+ static EGLBoolean
+ droid_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
+ {
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+    struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
+    struct ANativeWindow *window = dri2_surf->window;
+ 
+-   if (ANativeWindow_setSwapInterval(window, interval))
++   if (dri2_dpy->kopper)
++       dri2_dpy->kopper->setSwapInterval(dri2_surf->dri_drawable, interval);
++   else if (ANativeWindow_setSwapInterval(window, interval))
+       return EGL_FALSE;
+ 
+    surf->SwapInterval = interval;
+    return EGL_TRUE;
+ }
+ 
++static void
++droid_get_window_size(struct dri2_egl_surface *dri2_surf, int *w, int *h) {
++   struct ANativeWindow* window = dri2_surf->window;
++
++   *w = ANativeWindow_getWidth(window);
++   *h = ANativeWindow_getHeight(window);
++}
++
++static void
++update_buffer_size(struct dri2_egl_surface *dri2_surf)
++{
++   droid_get_window_size(dri2_surf, &dri2_surf->base.Width, &dri2_surf->base.Height);
++}
++
+ static int
+ update_buffers(struct dri2_egl_surface *dri2_surf)
+ {
+@@ -806,13 +833,7 @@ update_buffers(struct dri2_egl_surface *dri2_surf)
+       return -1;
+    }
+ 
+-   /* free outdated buffers and update the surface size */
+-   if (dri2_surf->base.Width != dri2_surf->buffer->width ||
+-       dri2_surf->base.Height != dri2_surf->buffer->height) {
+-      dri2_egl_surface_free_local_buffers(dri2_surf);
+-      dri2_surf->base.Width = dri2_surf->buffer->width;
+-      dri2_surf->base.Height = dri2_surf->buffer->height;
+-   }
++   update_buffer_size(dri2_surf);
+ 
+    return 0;
+ }
+@@ -907,16 +928,19 @@ droid_image_get_buffers(__DRIdrawable *driDrawable,
+                   struct __DRIimageList *images)
+ {
+    struct dri2_egl_surface *dri2_surf = loaderPrivate;
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(dri2_surf->base.Resource.Display);
+ 
+    images->image_mask = 0;
+    images->front = NULL;
+    images->back = NULL;
+ 
+-   if (update_buffers(dri2_surf) < 0)
++   if (dri2_dpy->kopper)
++      update_buffer_size(dri2_surf);
++   else if (update_buffers(dri2_surf) < 0)
+       return 0;
+ 
+    if (_eglSurfaceInSharedBufferMode(&dri2_surf->base)) {
+-      if (get_back_bo(dri2_surf) < 0)
++      if (!dri2_dpy->kopper && get_back_bo(dri2_surf) < 0)
+          return 0;
+ 
+       /* We have dri_image_back because this is a window surface and
+@@ -931,7 +955,7 @@ droid_image_get_buffers(__DRIdrawable *driDrawable,
+    }
+ 
+    if (buffer_mask & __DRI_IMAGE_BUFFER_FRONT) {
+-      if (get_front_bo(dri2_surf, format) < 0)
++      if (!dri2_dpy->kopper && get_front_bo(dri2_surf, format) < 0)
+          return 0;
+ 
+       if (dri2_surf->dri_image_front) {
+@@ -941,7 +965,7 @@ droid_image_get_buffers(__DRIdrawable *driDrawable,
+    }
+ 
+    if (buffer_mask & __DRI_IMAGE_BUFFER_BACK) {
+-      if (get_back_bo(dri2_surf) < 0)
++      if (!dri2_dpy->kopper && get_back_bo(dri2_surf) < 0)
+          return 0;
+ 
+       if (dri2_surf->dri_image_back) {
+@@ -966,6 +990,51 @@ droid_query_buffer_age(_EGLDisplay *disp, _EGLSurface *surface)
+    return dri2_surf->back ? dri2_surf->back->age : 0;
+ }
+ 
++static EGLint
++droid_query_buffer_age_kopper(_EGLDisplay *disp, _EGLSurface *surface)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surface);
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++
++   return dri2_dpy->kopper->queryBufferAge(dri2_surf->dri_drawable);
++}
++
++static EGLBoolean
++droid_swap_buffers_kopper(_EGLDisplay *disp, _EGLSurface *draw)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(draw);
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++   const bool has_mutable_rb = _eglSurfaceHasMutableRenderBuffer(draw);
++
++   /* From the EGL_KHR_mutable_render_buffer spec (v12):
++    *
++    *    If surface is a single-buffered window, pixmap, or pbuffer surface
++    *    for which there is no pending change to the EGL_RENDER_BUFFER
++    *    attribute, eglSwapBuffers has no effect.
++    */
++   if (has_mutable_rb && draw->RequestedRenderBuffer == EGL_SINGLE_BUFFER &&
++       draw->ActiveRenderBuffer == EGL_SINGLE_BUFFER) {
++      _eglLog(_EGL_DEBUG, "%s: remain in shared buffer mode", __func__);
++      return EGL_TRUE;
++   }
++
++    dri2_dpy->kopper->swapBuffers(dri2_surf->dri_drawable);
++
++   /* Update the shared buffer mode */
++   if (has_mutable_rb &&
++       draw->ActiveRenderBuffer != draw->RequestedRenderBuffer) {
++      bool mode = (draw->RequestedRenderBuffer == EGL_SINGLE_BUFFER);
++      _eglLog(_EGL_DEBUG, "%s: change to shared buffer mode %d", __func__,
++              mode);
++
++      if (!droid_set_shared_buffer_mode(disp, draw, mode))
++         return EGL_FALSE;
++      draw->ActiveRenderBuffer = draw->RequestedRenderBuffer;
++   }
++
++   return EGL_TRUE;
++}
++
+ static EGLBoolean
+ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
+ {
+@@ -1343,6 +1412,20 @@ droid_add_configs_for_visuals(_EGLDisplay *disp)
+    return (config_count != 0);
+ }
+ 
++static const struct dri2_egl_display_vtbl droid_display_kopper_vtbl = {
++   .authenticate = NULL,
++   .create_window_surface = droid_create_window_surface,
++   .create_pbuffer_surface = droid_create_pbuffer_surface,
++   .destroy_surface = droid_destroy_surface,
++   .create_image = droid_create_image_khr,
++   .swap_buffers = droid_swap_buffers_kopper,
++   .swap_interval = droid_swap_interval,
++   .query_buffer_age = droid_query_buffer_age_kopper,
++   .query_surface = droid_query_surface,
++   .get_dri_drawable = dri2_surface_get_dri_drawable,
++   .set_shared_buffer_mode = droid_set_shared_buffer_mode,
++};
++
+ static const struct dri2_egl_display_vtbl droid_display_vtbl = {
+    .authenticate = NULL,
+    .create_window_surface = droid_create_window_surface,
+@@ -1451,9 +1534,59 @@ droid_display_shared_buffer(__DRIdrawable *driDrawable, int fence_fd,
+    handle_in_fence_fd(dri2_surf, dri2_surf->dri_image_back);
+ }
+ 
+-static const __DRImutableRenderBufferLoaderExtension droid_mutable_render_buffer_extension = {
+-   .base = { __DRI_MUTABLE_RENDER_BUFFER_LOADER, 1 },
+-   .displaySharedBuffer = droid_display_shared_buffer,
++static void
++droid_swrast_get_drawable_info(__DRIdrawable *drawable,
++	        int *x, int *y, int *width, int *height,
++	        void *loaderPrivate)
++{
++   struct dri2_egl_surface *dri2_surf = loaderPrivate;
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(dri2_surf->base.Resource.Display);
++
++   if (dri2_dpy->kopper)
++      update_buffer_size(dri2_surf);
++   else
++      update_buffers(dri2_surf);
++
++   *x = 0;
++   *y = 0;
++   *width = dri2_surf->base.Width;
++   *height = dri2_surf->base.Height;
++}
++
++static void
++droid_swrast_put_image2(__DRIdrawable *draw, int op, int x, int y, int w,
++                          int h, int stride, char *data, void *loaderPrivate)
++{
++   return;
++}
++
++static void
++droid_swrast_put_image(__DRIdrawable *draw, int op, int x, int y, int w,
++                         int h, char *data, void *loaderPrivate)
++{
++   return;
++}
++
++static void
++droid_swrast_get_image(__DRIdrawable *read, int x, int y, int w, int h,
++                         char *data, void *loaderPrivate)
++{
++   return;
++}
++
++static const __DRIswrastLoaderExtension swrast_loader_extension = {
++   .base = {__DRI_SWRAST_LOADER, 2},
++
++   .getDrawableInfo = droid_swrast_get_drawable_info,
++   .putImage = droid_swrast_put_image,
++   .getImage = droid_swrast_get_image,
++   .putImage2 = droid_swrast_put_image2,
++};
++
++static const __DRImutableRenderBufferLoaderExtension
++   droid_mutable_render_buffer_extension = {
++      .base = {__DRI_MUTABLE_RENDER_BUFFER_LOADER, 1},
++      .displaySharedBuffer = droid_display_shared_buffer,
+ };
+ 
+ static const __DRIextension *droid_image_loader_extensions[] = {
+@@ -1464,6 +1597,48 @@ static const __DRIextension *droid_image_loader_extensions[] = {
+    NULL,
+ };
+ 
++static_assert(sizeof(struct kopper_vk_surface_create_storage) >=
++                 sizeof(VkAndroidSurfaceCreateInfoKHR),
++              "");
++
++static void
++kopperSetSurfaceCreateInfo(void *_draw, struct kopper_loader_info *out)
++{
++   struct dri2_egl_surface *dri2_surf = _draw;
++   VkAndroidSurfaceCreateInfoKHR *asci = (VkAndroidSurfaceCreateInfoKHR *)&out->bos;
++
++   asci->sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
++   asci->pNext = NULL;
++   asci->flags = 0;
++   asci->window = dri2_surf->window;
++   out->has_alpha = false;
++}
++
++static void
++kopperGetDrawableInfo(__DRIdrawable *draw, int *w, int *h, void *loaderPrivate)
++{
++   struct dri2_egl_surface *dri2_surf = loaderPrivate;
++
++   droid_get_window_size(dri2_surf, w, h);
++}
++
++static const __DRIkopperLoaderExtension kopper_loader_extension = {
++   .base = {__DRI_KOPPER_LOADER, 1},
++
++   .SetSurfaceCreateInfo = kopperSetSurfaceCreateInfo,
++   .GetDrawableInfo = kopperGetDrawableInfo,
++};
++
++static const __DRIextension *droid_kopper_image_loader_extensions[] = {
++   &droid_image_loader_extension.base,
++   &image_lookup_extension.base,
++   &use_invalidate.base,
++   &droid_mutable_render_buffer_extension.base,
++   &swrast_loader_extension.base,
++   &kopper_loader_extension.base,
++   NULL,
++};
++
+ static EGLBoolean
+ droid_load_driver(_EGLDisplay *disp, bool swrast)
+ {
+@@ -1667,35 +1842,57 @@ dri2_initialize_android(_EGLDisplay *disp)
+ {
+    _EGLDevice *dev;
+    bool device_opened = false;
+-   struct dri2_egl_display *dri2_dpy;
++   struct dri2_egl_display *dri2_dpy = NULL;
+    const char *err;
+    int ret;
+ 
+-   dri2_dpy = calloc(1, sizeof(*dri2_dpy));
+-   if (!dri2_dpy)
+-      return _eglError(EGL_BAD_ALLOC, "eglInitialize");
++    dri2_dpy = calloc(1, sizeof(*dri2_dpy));
++    if (!dri2_dpy)
++        return _eglError(EGL_BAD_ALLOC, "eglInitialize");
+ 
+-   dri2_dpy->fd = -1;
+-   ret = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
+-                       (const hw_module_t **)&dri2_dpy->gralloc);
+-   if (ret) {
+-      err = "DRI2: failed to get gralloc module";
+-      goto cleanup;
+-   }
++    // dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_AUTO);
++   // if (dri2_dpy->gralloc == NULL) {
++      // err = "DRI2: failed to get gralloc";
++      // goto cleanup;
++   // }
+ 
+    disp->DriverData = (void *) dri2_dpy;
+-   device_opened = droid_open_device(disp, disp->Options.ForceSoftware);
+-
+-   if (!device_opened) {
+-      err = "DRI2: failed to open device";
+-      goto cleanup;
+-   }
+-
+-   dev = _eglAddDevice(dri2_dpy->fd, false);
+-   if (!dev) {
+-      err = "DRI2: failed to find EGLDevice";
+-      goto cleanup;
+-   }
++    if (disp->Options.Zink) {
++        dri2_dpy->driver_name = strdup("zink");
++        dri2_dpy->loader_extensions = droid_kopper_image_loader_extensions;
++        if (!dri2_load_driver(disp)) {
++            err = "DRI2: failed to load driver";
++            goto cleanup;
++        }
++
++        device_opened = EGL_TRUE;
++
++        if (!dri2_create_screen(disp)) {
++            _eglLog(_EGL_WARNING, "DRI2: failed to create screen");
++            droid_unload_driver(disp);
++            goto cleanup;
++        }
++
++        dev = _eglAddDevice(dri2_dpy->fd, true);
++        if (!dev) {
++            err = "DRI2: failed to find EGLDevice";
++            goto cleanup;
++        }
++    }
++    else {
++        device_opened = droid_open_device(disp, disp->Options.ForceSoftware);
++
++        if (!device_opened) {
++            err = "DRI2: failed to open device";
++            goto cleanup;
++        }
++
++        dev = _eglAddDevice(dri2_dpy->fd, false);
++        if (!dev) {
++            err = "DRI2: failed to find EGLDevice";
++            goto cleanup;
++        }
++    }
+ 
+    disp->Device = dev;
+ 
+@@ -1785,7 +1982,7 @@ dri2_initialize_android(_EGLDisplay *disp)
+    /* Fill vtbl last to prevent accidentally calling virtual function during
+     * initialization.
+     */
+-   dri2_dpy->vtbl = &droid_display_vtbl;
++   dri2_dpy->vtbl = dri2_dpy->kopper ? &droid_display_kopper_vtbl : &droid_display_vtbl;
+ 
+    return EGL_TRUE;
+ 
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/main/eglcurrent.h b/mesa-23.0-kopper-android/src/egl/main/eglcurrent.h
+index 89f47a2..8e9f8c1 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/egl/main/eglcurrent.h
++++ b/mesa-23.0-kopper-android/src/egl/main/eglcurrent.h
+@@ -72,12 +72,7 @@ struct _egl_thread_info
+ static inline EGLBoolean
+ _eglIsApiValid(EGLenum api)
+ {
+-#ifdef ANDROID
+-   /* OpenGL is not a valid/supported API on Android */
+-   return api == EGL_OPENGL_ES_API;
+-#else
+    return (api == EGL_OPENGL_ES_API || api == EGL_OPENGL_API);
+-#endif
+ }
+ 
+ 
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_instance.py b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_instance.py
+index d6f09e7..e1490fc 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_instance.py
++++ b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_instance.py
+@@ -47,6 +47,7 @@ EXTENSIONS = [
+     Extension("VK_KHR_xcb_surface",
+               conditions=["!instance_info->disable_xcb_surface"]),
+     Extension("VK_KHR_win32_surface"),
++    Extension("VK_KHR_android_surface"),
+ ]
+ 
+ # constructor: Layer(name, conditions=[])
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_kopper.c b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_kopper.c
+index c76bc2d..b2bc064 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_kopper.c
++++ b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_kopper.c
+@@ -69,6 +69,11 @@ init_dt_type(struct kopper_displaytarget *cdt)
+    case VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR:
+       cdt->type = KOPPER_WIN32;
+       break;
++#endif
++#ifdef VK_USE_PLATFORM_ANDROID_KHR
++   case VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR:
++      cdt->type = KOPPER_ANDROID;
++      break;
+ #endif
+    default:
+       unreachable("unsupported!");
+@@ -104,6 +109,13 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
+       error = VKSCR(CreateWin32SurfaceKHR)(screen->instance, win32, NULL, &surface);
+       break;
+    }
++#endif
++#ifdef VK_USE_PLATFORM_ANDROID_KHR
++    case VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR: {
++      VkAndroidSurfaceCreateInfoKHR *wdroid = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
++      error = VKSCR(CreateAndroidSurfaceKHR)(screen->instance, wdroid, NULL, &surface);
++      break;
++    }
+ #endif
+    default:
+       unreachable("unsupported!");
+@@ -127,7 +139,6 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
+       /* VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR and VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR
+       * are not handled
+       */
+-      assert(modes[i] <= VK_PRESENT_MODE_FIFO_RELAXED_KHR);
+       if (modes[i] <= VK_PRESENT_MODE_FIFO_RELAXED_KHR)
+          cdt->present_modes |= BITFIELD_BIT(modes[i]);
+    }
+@@ -201,6 +212,13 @@ find_dt_entry(struct zink_screen *screen, const struct kopper_displaytarget *cdt
+       he = _mesa_hash_table_search(&screen->dts, win32->hwnd);
+       break;
+    }
++#endif
++#ifdef VK_USE_PLATFORM_ANDROID_KHR
++   case KOPPER_ANDROID: {
++      VkAndroidSurfaceCreateInfoKHR *asci = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
++      he = _mesa_hash_table_search(&screen->dts, asci->window);
++      break;
++   }
+ #endif
+    default:
+       unreachable("unsupported!");
+@@ -272,6 +290,7 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
+    switch (cdt->type) {
+    case KOPPER_X11:
+    case KOPPER_WIN32:
++   case KOPPER_ANDROID:
+       /* With Xcb, minImageExtent, maxImageExtent, and currentExtent must always equal the window size.
+        * ...
+        * Due to above restrictions, it is only possible to create a new swapchain on this
+@@ -386,6 +405,7 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+             break;
+          case KOPPER_WAYLAND:
+          case KOPPER_WIN32:
++         case KOPPER_ANDROID:
+             _mesa_hash_table_init(&screen->dts, screen, _mesa_hash_pointer, _mesa_key_pointer_equal);
+             break;
+          default:
+@@ -458,6 +478,13 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+       _mesa_hash_table_insert(&screen->dts, win32->hwnd, cdt);
+       break;
+    }
++#endif
++#ifdef VK_USE_PLATFORM_ANDROID_KHR
++   case KOPPER_ANDROID: {
++      VkAndroidSurfaceCreateInfoKHR *asci = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
++      _mesa_hash_table_insert(&screen->dts, asci->window, cdt);
++      break;
++   }
+ #endif
+    default:
+       unreachable("unsupported!");
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_kopper.h b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_kopper.h
+index caf0e9a..0e09454 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_kopper.h
++++ b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_kopper.h
+@@ -61,7 +61,8 @@ struct kopper_swapchain {
+ enum kopper_type {
+    KOPPER_X11,
+    KOPPER_WAYLAND,
+-   KOPPER_WIN32
++   KOPPER_WIN32,
++   KOPPER_ANDROID
+ };
+ 
+ struct kopper_displaytarget
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_resource.c b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_resource.c
+index c33d7cf..fb06c71 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_resource.c
++++ b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_resource.c
+@@ -988,7 +988,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
+       mai.memoryTypeIndex = zink_mem_type_idx_from_bits(screen, heap, reqs.memoryTypeBits);
+       assert(mai.memoryTypeIndex != UINT32_MAX);
+    }
+-   assert(reqs.memoryTypeBits & BITFIELD_BIT(mai.memoryTypeIndex));
++//   assert(reqs.memoryTypeBits & BITFIELD_BIT(mai.memoryTypeIndex));
+ 
+    VkMemoryDedicatedAllocateInfo ded_alloc_info = {
+       .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_screen.c b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_screen.c
+index 4cef27b..cc3c739 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/drivers/zink/zink_screen.c
++++ b/mesa-23.0-kopper-android/src/gallium/drivers/zink/zink_screen.c
+@@ -936,9 +936,18 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
+       return MIN2(screen->info.props.limits.maxVertexOutputComponents / 4 / 2, 16);
+ 
+    case PIPE_CAP_DMABUF:
+-      return screen->info.have_KHR_external_memory_fd &&
++       printf("Checking PIPE_CAP_DMABUF:\n"
++              "KHR_external_memory_fd: %s\n"
++              "EXT_external_memory_dma_buf: %s\n"
++              "have_EXT_queue_family_foreign: %s\n",
++              screen->info.have_KHR_external_memory_fd ? "true" : "false",
++              screen->info.have_EXT_external_memory_dma_buf ? "true" : "false",
++              screen->info.have_EXT_queue_family_foreign ? "true" : "false");
++       if (!(screen->info.have_KHR_external_memory_fd &&
+              screen->info.have_EXT_external_memory_dma_buf &&
+-             screen->info.have_EXT_queue_family_foreign;
++             screen->info.have_EXT_queue_family_foreign))
++           printf("Not actually satisfied PIPE_CAP_DMABUF, applying hack...\n");
++      return 1;
+ 
+    case PIPE_CAP_DEPTH_BOUNDS_TEST:
+       return screen->info.feats.features.depthBounds;
+@@ -2487,8 +2496,13 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
+    zink_debug = debug_get_option_zink_debug();
+    zink_descriptor_mode = debug_get_option_zink_descriptor_mode();
+ 
+-   screen->loader_lib = util_dl_open(VK_LIBNAME);
+-   if (!screen->loader_lib)
++    const char* preloaded_ptr = getenv("VULKAN_PTR");
++    if (preloaded_ptr)
++        printf("VULKAN_PTR = 0x%s\n", preloaded_ptr);
++    else
++        printf("VULKAN_PTR not set, using system VK\n");
++    screen->loader_lib = preloaded_ptr ? (void*) strtoul(preloaded_ptr, NULL, 0x10) : util_dl_open(VK_LIBNAME);
++    if (!screen->loader_lib)
+       goto fail;
+ 
+    screen->vk_GetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)util_dl_get_proc_address(screen->loader_lib, "vkGetInstanceProcAddr");
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/frontends/dri/kopper.c b/mesa-23.0-kopper-android/src/gallium/frontends/dri/kopper.c
+index 0e7acfb..228a646 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/frontends/dri/kopper.c
++++ b/mesa-23.0-kopper-android/src/gallium/frontends/dri/kopper.c
+@@ -45,6 +45,7 @@
+ #include <vulkan/vulkan.h>
+ 
+ #ifdef VK_USE_PLATFORM_XCB_KHR
++#include "loader_dri3_helper.h"
+ #include <xcb/xcb.h>
+ #include <xcb/dri3.h>
+ #include <xcb/present.h>
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/frontends/dri/meson.build b/mesa-23.0-kopper-android/src/gallium/frontends/dri/meson.build
+index 47dcdfd..02fbb9c 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/frontends/dri/meson.build
++++ b/mesa-23.0-kopper-android/src/gallium/frontends/dri/meson.build
+@@ -1,24 +1,8 @@
+ # Copyright © 2017 Dylan Baker
+-
+-# Permission is hereby granted, free of charge, to any person obtaining a copy
+-# of this software and associated documentation files (the "Software"), to deal
+-# in the Software without restriction, including without limitation the rights
+-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+-# copies of the Software, and to permit persons to whom the Software is
+-# furnished to do so, subject to the following conditions:
+-
+-# The above copyright notice and this permission notice shall be included in
+-# all copies or substantial portions of the Software.
+-
+-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+-# SOFTWARE.
++# SPDX-License-Identifier: MIT
+ 
+ inc_st_dri = include_directories('.')
++deps_for_libdri = []
+ 
+ files_libdri = files(
+   'dri_context.c',
+@@ -44,7 +28,7 @@ if with_dri2
+ endif
+ 
+ libdri_c_args = []
+-if with_gallium_zink and not with_platform_android
++if with_gallium_zink
+   if get_option('glvnd')
+     libdri_c_args += '-DKOPPER_LIB_NAMES="libEGL_@0@ and libGLX_@0@"'.format(get_option('glvnd-vendor-name'))
+   else
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/targets/dri/dri.sym b/mesa-23.0-kopper-android/src/gallium/targets/dri/dri.sym
+index 7f7a93b..13df604 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/targets/dri/dri.sym
++++ b/mesa-23.0-kopper-android/src/gallium/targets/dri/dri.sym
+@@ -1,12 +1,6 @@
+ {
+ 	global:
+-		__driDriverExtensions;
+ 		__driDriverGetExtensions*;
+-		nouveau_drm_screen_create;
+-		radeon_drm_winsys_create;
+-		amdgpu_winsys_create;
+-		fd_drm_screen_create;
+-		ac_init_shared_llvm_once;
+ 	local:
+ 		*;
+ };
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/targets/dri/target.c b/mesa-23.0-kopper-android/src/gallium/targets/dri/target.c
+index d506869..2dbfe90 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/gallium/targets/dri/target.c
++++ b/mesa-23.0-kopper-android/src/gallium/targets/dri/target.c
+@@ -129,9 +129,6 @@ DEFINE_LOADER_DRM_ENTRYPOINT(lima)
+ #endif
+ 
+ #if defined(GALLIUM_ZINK) && !defined(__APPLE__)
+-#if defined(ANDROID)
+-DEFINE_LOADER_DRM_ENTRYPOINT(zink);
+-#else
+ const __DRIextension **__driDriverGetExtensions_zink(void);
+ 
+ PUBLIC const __DRIextension **__driDriverGetExtensions_zink(void)
+@@ -139,7 +136,6 @@ PUBLIC const __DRIextension **__driDriverGetExtensions_zink(void)
+    return galliumvk_driver_extensions;
+ }
+ #endif
+-#endif
+ 
+ #if defined(GALLIUM_D3D12)
+ DEFINE_LOADER_DRM_ENTRYPOINT(d3d12);
+diff --git a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/loader/loader.c b/mesa-23.0-kopper-android/src/loader/loader.c
+index b67af97..aa7c6b0 100644
+--- a/mesa-896db04e025a2623bda7b9b6225dc565019e5a22/src/loader/loader.c
++++ b/mesa-23.0-kopper-android/src/loader/loader.c
+@@ -696,9 +696,14 @@ loader_open_driver_lib(const char *driver_name,
+                   p, driver_name, lib_suffix);
+          driver = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+          if (driver == NULL) {
+-            dl_error = dlerror();
+-            log_(_LOADER_DEBUG, "MESA-LOADER: failed to open %s: %s\n",
+-                 path, dl_error);
++             snprintf(path, sizeof(path), "%.*s/lib%s%s.so", len,
++                      p, driver_name, lib_suffix);
++             driver = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
++             if (driver == NULL) {
++                 dl_error = dlerror();
++                 log_(_LOADER_DEBUG, "MESA-LOADER: failed to open %s: %s\n",
++                      path, dl_error);
++             }
+          }
+       }
+       /* not need continue to loop all paths once the driver is found */
