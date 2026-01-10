@@ -70,7 +70,7 @@
 #include "pipe/p_state.h"
 
 #include "util/u_atomic.h"
-#include "util/box.h"
+#include "util/u_box.h"
 #include "util/u_debug.h"
 #include "util/format/u_format.h"
 #include "util/u_inlines.h"
@@ -122,6 +122,20 @@ struct osmesa_context
    GLint user_row_length; /*< user-specified number of pixels per row */
    GLboolean y_up;        /*< TRUE  -> Y increases upward */
                           /*< FALSE -> Y increases downward */
+
+   boolean ever_used;     /*< Has this context ever been current? */
+
+    /* Storage for depth/stencil, if the user has requested access.  The backing
+    * driver always has its own storage for the actual depth/stencil, which we
+    * have to transfer in and out.
+    */
+   void *zs;
+   unsigned zs_stride;
+
+
+   /** Which postprocessing filters are enabled. */
+   unsigned pp_enabled[PP_FILTERS];
+   struct pp_queue_t *pp;
 };
 
 /**
