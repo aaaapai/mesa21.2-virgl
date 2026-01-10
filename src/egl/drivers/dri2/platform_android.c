@@ -1844,11 +1844,13 @@ dri2_initialize_android(_EGLDisplay *disp)
     if (!dri2_dpy)
         return _eglError(EGL_BAD_ALLOC, "eglInitialize");
 
-    dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_AUTO);
-    if (dri2_dpy->gralloc == NULL) {
-      err = "DRI2: failed to get gralloc";
-      goto cleanup;
-    }
+   dri2_dpy->fd = -1;
+   ret = hw_get_module(GRALLOC_HARDWARE_MODULE_ID,
+                       (const hw_module_t **)&dri2_dpy->gralloc);
+   if (ret) {
+      err = "DRI2: failed to get gralloc module";
+      // goto cleanup;
+   }
 
    disp->DriverData = (void *) dri2_dpy;
     if (disp->Options.Zink) {
