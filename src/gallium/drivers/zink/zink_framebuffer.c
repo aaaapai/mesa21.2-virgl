@@ -54,6 +54,7 @@ zink_init_framebuffer_imageless(struct zink_screen *screen, struct zink_framebuf
 
    if (!screen->info.have_KHR_imageless_framebuffer) {
       zink_init_framebuffer(screen, fb, rp);
+      return;
    }
 
    VkFramebuffer ret;
@@ -152,7 +153,7 @@ struct zink_framebuffer *
 zink_get_framebuffer_imageless(struct zink_context *ctx)
 {
    if(!zink_screen(ctx->base.screen)->info.have_KHR_imageless_framebuffer) {
-      zink_get_framebuffer(ctx);
+      return zink_get_framebuffer(ctx);
    }
    bool have_zsbuf = ctx->fb_state.zsbuf && zink_is_zsbuf_used(ctx);
 
@@ -217,6 +218,7 @@ zink_init_framebuffer(struct zink_screen *screen, struct zink_framebuffer *fb, s
 
    if (screen->info.have_KHR_imageless_framebuffer) {
       zink_init_framebuffer_imageless(screen, fb, rp);
+      return;
    }
 
    VkFramebuffer ret;
@@ -349,8 +351,7 @@ zink_get_framebuffer(struct zink_context *ctx)
    struct zink_screen *screen = zink_screen(ctx->base.screen);
 
    if(screen->info.have_KHR_imageless_framebuffer) {
-      zink_get_framebuffer_imageless(ctx);
-      return;
+      return zink_get_framebuffer_imageless(ctx);
    }
 
    struct pipe_surface *attachments[2 * (PIPE_MAX_COLOR_BUFS + 1)] = {0};
