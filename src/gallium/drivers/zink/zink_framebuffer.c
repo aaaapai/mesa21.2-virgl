@@ -146,7 +146,9 @@ zink_use_dummy_attachments(const struct zink_context *ctx)
 struct zink_framebuffer *
 zink_get_framebuffer_imageless(struct zink_context *ctx)
 {
-   assert(zink_screen(ctx->base.screen)->info.have_KHR_imageless_framebuffer);
+   if(!zink_screen(ctx->base.screen)->info.have_KHR_imageless_framebuffer) {
+      zink_get_framebuffer(ctx);
+   }
    bool have_zsbuf = ctx->fb_state.zsbuf && zink_is_zsbuf_used(ctx);
 
    struct zink_framebuffer_state state;
@@ -336,7 +338,10 @@ zink_get_framebuffer(struct zink_context *ctx)
 {
    struct zink_screen *screen = zink_screen(ctx->base.screen);
 
-   assert(!screen->info.have_KHR_imageless_framebuffer);
+   if(screen->info.have_KHR_imageless_framebuffer) {
+      zink_get_framebuffer_imageless(ctx);
+      return;
+   }
 
    struct pipe_surface *attachments[2 * (PIPE_MAX_COLOR_BUFS + 1)] = {0};
    const unsigned cresolve_offset = ctx->fb_state.nr_cbufs + !!ctx->fb_state.zsbuf;
