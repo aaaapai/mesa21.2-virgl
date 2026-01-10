@@ -871,7 +871,7 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 1;
 
    case PIPE_CAP_SHADER_BUFFER_OFFSET_ALIGNMENT:
-      return 32 screen->info.props.limits.minStorageBufferOffsetAlignment;
+      return screen->info.props.limits.minStorageBufferOffsetAlignment;
 
    case PIPE_CAP_PCI_GROUP:
    case PIPE_CAP_PCI_BUS:
