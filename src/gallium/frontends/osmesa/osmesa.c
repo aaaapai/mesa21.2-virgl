@@ -385,9 +385,7 @@ osmesa_st_framebuffer_validate(struct st_context *st,
 
    struct kopper_loader_info loader_info;
    loader_info.has_alpha = 1;
-   loader_info.present_opaque = true;
    loader_info.initial_swap_interval = 0;
-   loader_info.compression = 0;
    VkAndroidSurfaceCreateInfoKHR* createInfo = (VkAndroidSurfaceCreateInfoKHR *)&loader_info.bos;
    createInfo->sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
    createInfo->pNext = NULL;
@@ -689,7 +687,7 @@ GLAPI void GLAPIENTRY OSMesaSwapBuffers() {
    struct pipe_screen *screen = get_st_manager()->screen;
    pipe->flush_resource(pipe, drawable);
    pipe->flush(pipe, NULL, PIPE_FLUSH_END_OF_FRAME);
-   screen->flush_frontbuffer(screen, pipe, drawable, 0, 0, NULL, 0, NULL);
+   screen->flush_frontbuffer(screen, pipe, drawable, 0, 0, NULL, NULL);
    pipe->invalidate_resource(pipe, drawable);
 }
 
