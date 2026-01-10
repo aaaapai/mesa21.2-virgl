@@ -774,7 +774,6 @@ dri2_load_driver_common(_EGLDisplay *disp,
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    const __DRIextension **extensions;
 
-   dri2_dpy->kopper = dri2_dpy->driver_name && !strcmp(dri2_dpy->driver_name, "zink");
 
    extensions = dri2_open_driver(disp);
    if (!extensions)
