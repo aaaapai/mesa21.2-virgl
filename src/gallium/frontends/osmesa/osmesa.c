@@ -680,7 +680,7 @@ OSMesaDestroyContext(OSMesaContext osmesa)
 }
 
 
-GLAPI void GLAPIENTRY OSMesaSwapBuffers(void) {
+GLAPI void GLAPIENTRY OSMesaFlushFrontbuffer(void) {
    OSMesaContext osmesa = OSMesaGetCurrentContext();
    struct pipe_context *pipe = osmesa->st->pipe;
    struct pipe_resource *drawable = osmesa->current_buffer->textures[ST_ATTACHMENT_BACK_LEFT];
@@ -959,7 +959,7 @@ static struct name_function functions[] = {
    { "OSMesaGetProcAddress", (OSMESAproc) OSMesaGetProcAddress },
    { "OSMesaColorClamp", (OSMESAproc) OSMesaColorClamp },
    { "OSMesaPostprocess", (OSMESAproc) OSMesaPostprocess },
-   { "OSMesaSwapBuffers", (OSMESAproc) OSMesaSwapBuffers },
+   { "OSMesaFlushFrontbuffer", (OSMESAproc) OSMesaFlushFrontbuffer },
    { NULL, NULL }
 };
 
