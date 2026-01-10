@@ -51,6 +51,11 @@ zink_destroy_framebuffer(struct zink_screen *screen,
 void
 zink_init_framebuffer_imageless(struct zink_screen *screen, struct zink_framebuffer *fb, struct zink_render_pass *rp)
 {
+
+   if (!screen->info.have_KHR_imageless_framebuffer) {
+      zink_init_framebuffer(screen, fb, rp);
+   }
+
    VkFramebuffer ret;
 
    if (fb->rp == rp)
@@ -209,6 +214,11 @@ zink_get_framebuffer_imageless(struct zink_context *ctx)
 void
 zink_init_framebuffer(struct zink_screen *screen, struct zink_framebuffer *fb, struct zink_render_pass *rp)
 {
+
+   if (screen->info.have_KHR_imageless_framebuffer) {
+      zink_init_framebuffer_imageless(screen, fb, rp);
+   }
+
    VkFramebuffer ret;
 
    if (fb->rp == rp)
