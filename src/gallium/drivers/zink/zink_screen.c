@@ -244,7 +244,7 @@ disk_cache_init(struct zink_screen *screen)
    _mesa_sha1_init(&ctx);
 
 #ifdef HAVE_DL_ITERATE_PHDR
-#ifdef USE_OSMESA
+#ifndef USE_OSMESA
    /* Hash in the zink driver build. */
    const struct build_id_note *note =
        build_id_find_nhdr_for_addr(disk_cache_init);
@@ -765,7 +765,7 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 1;
 
    case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
-      return /*screen->info.props.limits.minUniformBufferOffsetAlignment*/ 32; //我应该这么做吗？
+      return screen->info.props.limits.minUniformBufferOffsetAlignment;
 
    case PIPE_CAP_QUERY_TIMESTAMP:
       return screen->timestamp_valid_bits > 0;
@@ -787,7 +787,7 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return zink_descriptor_mode != ZINK_DESCRIPTOR_MODE_DB && screen->info.have_EXT_descriptor_indexing;
 
    case PIPE_CAP_TEXTURE_BUFFER_OFFSET_ALIGNMENT:
-      return /*screen->info.props.limits.minTexelBufferOffsetAlignment*/ 32;
+      return screen->info.props.limits.minTexelBufferOffsetAlignment;
 
    case PIPE_CAP_TEXTURE_TRANSFER_MODES: {
       enum pipe_texture_transfer_mode mode = PIPE_TEXTURE_TRANSFER_BLIT;
@@ -871,7 +871,7 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 1;
 
    case PIPE_CAP_SHADER_BUFFER_OFFSET_ALIGNMENT:
-      return 32 /*screen->info.props.limits.minStorageBufferOffsetAlignment*/;
+      return 32 screen->info.props.limits.minStorageBufferOffsetAlignment;
 
    case PIPE_CAP_PCI_GROUP:
    case PIPE_CAP_PCI_BUS:
@@ -961,9 +961,12 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
               screen->info.have_EXT_queue_family_foreign ? "true" : "false");
        if (!(screen->info.have_KHR_external_memory_fd &&
              screen->info.have_EXT_external_memory_dma_buf &&
-             screen->info.have_EXT_queue_family_foreign))
+             screen->info.have_EXT_queue_family_foreign)) {
            printf("Not actually satisfied PIPE_CAP_DMABUF, applying hack...\n");
-      return 1;
+           return 1;
+       } else {
+           return screen->info.have_KHR_external_memory_fd && screen->info.have_EXT_external_memory_dma_buf && screen->info.have_EXT_queue_family_foreign;
+       }
 
    case PIPE_CAP_DEPTH_BOUNDS_TEST:
       return screen->info.feats.features.depthBounds;
