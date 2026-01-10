@@ -24,9 +24,6 @@
 #include "main/glthread_marshal.h"
 #include "main/dispatch.h"
 
-void GLAPIENTRY
-glGetIntegerv(GLenum pname, GLint *params);
-
 uint32_t
 _mesa_unmarshal_GetIntegerv(struct gl_context *ctx,
                             const struct marshal_cmd_GetIntegerv *cmd)
@@ -35,25 +32,9 @@ _mesa_unmarshal_GetIntegerv(struct gl_context *ctx,
    return 0;
 }
 
-
 void GLAPIENTRY
-glGetIntegerv(GLenum pname, GLint *params)
+_mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
 {
-
-   switch (pname) {
-      case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT:
-         *params = 256;
-         return;
-   }
-
-   yee_mesa_marshal_GetIntegerv(pname, params);
-}
-
-void GLAPIENTRY
-yee_mesa_marshal_GetIntegerv(GLenum pname, GLint *p)
-{
-
-   whatcanisay_glGetIntegerv(pname, p);
 
    GET_CURRENT_CONTEXT(ctx);
 
