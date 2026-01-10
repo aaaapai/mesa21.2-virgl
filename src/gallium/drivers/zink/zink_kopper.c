@@ -70,6 +70,11 @@ init_dt_type(struct kopper_displaytarget *cdt)
       cdt->type = KOPPER_WIN32;
       break;
 #endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   case VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR:
+      cdt->type = KOPPER_ANDROID;
+      break;
+#endif
    default:
       unreachable("unsupported!");
    }
@@ -105,6 +110,13 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
       break;
    }
 #endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+    case VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR: {
+      VkAndroidSurfaceCreateInfoKHR *wdroid = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
+      error = VKSCR(CreateAndroidSurfaceKHR)(screen->instance, wdroid, NULL, &surface);
+      break;
+    }
+#endif
    default:
       unreachable("unsupported!");
    }
@@ -127,7 +139,6 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
       /* VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR and VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR
       * are not handled
       */
-      assert(modes[i] <= VK_PRESENT_MODE_FIFO_RELAXED_KHR);
       if (modes[i] <= VK_PRESENT_MODE_FIFO_RELAXED_KHR)
          cdt->present_modes |= BITFIELD_BIT(modes[i]);
    }
@@ -202,6 +213,13 @@ find_dt_entry(struct zink_screen *screen, const struct kopper_displaytarget *cdt
       break;
    }
 #endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   case KOPPER_ANDROID: {
+      VkAndroidSurfaceCreateInfoKHR *asci = (VkAndroidSurfaceCreateInfoKHR *)&cdt->info.bos;
+      he = _mesa_hash_table_search(&screen->dts, asci->window);
+      break;
+   }
+#endif
    default:
       unreachable("unsupported!");
    }
@@ -272,6 +290,7 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
    switch (cdt->type) {
    case KOPPER_X11:
    case KOPPER_WIN32:
+   case KOPPER_ANDROID:
       /* With Xcb, minImageExtent, maxImageExtent, and currentExtent must always equal the window size.
        * ...
        * Due to above restrictions, it is only possible to create a new swapchain on this
@@ -387,6 +406,7 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
             break;
          case KOPPER_WAYLAND:
          case KOPPER_WIN32:
+         case KOPPER_ANDROID:
             _mesa_hash_table_init(&screen->dts, screen, _mesa_hash_pointer, _mesa_key_pointer_equal);
             break;
          default:

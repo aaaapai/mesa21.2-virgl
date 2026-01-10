@@ -453,6 +453,9 @@ extern const __DRIuseInvalidateExtension use_invalidate;
 extern const __DRIbackgroundCallableExtension background_callable_extension;
 extern const __DRIswrastLoaderExtension swrast_pbuffer_loader_extension;
 
+void
+dri2_detect_swrast_kopper(_EGLDisplay *disp);
+
 EGLBoolean
 dri2_load_driver(_EGLDisplay *disp);
 

@@ -1,0 +1,19 @@
+diff a/src/loader/loader.c b/src/loader/loader.c	(rejected hunks)
+@@ -696,9 +696,14 @@ loader_open_driver_lib(const char *driver_name,
+                   p, driver_name, lib_suffix);
+          driver = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+          if (driver == NULL) {
+-            dl_error = dlerror();
+-            log_(_LOADER_DEBUG, "MESA-LOADER: failed to open %s: %s\n",
+-                 path, dl_error);
++             snprintf(path, sizeof(path), "%.*s/lib%s%s.so", len,
++                      p, driver_name, lib_suffix);
++             driver = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
++             if (driver == NULL) {
++                 dl_error = dlerror();
++                 log_(_LOADER_DEBUG, "MESA-LOADER: failed to open %s: %s\n",
++                      path, dl_error);
++             }
+          }
+       }
+       /* not need continue to loop all paths once the driver is found */

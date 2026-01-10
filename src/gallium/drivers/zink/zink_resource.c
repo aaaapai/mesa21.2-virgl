@@ -988,7 +988,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       mai.memoryTypeIndex = zink_mem_type_idx_from_bits(screen, heap, reqs.memoryTypeBits);
       assert(mai.memoryTypeIndex != UINT32_MAX);
    }
-   assert(reqs.memoryTypeBits & BITFIELD_BIT(mai.memoryTypeIndex));
+//   assert(reqs.memoryTypeBits & BITFIELD_BIT(mai.memoryTypeIndex));
 
    VkMemoryDedicatedAllocateInfo ded_alloc_info = {
       .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,

@@ -994,7 +994,7 @@ dri2_create_screen(_EGLDisplay *disp)
 {
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
 
-   int screen_fd = dri2_dpy->swrast ? -1 : dri2_dpy->fd;
+   int screen_fd = (dri2_dpy->swrast || dri2_dpy->kopper) ? -1 : dri2_dpy->fd;
    dri2_dpy->dri_screen = dri2_dpy->mesa->createNewScreen(0, screen_fd,
                                                           dri2_dpy->loader_extensions,
                                                           dri2_dpy->driver_extensions,

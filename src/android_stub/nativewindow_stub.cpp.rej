@@ -1,0 +1,17 @@
+diff a/src/android_stub/nativewindow_stub.cpp b/src/android_stub/nativewindow_stub.cpp	(rejected hunks)
+@@ -101,4 +101,15 @@ ANativeWindow_setSharedBufferMode(ANativeWindow *window,
+ {
+    return 0;
+ }
++
++int32_t ANativeWindow_getWidth(ANativeWindow *window)
++{
++   return 0;
++}
++
++int32_t ANativeWindow_getHeight(ANativeWindow *window)
++{
++   return 0;
++}
++
+ }

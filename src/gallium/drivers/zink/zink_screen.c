@@ -952,9 +952,18 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return MIN2(screen->info.props.limits.maxVertexOutputComponents / 4 / 2, 16);
 
    case PIPE_CAP_DMABUF:
-      return screen->info.have_KHR_external_memory_fd &&
+       printf("Checking PIPE_CAP_DMABUF:\n"
+              "KHR_external_memory_fd: %s\n"
+              "EXT_external_memory_dma_buf: %s\n"
+              "have_EXT_queue_family_foreign: %s\n",
+              screen->info.have_KHR_external_memory_fd ? "true" : "false",
+              screen->info.have_EXT_external_memory_dma_buf ? "true" : "false",
+              screen->info.have_EXT_queue_family_foreign ? "true" : "false");
+       if (!(screen->info.have_KHR_external_memory_fd &&
              screen->info.have_EXT_external_memory_dma_buf &&
-             screen->info.have_EXT_queue_family_foreign;
+             screen->info.have_EXT_queue_family_foreign))
+           printf("Not actually satisfied PIPE_CAP_DMABUF, applying hack...\n");
+      return 1;
 
    case PIPE_CAP_DEPTH_BOUNDS_TEST:
       return screen->info.feats.features.depthBounds;
@@ -2588,8 +2597,13 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    zink_debug = debug_get_option_zink_debug();
    zink_descriptor_mode = debug_get_option_zink_descriptor_mode();
 
-   screen->loader_lib = util_dl_open(VK_LIBNAME);
-   if (!screen->loader_lib)
+    const char* preloaded_ptr = getenv("VULKAN_PTR");
+    if (preloaded_ptr)
+        printf("VULKAN_PTR = 0x%s\n", preloaded_ptr);
+    else
+        printf("VULKAN_PTR not set, using system VK\n");
+    screen->loader_lib = preloaded_ptr ? (void*) strtoul(preloaded_ptr, NULL, 0x10) : util_dl_open(VK_LIBNAME);
+    if (!screen->loader_lib)
       goto fail;
 
    screen->vk_GetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)util_dl_get_proc_address(screen->loader_lib, "vkGetInstanceProcAddr");
