@@ -57,7 +57,7 @@ jobs:
             --prefix=/tmp/build \
             --wrap-mode=nofallback \
             -Dforce_fallback_for=llvm \
-            -Dosmesa=true \
+            -Dosmesa=false \
             -Dgles1=disabled \
             -Dgles2=disabled \
             --native-file="build-crossfile" \
@@ -68,7 +68,7 @@ jobs:
             -Dandroid-stub=true \
             -Dshared-llvm=disabled \
             -Dxlib-lease=disabled \
-            -Degl=disabled \
+            -Degl=enabled \
             -Degl-native-platform=android \
             -Dgbm=disabled \
             -Dopengl=true \
