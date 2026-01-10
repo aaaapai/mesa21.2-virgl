@@ -48,20 +48,13 @@
  * much nicer, new off-screen Gallium interface...
  */
 
-/**
- * The following block is for avoid windows.h to be included
- * and osmesa require APIENTRY to be defined
- */
-#include "util/glheader.h"
-#ifndef APIENTRY
-#define APIENTRY GLAPIENTRY
-#endif
-#include "GL/osmesa.h"
 
 #include <stdio.h>
 #include <c11/threads.h>
 
 #include "state_tracker/st_context.h"
+
+#include "GL/osmesa.h"
 
 #include "glapi/glapi.h"  /* for OSMesaGetProcAddress below */
 
@@ -81,12 +74,11 @@
 
 #include "frontend/api.h"
 
-#include "util/log.h"
 
+#include "util/log.h"
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include <vulkan/vulkan.h>
 #include <kopper_interface.h>
-
 
 
 extern struct pipe_screen *
@@ -112,8 +104,16 @@ struct osmesa_context
 {
    struct st_context *st;
 
+   boolean ever_used;     /*< Has this context ever been current? */
+
    struct osmesa_buffer *current_buffer;
 
+   /* Storage for depth/stencil, if the user has requested access.  The backing
+    * driver always has its own storage for the actual depth/stencil, which we
+    * have to transfer in and out.
+    */
+   void *zs;
+   unsigned zs_stride;
 
    enum pipe_format depth_stencil_format, accum_format;
 
@@ -122,16 +122,6 @@ struct osmesa_context
    GLint user_row_length; /*< user-specified number of pixels per row */
    GLboolean y_up;        /*< TRUE  -> Y increases upward */
                           /*< FALSE -> Y increases downward */
-
-   boolean ever_used;     /*< Has this context ever been current? */
-
-    /* Storage for depth/stencil, if the user has requested access.  The backing
-    * driver always has its own storage for the actual depth/stencil, which we
-    * have to transfer in and out.
-    */
-   void *zs;
-   unsigned zs_stride;
-
 
    /** Which postprocessing filters are enabled. */
    unsigned pp_enabled[PP_FILTERS];
@@ -200,7 +190,7 @@ osmesa_read_buffer(OSMesaContext osmesa, struct pipe_resource *res, void *dst,
    u_box_2d(0, 0, res->width0, res->height0, &box);
 
    struct pipe_transfer *transfer = NULL;
-   uint8_t *src = pipe->texture_map(pipe, res, 0, PIPE_MAP_READ, &box,
+   ubyte *src = pipe->texture_map(pipe, res, 0, PIPE_MAP_READ, &box,
                                    &transfer);
 
    /*
@@ -209,7 +199,7 @@ osmesa_read_buffer(OSMesaContext osmesa, struct pipe_resource *res, void *dst,
 
    if (y_up) {
       /* need to flip image upside down */
-      dst = (uint8_t *)dst + (res->height0 - 1) * dst_stride;
+      dst = (ubyte *)dst + (res->height0 - 1) * dst_stride;
       dst_stride = -dst_stride;
    }
 
@@ -217,7 +207,7 @@ osmesa_read_buffer(OSMesaContext osmesa, struct pipe_resource *res, void *dst,
    for (unsigned y = 0; y < res->height0; y++)
    {
       memcpy(dst, src, bpp * res->width0);
-      dst = (uint8_t *)dst + dst_stride;
+      dst = (ubyte *)dst + dst_stride;
       src += transfer->stride;
    }
 
@@ -374,14 +364,13 @@ osmesa_st_framebuffer_validate(struct st_context *st,
                                struct pipe_frontend_drawable *drawable,
                                const enum st_attachment_type *statts,
                                unsigned count,
-                               struct pipe_resource **out,
-                               struct pipe_resource **resolve)
+                               struct pipe_resource **out)
 {
    struct pipe_screen *screen = get_st_manager()->screen;
    enum st_attachment_type i;
    struct osmesa_buffer *osbuffer = drawable_to_osbuffer(drawable);
    struct pipe_resource templat;
-   
+
    memset(&templat, 0, sizeof(templat));
    templat.target = PIPE_TEXTURE_RECT;
    templat.format = 0; /* setup below */
@@ -404,13 +393,12 @@ osmesa_st_framebuffer_validate(struct st_context *st,
    createInfo->pNext = NULL;
    createInfo->flags = 0;
    createInfo->window = osbuffer->map;
-   
 
-   
    for (i = 0; i < count; i++) {
       enum st_attachment_type atttype = statts[i];
       enum pipe_format format = PIPE_FORMAT_NONE;
       unsigned bind = 0;
+
       void* loaderPrivate = NULL;
       switch(atttype) {
          case ST_ATTACHMENT_BACK_LEFT:
@@ -435,7 +423,6 @@ osmesa_st_framebuffer_validate(struct st_context *st,
       templat.format = format;
       templat.bind = bind;
       pipe_resource_reference(&out[i], NULL);
-      
       struct pipe_resource *created_resource;
       if(loaderPrivate == NULL || createInfo->window == NULL) {
          created_resource = screen->resource_create(screen, &templat);
@@ -445,6 +432,7 @@ osmesa_st_framebuffer_validate(struct st_context *st,
       osbuffer->textures[atttype] = created_resource;
       out[i] = created_resource;
    }
+
    mesa_logi("Done creating resources!");
    return true;
 }
@@ -495,17 +483,6 @@ osmesa_destroy_buffer(struct osmesa_buffer *osbuffer)
 /*****                    Public Functions                        *****/
 /**********************************************************************/
 
-
-GLAPI void GLAPIENTRY OSMesaSwapBuffers() {
-   OSMesaContext osmesa = OSMesaGetCurrentContext();
-   struct pipe_context *pipe = osmesa->st->pipe;
-   struct pipe_resource *drawable = osmesa->current_buffer->textures[ST_ATTACHMENT_BACK_LEFT];
-   struct pipe_screen *screen = get_st_manager()->screen;
-   pipe->flush_resource(pipe, drawable);
-   pipe->flush(pipe, NULL, PIPE_FLUSH_END_OF_FRAME);
-   screen->flush_frontbuffer(screen, pipe, drawable, 0, 0, NULL, 0, NULL);
-   pipe->invalidate_resource(pipe, drawable);
-}
 
 /**
  * Create an Off-Screen Mesa rendering context.  The only attribute needed is
@@ -660,9 +637,9 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
    attribs.major = version_major;
    attribs.minor = version_minor;
    attribs.flags = 0;  /* ST_CONTEXT_FLAG_x */
-   attribs.options.force_glsl_extensions_warn = false;
-   attribs.options.disable_blend_func_extended = false;
-   attribs.options.disable_glsl_line_continuations = false;
+   attribs.options.force_glsl_extensions_warn = FALSE;
+   attribs.options.disable_blend_func_extended = FALSE;
+   attribs.options.disable_glsl_line_continuations = FALSE;
    attribs.options.force_glsl_version = 0;
 
    osmesa_init_st_visual(&attribs.visual,
@@ -697,11 +674,24 @@ GLAPI void GLAPIENTRY
 OSMesaDestroyContext(OSMesaContext osmesa)
 {
    if (osmesa) {
+      pp_free(osmesa->pp);
       st_destroy_context(osmesa->st);
+      free(osmesa->zs);
       FREE(osmesa);
    }
 }
 
+
+GLAPI void GLAPIENTRY OSMesaSwapBuffers() {
+   OSMesaContext osmesa = OSMesaGetCurrentContext();
+   struct pipe_context *pipe = osmesa->st->pipe;
+   struct pipe_resource *drawable = osmesa->current_buffer->textures[ST_ATTACHMENT_BACK_LEFT];
+   struct pipe_screen *screen = get_st_manager()->screen;
+   pipe->flush_resource(pipe, drawable);
+   pipe->flush(pipe, NULL, PIPE_FLUSH_END_OF_FRAME);
+   screen->flush_frontbuffer(screen, pipe, drawable, 0, 0, NULL, 0, NULL);
+   pipe->invalidate_resource(pipe, drawable);
+}
 
 /**
  * Bind an OSMesaContext to an image buffer.  The image buffer is just a
@@ -746,6 +736,7 @@ OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
       return GL_FALSE;
    }
 
+   /* See if we already have a buffer that uses these pixel formats */
    if (osmesa->current_buffer &&
        (osmesa->current_buffer->visual.color_format != color_format ||
         osmesa->current_buffer->visual.depth_stencil_format != osmesa->depth_stencil_format ||
@@ -778,8 +769,34 @@ OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
     * your pixel buffer).
     */
 
+   if (!osmesa->ever_used) {
+      /* one-time init, just postprocessing for now */
+      boolean any_pp_enabled = FALSE;
+      unsigned i;
+
+      for (i = 0; i < ARRAY_SIZE(osmesa->pp_enabled); i++) {
+         if (osmesa->pp_enabled[i]) {
+            any_pp_enabled = TRUE;
+            break;
+         }
+      }
+
+      if (any_pp_enabled) {
+         osmesa->pp = pp_init(osmesa->st->pipe,
+                              osmesa->pp_enabled,
+                              osmesa->st->cso_context,
+                              osmesa->st,
+                              st_context_invalidate_state);
+
+         pp_init_fbos(osmesa->pp, width, height);
+      }
+
+      osmesa->ever_used = TRUE;
+   }
+
    return GL_TRUE;
 }
+
 
 
 GLAPI OSMesaContext GLAPIENTRY
@@ -841,13 +858,55 @@ OSMesaGetIntegerv(GLint pname, GLint *value)
    case OSMESA_MAX_HEIGHT:
       {
          struct pipe_screen *screen = get_st_manager()->screen;
-         *value = screen->caps.max_texture_2d_size;
+         *value = screen->get_param(screen, PIPE_CAP_MAX_TEXTURE_2D_SIZE);
       }
       return;
    default:
       fprintf(stderr, "Invalid pname in OSMesaGetIntegerv()\n");
       return;
    }
+}
+
+
+/**
+ * Return information about the depth buffer associated with an OSMesa context.
+ * Input:  c - the OSMesa context
+ * Output:  width, height - size of buffer in pixels
+ *          bytesPerValue - bytes per depth value (2 or 4)
+ *          buffer - pointer to depth buffer values
+ * Return:  GL_TRUE or GL_FALSE to indicate success or failure.
+ */
+GLAPI GLboolean GLAPIENTRY
+OSMesaGetDepthBuffer(OSMesaContext c, GLint *width, GLint *height,
+                     GLint *bytesPerValue, void **buffer)
+{
+   struct osmesa_buffer *osbuffer = c->current_buffer;
+   struct pipe_resource *res = osbuffer->textures[ST_ATTACHMENT_DEPTH_STENCIL];
+
+   if (!res) {
+      *width = 0;
+      *height = 0;
+      *bytesPerValue = 0;
+      *buffer = NULL;
+      return GL_FALSE;
+   }
+
+   *width = res->width0;
+   *height = res->height0;
+   *bytesPerValue = util_format_get_blocksize(res->format);
+
+   if (!c->zs) {
+      c->zs_stride = *width * *bytesPerValue;
+      c->zs = calloc(c->zs_stride, *height);
+      if (!c->zs)
+         return GL_FALSE;
+
+      osmesa_read_buffer(c, res, c->zs, c->zs_stride, true);
+   }
+
+   *buffer = c->zs;
+
+   return GL_TRUE;
 }
 
 
@@ -897,9 +956,11 @@ static struct name_function functions[] = {
    { "OSMesaGetCurrentContext", (OSMESAproc) OSMesaGetCurrentContext },
    { "OSMesaPixelStore", (OSMESAproc) OSMesaPixelStore },
    { "OSMesaGetIntegerv", (OSMESAproc) OSMesaGetIntegerv },
+   { "OSMesaGetDepthBuffer", (OSMESAproc) OSMesaGetDepthBuffer },
    { "OSMesaGetColorBuffer", (OSMESAproc) OSMesaGetColorBuffer },
    { "OSMesaGetProcAddress", (OSMESAproc) OSMesaGetProcAddress },
    { "OSMesaColorClamp", (OSMESAproc) OSMesaColorClamp },
+   { "OSMesaPostprocess", (OSMESAproc) OSMesaPostprocess },
    { "OSMesaSwapBuffers", (OSMESAproc) OSMesaSwapBuffers },
    { NULL, NULL }
 };
@@ -913,7 +974,7 @@ OSMesaGetProcAddress(const char *funcName)
       if (strcmp(functions[i].Name, funcName) == 0)
          return functions[i].Function;
    }
-   return _mesa_glapi_get_proc_address(funcName);
+   return _glapi_get_proc_address(funcName);
 }
 
 
@@ -924,4 +985,28 @@ OSMesaColorClamp(GLboolean enable)
 
    _mesa_ClampColor(GL_CLAMP_FRAGMENT_COLOR_ARB,
                     enable ? GL_TRUE : GL_FIXED_ONLY_ARB);
+}
+
+
+GLAPI void GLAPIENTRY
+OSMesaPostprocess(OSMesaContext osmesa, const char *filter,
+                  unsigned enable_value)
+{
+   if (!osmesa->ever_used) {
+      /* We can only enable/disable postprocess filters before a context
+       * is made current for the first time.
+       */
+      unsigned i;
+
+      for (i = 0; i < PP_FILTERS; i++) {
+         if (strcmp(pp_filters[i].name, filter) == 0) {
+            osmesa->pp_enabled[i] = enable_value;
+            return;
+         }
+      }
+      debug_warning("OSMesaPostprocess(unknown filter)\n");
+   }
+   else {
+      debug_warning("Calling OSMesaPostprocess() after OSMesaMakeCurrent()\n");
+   }
 }
