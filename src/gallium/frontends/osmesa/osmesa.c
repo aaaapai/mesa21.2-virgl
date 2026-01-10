@@ -680,7 +680,7 @@ OSMesaDestroyContext(OSMesaContext osmesa)
 }
 
 
-GLAPI void GLAPIENTRY OSMesaSwapBuffers() {
+GLAPI void GLAPIENTRY OSMesaSwapBuffers(void) {
    OSMesaContext osmesa = OSMesaGetCurrentContext();
    struct pipe_context *pipe = osmesa->st->pipe;
    struct pipe_resource *drawable = osmesa->current_buffer->textures[ST_ATTACHMENT_BACK_LEFT];
