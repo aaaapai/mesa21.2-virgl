@@ -1669,7 +1669,6 @@ droid_load_driver(_EGLDisplay *disp, bool swrast)
    if (!dri2_load_driver_dri3(disp)) {
       //goto error;
    }
-   dri2_dpy->kopper = dri2_dpy->driver_name && !strcmp(dri2_dpy->driver_name, "zink");
 #endif
 
    return true;
