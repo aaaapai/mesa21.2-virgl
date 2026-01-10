@@ -6,6 +6,7 @@
                 _glapi_get_proc_name;
                 glXGetProcAddress;
                 glXGetProcAddressARB;
+                gl*;
 	local:
 		*;
 };
