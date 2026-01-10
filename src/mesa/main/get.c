@@ -823,9 +823,6 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
    case GL_POINT_SIZE_ARRAY_OES:
       v->value_bool = !!(ctx->Array.VAO->Enabled & VERT_BIT_POINT_SIZE);
       break;
-   case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT:
-      v->value_int = 32;
-      break;
 
    case GL_TEXTURE_COORD_ARRAY_TYPE:
    case GL_TEXTURE_COORD_ARRAY_STRIDE:
