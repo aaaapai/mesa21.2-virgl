@@ -801,8 +801,10 @@ static void
 droid_get_window_size(struct dri2_egl_surface *dri2_surf, int *w, int *h) {
    struct ANativeWindow* window = dri2_surf->window;
 
-   /**w = ANativeWindow_getWidth(window);
-   *h = ANativeWindow_getHeight(window);*/
+   if (!w || !h) {
+     *w = ANativeWindow_getWidth(window);
+     *h = ANativeWindow_getHeight(window);
+   }
 
    /* free outdated buffers and update the surface size */
    if (dri2_surf->base.Width != dri2_surf->buffer->width ||
