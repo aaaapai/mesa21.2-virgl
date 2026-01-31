@@ -790,8 +790,8 @@ droid_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
 
    if (dri2_dpy->kopper)
        dri2_dpy->kopper->setSwapInterval(dri2_surf->dri_drawable, interval);
-   else if (ANativeWindow_setSwapInterval(window, interval))
-      return EGL_FALSE;
+   ANativeWindow_setSwapInterval(window, interval);
+      //return EGL_FALSE;
 
    surf->SwapInterval = interval;
    return EGL_TRUE;
@@ -936,9 +936,9 @@ droid_image_get_buffers(__DRIdrawable *driDrawable,
    images->front = NULL;
    images->back = NULL;
 
-   if (dri2_dpy->kopper)
-      update_buffer_size(dri2_surf);
-   else if (update_buffers(dri2_surf) < 0)
+   /*if (dri2_dpy->kopper)
+      update_buffer_size(dri2_surf);*/
+   if (update_buffers(dri2_surf) < 0)
       return 0;
 
    if (_eglSurfaceInSharedBufferMode(&dri2_surf->base)) {
@@ -1544,9 +1544,9 @@ droid_swrast_get_drawable_info(__DRIdrawable *drawable,
    struct dri2_egl_surface *dri2_surf = loaderPrivate;
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(dri2_surf->base.Resource.Display);
 
-   if (dri2_dpy->kopper)
+   /*if (dri2_dpy->kopper)
       update_buffer_size(dri2_surf);
-   else
+   else*/
       update_buffers(dri2_surf);
 
    *x = 0;
