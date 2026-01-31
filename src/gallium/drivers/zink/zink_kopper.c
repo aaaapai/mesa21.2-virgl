@@ -154,37 +154,73 @@ fail:
 static void
 destroy_swapchain(struct zink_screen *screen, struct kopper_swapchain *cswap)
 {
-   if (!cswap)
-      return;
-   for (unsigned i = 0; i < cswap->num_images; i++) {
-      VKSCR(DestroySemaphore)(screen->dev, cswap->images[i].acquire, NULL);
-   }
-   free(cswap->images);
-   hash_table_foreach(cswap->presents, he) {
-      struct util_dynarray *arr = he->data;
-      while (util_dynarray_contains(arr, VkSemaphore))
-         VKSCR(DestroySemaphore)(screen->dev, util_dynarray_pop(arr, VkSemaphore), NULL);
-      util_dynarray_fini(arr);
-      free(arr);
-   }
-   _mesa_hash_table_destroy(cswap->presents, NULL);
-   VKSCR(DestroySwapchainKHR)(screen->dev, cswap->swapchain, NULL);
-   free(cswap);
+    if (!cswap)
+        return;
+    
+    if (!screen->info.have_KHR_timeline_semaphore) {
+        VKSCR(DeviceWaitIdle)(screen->dev);
+    }
+    
+    for (unsigned i = 0; i < cswap->num_images; i++) {
+        if (cswap->images[i].acquire) {
+            VKSCR(DestroySemaphore)(screen->dev, cswap->images[i].acquire, NULL);
+            cswap->images[i].acquire = VK_NULL_HANDLE;
+        }
+    }
+    
+    free(cswap->images);
+    
+    hash_table_foreach(cswap->presents, he) {
+        struct util_dynarray *arr = he->data;
+        while (util_dynarray_contains(arr, VkSemaphore))
+            VKSCR(DestroySemaphore)(screen->dev, util_dynarray_pop(arr, VkSemaphore), NULL);
+        util_dynarray_fini(arr);
+        free(arr);
+    }
+    _mesa_hash_table_destroy(cswap->presents, NULL);
+    
+    VKSCR(DestroySwapchainKHR)(screen->dev, cswap->swapchain, NULL);
+    free(cswap);
 }
 
 static void
 prune_old_swapchains(struct zink_screen *screen, struct kopper_displaytarget *cdt, bool wait)
 {
-   while (cdt->old_swapchain) {
-      struct kopper_swapchain *cswap = cdt->old_swapchain;
-      if (cswap->async_presents) {
-         if (wait)
-            continue;
-         return;
-      }
-      cdt->old_swapchain = cswap->next;
-      destroy_swapchain(screen, cswap);
-   }
+    while (cdt->old_swapchain) {
+        struct kopper_swapchain *cswap = cdt->old_swapchain;
+        
+        if (!screen->info.have_KHR_timeline_semaphore) {
+            wait = true;
+        }
+        
+        if (cswap->async_presents) {
+            if (wait) {
+                util_queue_finish(&screen->flush_queue);
+                continue;
+            }
+            
+            if (!screen->info.have_KHR_timeline_semaphore) {
+                util_queue_finish(&screen->flush_queue);
+                continue;
+            }
+            
+            return;
+        }
+        
+        if (!screen->info.have_KHR_timeline_semaphore) {
+            VKSCR(DeviceWaitIdle)(screen->dev);
+        }
+        
+        for (unsigned i = 0; i < cswap->num_images; i++) {
+            if (cswap->images[i].acquire) {
+                VKSCR(DestroySemaphore)(screen->dev, cswap->images[i].acquire, NULL);
+                cswap->images[i].acquire = VK_NULL_HANDLE;
+            }
+        }
+        
+        cdt->old_swapchain = cswap->next;
+        destroy_swapchain(screen, cswap);
+    }
 }
 
 static struct hash_entry *
@@ -373,20 +409,29 @@ update_caps(struct zink_screen *screen, struct kopper_displaytarget *cdt)
 static VkResult
 update_swapchain(struct zink_screen *screen, struct kopper_displaytarget *cdt, unsigned w, unsigned h)
 {
-   VkResult error = update_caps(screen, cdt);
-   if (error != VK_SUCCESS)
-      return error;
-   struct kopper_swapchain *cswap = kopper_CreateSwapchain(screen, cdt, w, h, &error);
-   if (!cswap)
-      return error;
-   prune_old_swapchains(screen, cdt, false);
-   struct kopper_swapchain **pswap = &cdt->old_swapchain;
-   while (*pswap)
-      *pswap = (*pswap)->next;
-   *pswap = cdt->swapchain;
-   cdt->swapchain = cswap;
+    VkResult error = update_caps(screen, cdt);
+    if (error != VK_SUCCESS)
+        return error;
+    
+    struct kopper_swapchain *cswap = kopper_CreateSwapchain(screen, cdt, w, h, &error);
+    if (!cswap)
+        return error;
+    
+    if (!screen->info.have_KHR_timeline_semaphore) {
+        if (util_queue_is_initialized(&screen->flush_queue)) {
+            util_queue_finish(&screen->flush_queue);
+        }
+        VKSCR(DeviceWaitIdle)(screen->dev);
+    }
+    
+    prune_old_swapchains(screen, cdt, true);
+    struct kopper_swapchain **pswap = &cdt->old_swapchain;
+    while (*pswap)
+        *pswap = (*pswap)->next;
+    *pswap = cdt->swapchain;
+    cdt->swapchain = cswap;
 
-   return kopper_GetSwapchainImages(screen, cdt->swapchain);
+    return kopper_GetSwapchainImages(screen, cdt->swapchain);
 }
 
 struct kopper_displaytarget *
@@ -518,73 +563,94 @@ zink_kopper_displaytarget_destroy(struct zink_screen *screen, struct kopper_disp
 static VkResult
 kopper_acquire(struct zink_screen *screen, struct zink_resource *res, uint64_t timeout)
 {
-   struct kopper_displaytarget *cdt = res->obj->dt;
+    struct kopper_displaytarget *cdt = res->obj->dt;
 
-   /* if:
-    * - we don't need a new image
-    * - we have a swapchain image
-    * - that image is either acquired or acquiring
-    *
-    * then this is a no-op
-    */
-   if (!res->obj->new_dt && res->obj->dt_idx != UINT32_MAX &&
-       (cdt->swapchain->images[res->obj->dt_idx].acquire || cdt->swapchain->images[res->obj->dt_idx].acquired))
-      return VK_SUCCESS;
-   VkSemaphore acquire = VK_NULL_HANDLE;
+    if (!res->obj->new_dt && res->obj->dt_idx != UINT32_MAX &&
+        (cdt->swapchain->images[res->obj->dt_idx].acquire || 
+         cdt->swapchain->images[res->obj->dt_idx].acquired))
+        return VK_SUCCESS;
+    
+    VkSemaphore acquire = VK_NULL_HANDLE;
 
-   while (true) {
-      if (res->obj->new_dt) {
-         VkResult error = update_swapchain(screen, cdt, res->base.b.width0, res->base.b.height0);
-         zink_screen_handle_vkresult(screen, error);
-         if (error != VK_SUCCESS)
-            return error;
-         res->obj->new_dt = false;
-         res->layout = VK_IMAGE_LAYOUT_UNDEFINED;
-         res->obj->access = 0;
-         res->obj->access_stage = 0;
-      }
-      if (timeout == UINT64_MAX && util_queue_is_initialized(&screen->flush_queue) &&
-          p_atomic_read_relaxed(&cdt->swapchain->num_acquires) >= cdt->swapchain->max_acquires) {
-         util_queue_fence_wait(&cdt->present_fence);
-      }
-      VkSemaphoreCreateInfo sci = {
-         VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-         NULL,
-         0
-      };
-      VkResult ret;
-      if (!acquire) {
-         ret = VKSCR(CreateSemaphore)(screen->dev, &sci, NULL, &acquire);
-         assert(acquire);
-         if (ret != VK_SUCCESS)
+    while (true) {
+        if (res->obj->new_dt) {
+            VkResult error = update_swapchain(screen, cdt, res->base.b.width0, res->base.b.height0);
+            zink_screen_handle_vkresult(screen, error);
+            if (error != VK_SUCCESS)
+                return error;
+            res->obj->new_dt = false;
+            res->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            res->obj->access = 0;
+            res->obj->access_stage = 0;
+        }
+        
+        if (!screen->info.have_KHR_timeline_semaphore) {
+            if (timeout == UINT64_MAX) {
+                util_queue_fence_wait(&cdt->present_fence);
+                
+                if (p_atomic_read_relaxed(&cdt->swapchain->num_acquires) >= cdt->swapchain->max_acquires) {
+                    VkResult wait_result = VKSCR(DeviceWaitIdle)(screen->dev);
+                    if (wait_result != VK_SUCCESS) {
+                        return wait_result;
+                    }
+                }
+            }
+        } else {
+            if (timeout == UINT64_MAX && util_queue_is_initialized(&screen->flush_queue) &&
+                p_atomic_read_relaxed(&cdt->swapchain->num_acquires) >= cdt->swapchain->max_acquires) {
+                util_queue_fence_wait(&cdt->present_fence);
+            }
+        }
+        
+        VkSemaphoreCreateInfo sci = {
+            VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            NULL,
+            0
+        };
+        VkResult ret;
+        if (!acquire) {
+            ret = VKSCR(CreateSemaphore)(screen->dev, &sci, NULL, &acquire);
+            assert(acquire);
+            if (ret != VK_SUCCESS)
+                return ret;
+        }
+        
+        ret = VKSCR(AcquireNextImageKHR)(screen->dev, cdt->swapchain->swapchain, 
+                                        timeout, acquire, VK_NULL_HANDLE, 
+                                        &res->obj->dt_idx);
+        if (ret != VK_SUCCESS && ret != VK_SUBOPTIMAL_KHR) {
+            if (ret == VK_ERROR_OUT_OF_DATE_KHR) {
+                res->obj->new_dt = true;
+                VKSCR(DestroySemaphore)(screen->dev, acquire, NULL);
+                acquire = VK_NULL_HANDLE;
+                continue;
+            }
+            VKSCR(DestroySemaphore)(screen->dev, acquire, NULL);
             return ret;
-      }
-      ret = VKSCR(AcquireNextImageKHR)(screen->dev, cdt->swapchain->swapchain, timeout, acquire, VK_NULL_HANDLE, &res->obj->dt_idx);
-      if (ret != VK_SUCCESS && ret != VK_SUBOPTIMAL_KHR) {
-         if (ret == VK_ERROR_OUT_OF_DATE_KHR) {
-            res->obj->new_dt = true;
-            continue;
-         }
-         VKSCR(DestroySemaphore)(screen->dev, acquire, NULL);
-         return ret;
-      }
-      break;
-   }
+        }
+        break;
+    }
 
-   cdt->swapchain->images[res->obj->dt_idx].acquire = acquire;
-   res->obj->image = cdt->swapchain->images[res->obj->dt_idx].image;
-   cdt->swapchain->images[res->obj->dt_idx].acquired = false;
-   if (!cdt->swapchain->images[res->obj->dt_idx].init) {
-      /* swapchain images are initially in the UNDEFINED layout */
-      res->layout = VK_IMAGE_LAYOUT_UNDEFINED;
-      cdt->swapchain->images[res->obj->dt_idx].init = true;
-   }
-   if (timeout == UINT64_MAX) {
-      res->obj->indefinite_acquire = true;
-      p_atomic_inc(&cdt->swapchain->num_acquires);
-   }
-   cdt->swapchain->images[res->obj->dt_idx].dt_has_data = false;
-   return VK_SUCCESS;
+    cdt->swapchain->images[res->obj->dt_idx].acquire = acquire;
+    res->obj->image = cdt->swapchain->images[res->obj->dt_idx].image;
+    cdt->swapchain->images[res->obj->dt_idx].acquired = false;
+    
+    if (!cdt->swapchain->images[res->obj->dt_idx].init) {
+        res->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        cdt->swapchain->images[res->obj->dt_idx].init = true;
+    }
+    
+    if (timeout == UINT64_MAX) {
+        res->obj->indefinite_acquire = true;
+        p_atomic_inc(&cdt->swapchain->num_acquires);
+    }
+    
+    if (!screen->info.have_KHR_imageless_framebuffer) {
+        res->obj->dt_has_data = false;
+        cdt->swapchain->images[res->obj->dt_idx].dt_has_data = false;
+    }
+    
+    return VK_SUCCESS;
 }
 
 static void
@@ -687,94 +753,117 @@ struct kopper_present_info {
 static void
 kopper_present(void *data, void *gdata, int thread_idx)
 {
-   struct kopper_present_info *cpi = data;
-   struct kopper_displaytarget *cdt = cpi->res->obj->dt;
-   struct kopper_swapchain *swapchain = cpi->swapchain;
-   struct zink_screen *screen = gdata;
-   VkResult error = VK_SUCCESS;
-   cpi->info.pResults = &error;
+    struct kopper_present_info *cpi = data;
+    struct kopper_displaytarget *cdt = cpi->res->obj->dt;
+    struct kopper_swapchain *swapchain = cpi->swapchain;
+    struct zink_screen *screen = gdata;
+    VkResult error = VK_SUCCESS;
+    cpi->info.pResults = &error;
 
-   simple_mtx_lock(&screen->queue_lock);
-   if (screen->driver_workarounds.implicit_sync && cdt->type != KOPPER_WIN32) {
-      if (!screen->fence) {
-         VkFenceCreateInfo fci = {0};
-         fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-         VKSCR(CreateFence)(screen->dev, &fci, NULL, &screen->fence);
-      }
-      VKSCR(ResetFences)(screen->dev, 1, &screen->fence);
-      VkSubmitInfo si = {0};
-      si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-      si.waitSemaphoreCount = 1;
-      si.pWaitSemaphores = cpi->info.pWaitSemaphores;
-      VkPipelineStageFlags stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-      si.pWaitDstStageMask = &stages;
+    simple_mtx_lock(&screen->queue_lock);
+    
+    if ((screen->driver_workarounds.implicit_sync && cdt->type != KOPPER_WIN32) ||
+        !screen->info.have_KHR_timeline_semaphore) {
+        
+        if (!screen->fence) {
+            VkFenceCreateInfo fci = {0};
+            fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            VKSCR(CreateFence)(screen->dev, &fci, NULL, &screen->fence);
+        }
+        
+        VKSCR(ResetFences)(screen->dev, 1, &screen->fence);
+        VkSubmitInfo si = {0};
+        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        
+        if (cpi->info.waitSemaphoreCount > 0 && cpi->info.pWaitSemaphores) {
+            si.waitSemaphoreCount = cpi->info.waitSemaphoreCount;
+            si.pWaitSemaphores = cpi->info.pWaitSemaphores;
+            VkPipelineStageFlags stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            si.pWaitDstStageMask = &stages;
+        }
+        
+        error = VKSCR(QueueSubmit)(screen->queue, 1, &si, screen->fence);
+        if (!zink_screen_handle_vkresult(screen, error)) {
+            simple_mtx_unlock(&screen->queue_lock);
+            VKSCR(DestroySemaphore)(screen->dev, cpi->sem, NULL);
+            goto out;
+        }
+        
+        error = VKSCR(WaitForFences)(screen->dev, 1, &screen->fence, VK_TRUE, UINT64_MAX);
+        if (!zink_screen_handle_vkresult(screen, error)) {
+            simple_mtx_unlock(&screen->queue_lock);
+            VKSCR(DestroySemaphore)(screen->dev, cpi->sem, NULL);
+            goto out;
+        }
+        
+        cpi->info.pWaitSemaphores = NULL;
+        cpi->info.waitSemaphoreCount = 0;
+    }
+    
+    VkResult error2 = VKSCR(QueuePresentKHR)(screen->queue, &cpi->info);
+    simple_mtx_unlock(&screen->queue_lock);
+    
+    swapchain->last_present = cpi->image;
+    if (cpi->indefinite_acquire)
+        p_atomic_dec(&swapchain->num_acquires);
+    
+    if (error2 == VK_SUBOPTIMAL_KHR && cdt->swapchain == swapchain)
+        cpi->res->obj->new_dt = true;
 
-      error = VKSCR(QueueSubmit)(screen->queue, 1, &si, screen->fence);
-      if (!zink_screen_handle_vkresult(screen, error)) {
-         simple_mtx_unlock(&screen->queue_lock);
-         VKSCR(DestroySemaphore)(screen->dev, cpi->sem, NULL);
-         goto out;
-      }
-      error = VKSCR(WaitForFences)(screen->dev, 1, &screen->fence, VK_TRUE, UINT64_MAX);
-      if (!zink_screen_handle_vkresult(screen, error)) {
-         simple_mtx_unlock(&screen->queue_lock);
-         VKSCR(DestroySemaphore)(screen->dev, cpi->sem, NULL);
-         goto out;
-      }
-      cpi->info.pWaitSemaphores = NULL;
-      cpi->info.waitSemaphoreCount = 0;
-   }
-   VkResult error2 = VKSCR(QueuePresentKHR)(screen->queue, &cpi->info);
-   simple_mtx_unlock(&screen->queue_lock);
-   swapchain->last_present = cpi->image;
-   if (cpi->indefinite_acquire)
-      p_atomic_dec(&swapchain->num_acquires);
-   if (error2 == VK_SUBOPTIMAL_KHR && cdt->swapchain == swapchain)
-      cpi->res->obj->new_dt = true;
-
-   /* it's illegal to destroy semaphores if they're in use by a cmdbuf.
-    * but what does "in use" actually mean?
-    * in truth, when using timelines, nobody knows. especially not VVL.
-    *
-    * thus, to avoid infinite error spam and thread-related races,
-    * present semaphores need their own free queue based on the
-    * last-known completed timeline id so that the semaphore persists through
-    * normal cmdbuf submit/signal and then also exists here when it's needed for the present operation
-    */
-   struct util_dynarray *arr;
-   for (; screen->last_finished && swapchain->last_present_prune != screen->last_finished; swapchain->last_present_prune++) {
-      struct hash_entry *he = _mesa_hash_table_search(swapchain->presents,
-                                                      (void*)(uintptr_t)swapchain->last_present_prune);
-      if (he) {
-         arr = he->data;
-         while (util_dynarray_contains(arr, VkSemaphore))
-            VKSCR(DestroySemaphore)(screen->dev, util_dynarray_pop(arr, VkSemaphore), NULL);
-         util_dynarray_fini(arr);
-         free(arr);
-         _mesa_hash_table_remove(swapchain->presents, he);
-      }
-   }
-   /* queue this wait semaphore for deletion on completion of the next batch */
-   assert(screen->curr_batch > 0);
-   uint32_t next = (uint32_t)screen->curr_batch + 1;
-   /* handle overflow */
-   next = MAX2(next + 1, 1);
-   struct hash_entry *he = _mesa_hash_table_search(swapchain->presents, (void*)(uintptr_t)next);
-   if (he)
-      arr = he->data;
-   else {
-      arr = malloc(sizeof(struct util_dynarray));
-      util_dynarray_init(arr, NULL);
-      _mesa_hash_table_insert(swapchain->presents, (void*)(uintptr_t)next, arr);
-   }
-   util_dynarray_append(arr, VkSemaphore, cpi->sem);
+    if (!screen->info.have_KHR_timeline_semaphore) {
+        VKSCR(DestroySemaphore)(screen->dev, cpi->sem, NULL);
+        cpi->sem = VK_NULL_HANDLE;
+        
+        for (; swapchain->last_present_prune <= swapchain->last_present; 
+             swapchain->last_present_prune++) {
+            struct hash_entry *he = _mesa_hash_table_search(swapchain->presents,
+                                                          (void*)(uintptr_t)swapchain->last_present_prune);
+            if (he) {
+                struct util_dynarray *arr = he->data;
+                while (util_dynarray_contains(arr, VkSemaphore))
+                    VKSCR(DestroySemaphore)(screen->dev, util_dynarray_pop(arr, VkSemaphore), NULL);
+                util_dynarray_fini(arr);
+                free(arr);
+                _mesa_hash_table_remove(swapchain->presents, he);
+            }
+        }
+    } else {
+        struct util_dynarray *arr;
+        for (; screen->last_finished && swapchain->last_present_prune != screen->last_finished; 
+             swapchain->last_present_prune++) {
+            struct hash_entry *he = _mesa_hash_table_search(swapchain->presents,
+                                                          (void*)(uintptr_t)swapchain->last_present_prune);
+            if (he) {
+                arr = he->data;
+                while (util_dynarray_contains(arr, VkSemaphore))
+                    VKSCR(DestroySemaphore)(screen->dev, util_dynarray_pop(arr, VkSemaphore), NULL);
+                util_dynarray_fini(arr);
+                free(arr);
+                _mesa_hash_table_remove(swapchain->presents, he);
+            }
+        }
+        
+        assert(screen->curr_batch > 0);
+        uint32_t next = (uint32_t)screen->curr_batch + 1;
+        next = MAX2(next + 1, 1);
+        struct hash_entry *he = _mesa_hash_table_search(swapchain->presents, (void*)(uintptr_t)next);
+        if (he)
+            arr = he->data;
+        else {
+            arr = malloc(sizeof(struct util_dynarray));
+            util_dynarray_init(arr, NULL);
+            _mesa_hash_table_insert(swapchain->presents, (void*)(uintptr_t)next, arr);
+        }
+        util_dynarray_append(arr, VkSemaphore, cpi->sem);
+    }
+    
 out:
-   if (thread_idx != -1) {
-      p_atomic_dec(&swapchain->async_presents);
-      struct pipe_resource *pres = &cpi->res->base.b;
-      pipe_resource_reference(&pres, NULL);
-   }
-   free(cpi);
+    if (thread_idx != -1) {
+        p_atomic_dec(&swapchain->async_presents);
+        struct pipe_resource *pres = &cpi->res->base.b;
+        pipe_resource_reference(&pres, NULL);
+    }
+    free(cpi);
 }
 
 void
