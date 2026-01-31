@@ -646,7 +646,6 @@ kopper_acquire(struct zink_screen *screen, struct zink_resource *res, uint64_t t
     }
     
     if (!screen->info.have_KHR_imageless_framebuffer) {
-        res->obj->dt_has_data = false;
         cdt->swapchain->images[res->obj->dt_idx].dt_has_data = false;
     }
     
