@@ -801,17 +801,18 @@ static void
 droid_get_window_size(struct dri2_egl_surface *dri2_surf, int *w, int *h) {
     struct ANativeWindow* window = dri2_surf->window;
 
-    if (dri2_surf->buffer->width == 0 || dri2_surf->buffer->height == 0) {
+
+    //if (dri2_surf->buffer->width == 0 || dri2_surf->buffer->height == 0) {
         *w = ANativeWindow_getWidth(window);
         *h = ANativeWindow_getHeight(window);
         
         dri2_surf->buffer->width = *w;
         dri2_surf->buffer->height = *h;
-        return;
-    }
+        //return;
+    //}
 
-    *w = dri2_surf->buffer->width;
-    *h = dri2_surf->buffer->height;
+    /**w = dri2_surf->buffer->width;
+    *h = dri2_surf->buffer->height;*/
 }
 
 static void
@@ -836,7 +837,7 @@ update_buffers(struct dri2_egl_surface *dri2_surf)
       //return -1;
    }
 
-   //update_buffer_size(dri2_surf);
+   update_buffer_size(dri2_surf);
       /* free outdated buffers and update the surface size */
    if (dri2_surf->base.Width != dri2_surf->buffer->width ||
        dri2_surf->base.Height != dri2_surf->buffer->height) {
@@ -844,7 +845,7 @@ update_buffers(struct dri2_egl_surface *dri2_surf)
       dri2_surf->base.Width = dri2_surf->buffer->width;
       dri2_surf->base.Height = dri2_surf->buffer->height;
    }
-   update_buffer_size(dri2_surf);
+   //update_buffer_size(dri2_surf);
 
    return 0;
 }
