@@ -799,55 +799,42 @@ droid_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
 
 static void
 droid_get_window_size(struct dri2_egl_surface *dri2_surf, int *w, int *h) {
-    struct ANativeWindow* window = dri2_surf->window;
-
-
-    //if (dri2_surf->buffer->width == 0 || dri2_surf->buffer->height == 0) {
-        *w = ANativeWindow_getWidth(window);
-        *h = ANativeWindow_getHeight(window);
-        
-        dri2_surf->buffer->width = *w;
-        dri2_surf->buffer->height = *h;
-        //return;
-    //}
-
-    /**w = dri2_surf->buffer->width;
-    *h = dri2_surf->buffer->height;*/
-}
-
-static void
-update_buffer_size(struct dri2_egl_surface *dri2_surf)
-{
-   droid_get_window_size(dri2_surf, &dri2_surf->base.Width, &dri2_surf->base.Height);
+    // 保存初始窗口大小到surface结构体中，而不是buffer中
+    static int initial_width = 0;
+    static int initial_height = 0;
+    
+    // 如果是第一次调用，获取初始窗口大小
+    if (initial_width == 0 || initial_height == 0) {
+        struct ANativeWindow* window = dri2_surf->window;
+        initial_width = ANativeWindow_getWidth(window);
+        initial_height = ANativeWindow_getHeight(window);
+    }
+    
+    // 始终返回初始的窗口大小
+    *w = initial_width;
+    *h = initial_height;
+    
+    // 如果buffer存在，确保它使用初始大小
+    if (dri2_surf->buffer) {
+        dri2_surf->buffer->width = initial_width;
+        dri2_surf->buffer->height = initial_height;
+    }
 }
 
 static int
 update_buffers(struct dri2_egl_surface *dri2_surf)
 {
-   /*if (dri2_surf->base.Lost)
-      return -1;*/
+    //dri2_egl_surface_free_local_buffers(dri2_surf);
+    
+    /* try to dequeue the next back buffer */
+    if (!droid_window_dequeue_buffer(dri2_surf)) {
+        _eglLog(_EGL_WARNING, "Could not dequeue buffer from native window");
+        return -1;
+    }
 
-   /*if (dri2_surf->base.Type != EGL_WINDOW_BIT)
-      return 0;*/
-
-   /* try to dequeue the next back buffer */
-   if (!dri2_surf->buffer && !droid_window_dequeue_buffer(dri2_surf)) {
-      _eglLog(_EGL_WARNING, "Could not dequeue buffer from native window");
-      //dri2_surf->base.Lost = EGL_TRUE;
-      //return -1;
-   }
-
-   update_buffer_size(dri2_surf);
-      /* free outdated buffers and update the surface size */
-   if (dri2_surf->base.Width != dri2_surf->buffer->width ||
-       dri2_surf->base.Height != dri2_surf->buffer->height) {
-      dri2_egl_surface_free_local_buffers(dri2_surf);
-      dri2_surf->base.Width = dri2_surf->buffer->width;
-      dri2_surf->base.Height = dri2_surf->buffer->height;
-   }
-   //update_buffer_size(dri2_surf);
-
-   return 0;
+    droid_get_window_size(dri2_surf, &dri2_surf->base.Width, &dri2_surf->base.Height);
+    
+    return 0;
 }
 
 static int
