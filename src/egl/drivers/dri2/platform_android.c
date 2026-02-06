@@ -790,7 +790,7 @@ droid_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
 
    if (dri2_dpy->kopper)
        dri2_dpy->kopper->setSwapInterval(dri2_surf->dri_drawable, interval);
-   ANativeWindow_setSwapInterval(window, interval);
+   //ANativeWindow_setSwapInterval(window, interval);
       //return EGL_FALSE;
 
    surf->SwapInterval = interval;
@@ -801,8 +801,13 @@ static void
 droid_get_window_size(struct dri2_egl_surface *dri2_surf, int *w, int *h) {
    struct ANativeWindow* window = dri2_surf->window;
 
-     *w = ANativeWindow_getWidth(window);
-     *h = ANativeWindow_getHeight(window);
+     /**w = ANativeWindow_getWidth(window);
+     *h = ANativeWindow_getHeight(window);*/
+     /*if (dri2_surf->buffer->width == 0 || dri2_surf->buffer->height == 0) {
+        
+     }*/
+     *w = dri2_surf->buffer->width;
+     *h = dri2_surf->buffer->height;
 
 }
 
@@ -830,6 +835,7 @@ update_buffers(struct dri2_egl_surface *dri2_surf)
 
    //update_buffer_size(dri2_surf);
       /* free outdated buffers and update the surface size */
+   update_buffer_size(dri2_surf);
    if (dri2_surf->base.Width != dri2_surf->buffer->width ||
        dri2_surf->base.Height != dri2_surf->buffer->height) {
       dri2_egl_surface_free_local_buffers(dri2_surf);
