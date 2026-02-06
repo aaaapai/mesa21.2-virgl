@@ -799,21 +799,19 @@ droid_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
 
 static void
 droid_get_window_size(struct dri2_egl_surface *dri2_surf, int *w, int *h) {
-   struct ANativeWindow* window = dri2_surf->window;
+    struct ANativeWindow* window = dri2_surf->window;
 
-     /**w = ANativeWindow_getWidth(window);
-     *h = ANativeWindow_getHeight(window);*/
-     if (dri2_surf->buffer->width == 0 || dri2_surf->buffer->height == 0) {
+    if (dri2_surf->buffer->width == 0 || dri2_surf->buffer->height == 0) {
         *w = ANativeWindow_getWidth(window);
         *h = ANativeWindow_getHeight(window);
-        dri2_surf->buffer->width = w;
-        dri2_surf->buffer->height = h;
+        
+        dri2_surf->buffer->width = *w;
+        dri2_surf->buffer->height = *h;
         return;
-     }
+    }
 
-     *w = dri2_surf->buffer->width;
-     *h = dri2_surf->buffer->height;
-
+    *w = dri2_surf->buffer->width;
+    *h = dri2_surf->buffer->height;
 }
 
 static void
