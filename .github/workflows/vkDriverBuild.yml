@@ -71,9 +71,9 @@ jobs:
             -Degl-native-platform=android \
             -Dgbm=disabled \
             -Dopengl=false \
-            -Dvulkan-drivers=panfrost,virtio \
+            -Dvulkan-drivers=panfrost,virtio-experimental \
             -Dtools= \
-            -Dgallium-drivers=panfrost,zink,virtio \
+            -Dgallium-drivers=panfrost \
             -Dcpp_rtti=false \
             -Degl-lib-suffix=_mesa \
             -Dshared-glapi=enabled
