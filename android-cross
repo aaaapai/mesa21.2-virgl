@@ -27,7 +27,6 @@ cpp_link_args = ['-ldl', '-flto=thin', '-Wl,-plugin-opt=-emulated-tls=0', '-fuse
 
 [properties]
 skip_sanity_check = true
-sys_root = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot'
 cpp_rtti = true
 
 [host_machine]
