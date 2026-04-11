@@ -54,9 +54,12 @@
 
 #include "pan_context.h"
 
+#include "pan_public.h"
+#include "frontend/sw_winsys.h"
+
 static const struct debug_named_value panfrost_debug_options[] = {
         {"perf",      PAN_DBG_PERF,     "Enable performance warnings"},
-        {"trace",     PAN_DBG_TRACE,    "Trace the command stream"},
+        {"trace",     PAN_DBG_TRACE | PAN_DBG_BO_CLEAR, "Trace the command stream"},
         {"deqp",      PAN_DBG_DEQP,     "Hacks for dEQP"},
         {"dirty",     PAN_DBG_DIRTY,    "Always re-emit all state"},
         {"sync",      PAN_DBG_SYNC,     "Wait for each job's completion and abort on GPU faults"},
@@ -72,6 +75,13 @@ static const struct debug_named_value panfrost_debug_options[] = {
 #ifdef PAN_DBG_OVERFLOW
         {"overflow",  PAN_DBG_OVERFLOW, "Check for buffer overflows in pool uploads"},
 #endif
+        {"tiler",     PAN_DBG_TILER,    "Decode the tiler heap"},
+        {"bolog",     PAN_DBG_BO_LOG,   "Log BO allocations/deallocations"},
+        {"boclear",   PAN_DBG_BO_CLEAR, "Clear BOs on allocation"},
+        {"nogpuc",    PAN_DBG_UNCACHED_GPU, "Use uncached GPU memory for textures"},
+        {"nocpuc",    PAN_DBG_UNCACHED_CPU, "Use uncached CPU mappings for textures"},
+        {"log",       PAN_DBG_LOG,      "Log job submission etc."},
+        {"gofaster",  PAN_DBG_GOFASTER, "Experimental performance improvements"},
         DEBUG_NAMED_VALUE_END
 };
 
@@ -122,6 +132,7 @@ panfrost_get_param(struct pipe_screen *screen, enum pipe_cap param)
         case PIPE_CAP_FRAMEBUFFER_NO_ATTACHMENT:
         case PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION:
         case PIPE_CAP_SHADER_PACK_HALF_FLOAT:
+        case PIPE_CAP_CLIP_HALFZ:
                 return 1;
 
         case PIPE_CAP_MAX_RENDER_TARGETS:
@@ -300,7 +311,7 @@ panfrost_get_param(struct pipe_screen *screen, enum pipe_cap param)
          * still supported as it is core GLES3.0 functionality
          */
         case PIPE_CAP_PRIMITIVE_RESTART:
-                return dev->arch <= 7;
+                return is_gl3 || dev->arch <= 7;
 
         case PIPE_CAP_FLATSHADE:
         case PIPE_CAP_TWO_SIDED_COLOR:
@@ -606,6 +617,7 @@ panfrost_walk_dmabuf_modifiers(struct pipe_screen *screen,
         bool afbc = dev->has_afbc && panfrost_format_supports_afbc(dev, format);
         bool ytr = panfrost_afbc_can_ytr(format);
         bool tiled_afbc = panfrost_afbc_can_tile(dev);
+        bool native = panfrost_afbc_only_native(dev->arch, format);
 
         unsigned count = 0;
 
@@ -617,6 +629,9 @@ panfrost_walk_dmabuf_modifiers(struct pipe_screen *screen,
                         continue;
 
                 if ((pan_best_modifiers[i] & AFBC_FORMAT_MOD_TILED) && !tiled_afbc)
+                        continue;
+
+                if (drm_is_afbc(pan_best_modifiers[i]) && !(pan_best_modifiers[i] & AFBC_FORMAT_MOD_NATIVE_SWIZZLE) && native)
                         continue;
 
                 if (test_modifier != DRM_FORMAT_MOD_INVALID &&
@@ -801,6 +816,43 @@ panfrost_get_driver_query_info(struct pipe_screen *pscreen, unsigned index,
         return 1;
 }
 
+static void
+panfrost_flush_frontbuffer(struct pipe_screen *_screen,
+                           struct pipe_context *pctx,
+                           struct pipe_resource *prsrc,
+                           unsigned level, unsigned layer,
+                           void *context_private, struct pipe_box *box)
+{
+        struct panfrost_resource *rsrc = pan_resource(prsrc);
+        struct panfrost_screen *screen = pan_screen(_screen);
+        struct sw_winsys *winsys = screen->sw_winsys;
+
+        assert(level == 0);
+
+        struct pipe_box my_box = {
+                .width = rsrc->base.width0,
+                .height = rsrc->base.height0,
+                .depth = 1,
+        };
+
+        assert(rsrc->dt);
+        uint8_t *map = winsys->displaytarget_map(winsys, rsrc->dt,
+                                                 PIPE_USAGE_DEFAULT);
+        assert(map);
+
+        struct pipe_transfer *trans = NULL;
+        uint8_t *tex_map = pctx->texture_map(pctx, prsrc, level,
+                                             PIPE_MAP_READ, &my_box, &trans);
+
+        for (unsigned row = 0; row < rsrc->base.height0; ++row)
+                memcpy(map + row * rsrc->dt_stride,
+                       tex_map + row * trans->stride,
+                       MIN2(rsrc->dt_stride, trans->stride));
+
+        pctx->texture_unmap(pctx, trans);
+
+        winsys->displaytarget_display(winsys, rsrc->dt, context_private, box);
+}
 
 struct pipe_screen *
 panfrost_create_screen(int fd, struct renderonly *ro)
@@ -822,12 +874,16 @@ panfrost_create_screen(int fd, struct renderonly *ro)
 
         /* Bail early on unsupported hardware */
         if (dev->model == NULL) {
-                debug_printf("panfrost: Unsupported model %X", dev->gpu_id);
+                debug_printf("panfrost: Unsupported model %X\n", dev->gpu_id);
                 panfrost_destroy_screen(&(screen->base));
                 return NULL;
         }
 
         dev->ro = ro;
+
+        /* The functionality is only useful with kbase */
+        if (dev->kbase)
+                dev->has_dmabuf_fence = panfrost_check_dmabuf_fence(dev);
 
         screen->base.destroy = panfrost_destroy_screen;
 
@@ -851,6 +907,7 @@ panfrost_create_screen(int fd, struct renderonly *ro)
         screen->base.fence_finish = panfrost_fence_finish;
         screen->base.fence_get_fd = panfrost_fence_get_fd;
         screen->base.set_damage_region = panfrost_resource_set_damage_region;
+        screen->base.flush_frontbuffer = panfrost_flush_frontbuffer;
 
         panfrost_resource_screen_init(&screen->base);
         pan_blend_shaders_init(dev);
@@ -874,8 +931,26 @@ panfrost_create_screen(int fd, struct renderonly *ro)
                 panfrost_cmdstream_screen_init_v7(screen);
         else if (dev->arch == 9)
                 panfrost_cmdstream_screen_init_v9(screen);
+        else if (dev->arch == 10)
+                panfrost_cmdstream_screen_init_v10(screen);
         else
                 unreachable("Unhandled architecture major");
 
         return &screen->base;
+}
+
+struct pipe_screen *
+panfrost_create_screen_sw(struct sw_winsys *winsys)
+{
+        int fd = drmOpenWithType("panfrost", NULL, DRM_NODE_RENDER);
+        if (fd < 0)
+                fd = open("/dev/mali0", O_RDWR | O_CLOEXEC | O_NONBLOCK);
+        if (fd < 0)
+                return NULL;
+
+        struct pipe_screen *scr = panfrost_create_screen(fd, NULL);
+
+        if (scr)
+                pan_screen(scr)->sw_winsys = winsys;
+        return scr;
 }

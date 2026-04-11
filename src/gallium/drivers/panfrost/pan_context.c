@@ -571,6 +571,19 @@ panfrost_destroy(struct pipe_context *pipe)
         struct panfrost_context *panfrost = pan_context(pipe);
         struct panfrost_device *dev = pan_device(pipe->screen);
 
+        if (dev->kbase && dev->mali.context_create) {
+                dev->mali.cs_term(&dev->mali, &panfrost->kbase_cs_vertex.base);
+                dev->mali.cs_term(&dev->mali, &panfrost->kbase_cs_fragment.base);
+
+                dev->mali.context_destroy(&dev->mali, panfrost->kbase_ctx);
+
+                panfrost_bo_unreference(panfrost->kbase_cs_vertex.bo);
+                panfrost_bo_unreference(panfrost->kbase_cs_fragment.bo);
+        }
+
+        if (panfrost->tiler_heap_desc)
+                panfrost_bo_unreference(panfrost->tiler_heap_desc);
+
         _mesa_hash_table_destroy(panfrost->writers, NULL);
 
         if (panfrost->blitter)
@@ -582,11 +595,15 @@ panfrost_destroy(struct pipe_context *pipe)
         panfrost_pool_cleanup(&panfrost->descs);
         panfrost_pool_cleanup(&panfrost->shaders);
 
-        drmSyncobjDestroy(dev->fd, panfrost->in_sync_obj);
-        if (panfrost->in_sync_fd != -1)
-                close(panfrost->in_sync_fd);
+        if (dev->kbase) {
+                dev->mali.syncobj_destroy(&dev->mali, panfrost->syncobj_kbase);
+        } else {
+                drmSyncobjDestroy(dev->fd, panfrost->in_sync_obj);
+                if (panfrost->in_sync_fd != -1)
+                        close(panfrost->in_sync_fd);
 
-        drmSyncobjDestroy(dev->fd, panfrost->syncobj);
+                drmSyncobjDestroy(dev->fd, panfrost->syncobj);
+        }
         ralloc_free(pipe);
 }
 
@@ -888,6 +905,28 @@ panfrost_fence_server_sync(struct pipe_context *pctx,
         close(fd);
 }
 
+static struct panfrost_cs
+panfrost_cs_create(struct panfrost_context *ctx, unsigned size, unsigned mask)
+{
+        struct panfrost_screen *screen = pan_screen(ctx->base.screen);
+        struct panfrost_device *dev = pan_device(ctx->base.screen);
+        struct kbase_context *kctx = ctx->kbase_ctx;
+
+        struct panfrost_cs c = {0};
+
+        c.bo = panfrost_bo_create(dev, size, 0, "Command stream");
+
+        c.base = dev->mali.cs_bind(&dev->mali, kctx, c.bo->ptr.gpu, size);
+
+        c.event_ptr = dev->mali.event_mem.gpu + c.base.event_mem_offset * PAN_EVENT_SIZE;
+        c.kcpu_event_ptr = dev->mali.kcpu_event_mem.gpu + c.base.event_mem_offset * PAN_EVENT_SIZE;
+
+        c.hw_resources = mask;
+        screen->vtbl.init_cs(ctx, &c);
+
+        return c;
+}
+
 struct pipe_context *
 panfrost_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
 {
@@ -981,6 +1020,14 @@ panfrost_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
 
         assert(ctx->blitter);
 
+        if (dev->kbase && dev->mali.context_create)
+                ctx->kbase_ctx = dev->mali.context_create(&dev->mali);
+
+        if (dev->arch >= 10) {
+                ctx->kbase_cs_vertex = panfrost_cs_create(ctx, 65536, 13);
+                ctx->kbase_cs_fragment = panfrost_cs_create(ctx, 65536, 2);
+        }
+
         /* Prepare for render! */
 
         /* By default mask everything on */
@@ -992,13 +1039,18 @@ panfrost_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
         /* Create a syncobj in a signaled state. Will be updated to point to the
          * last queued job out_sync every time we submit a new job.
          */
-        ret = drmSyncobjCreate(dev->fd, DRM_SYNCOBJ_CREATE_SIGNALED, &ctx->syncobj);
-        assert(!ret && ctx->syncobj);
+        if (dev->kbase) {
+                ctx->syncobj_kbase = dev->mali.syncobj_create(&dev->mali);
+                ctx->in_sync_fd = -1;
+        } else {
+                ret = drmSyncobjCreate(dev->fd, DRM_SYNCOBJ_CREATE_SIGNALED, &ctx->syncobj);
+                assert(!ret && ctx->syncobj);
 
-        /* Sync object/FD used for NATIVE_FENCE_FD. */
-        ctx->in_sync_fd = -1;
-        ret = drmSyncobjCreate(dev->fd, 0, &ctx->in_sync_obj);
-        assert(!ret);
+                /* Sync object/FD used for NATIVE_FENCE_FD. */
+                ctx->in_sync_fd = -1;
+                ret = drmSyncobjCreate(dev->fd, 0, &ctx->in_sync_obj);
+                assert(!ret);
+        }
 
         return gallium;
 }

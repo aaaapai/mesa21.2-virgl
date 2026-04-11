@@ -121,6 +121,8 @@ struct pan_fb_info {
         /* Only used on Valhall */
         bool sprite_coord_origin;
         bool first_provoking_vertex;
+
+        pan_command_stream *cs_fragment;
 };
 
 static inline unsigned
@@ -171,7 +173,7 @@ void
 GENX(pan_emit_tiler_ctx)(const struct panfrost_device *dev,
                          unsigned fb_width, unsigned fb_height,
                          unsigned nr_samples, bool first_provoking_vertex,
-                         mali_ptr heap,
+                         mali_ptr heap, mali_ptr scratch,
                          void *out);
 #endif
 

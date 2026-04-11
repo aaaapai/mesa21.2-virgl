@@ -282,9 +282,15 @@ pan_prepare_crc(const struct pan_fb_info *fb, int rt_crc,
         ext->crc_render_target = rt_crc;
 
         if (fb->rts[rt_crc].clear) {
+#if PAN_ARCH < 10
+                // todo v10
                 uint32_t clear_val = fb->rts[rt_crc].clear_value[0];
                 ext->crc_clear_color = clear_val | 0xc000000000000000 |
                                        (((uint64_t)clear_val & 0xffff) << 32);
+#else
+                // TODO: Is this correct?
+                ext->crc_unk = 0x1f;
+#endif
         }
 #endif
 }
@@ -420,7 +426,8 @@ pan_rt_init_format(const struct pan_image_view *rt,
         cfg->swizzle = panfrost_translate_swizzle_4(swizzle);
 }
 
-#if PAN_ARCH >= 9
+/* Don't define for later gens as this is not a GENX function */
+#if PAN_ARCH == 9
 enum mali_afbc_compression_mode
 pan_afbc_compression_mode(enum pipe_format format)
 {
@@ -438,14 +445,21 @@ pan_afbc_compression_mode(enum pipe_format format)
         case PIPE_FORMAT_R8_UNORM: return MALI_AFBC_COMPRESSION_MODE_R8;
         case PIPE_FORMAT_R8G8_UNORM: return MALI_AFBC_COMPRESSION_MODE_R8G8;
         case PIPE_FORMAT_R5G6B5_UNORM: return MALI_AFBC_COMPRESSION_MODE_R5G6B5;
+        case PIPE_FORMAT_R5G5B5A1_UNORM: return MALI_AFBC_COMPRESSION_MODE_R5G5B5A1;
         case PIPE_FORMAT_R4G4B4A4_UNORM: return MALI_AFBC_COMPRESSION_MODE_R4G4B4A4;
         case PIPE_FORMAT_R8G8B8_UNORM: return MALI_AFBC_COMPRESSION_MODE_R8G8B8;
         case PIPE_FORMAT_R8G8B8A8_UNORM: return MALI_AFBC_COMPRESSION_MODE_R8G8B8A8;
         case PIPE_FORMAT_R10G10B10A2_UNORM: return MALI_AFBC_COMPRESSION_MODE_R10G10B10A2;
         case PIPE_FORMAT_R11G11B10_FLOAT: return MALI_AFBC_COMPRESSION_MODE_R11G11B10;
         case PIPE_FORMAT_S8_UINT: return MALI_AFBC_COMPRESSION_MODE_S8;
-        case PIPE_FORMAT_NONE: unreachable("invalid format for AFBC");
-        default: unreachable("unknown canonical AFBC format");
+        case PIPE_FORMAT_NONE:
+                fprintf(stderr, "invalid format for AFBC: %s\n", util_format_name(format));
+                fflush(NULL);
+                abort();
+        default:
+                fprintf(stderr, "unknown canonical AFBC format: %s\n", util_format_name(format));
+                fflush(NULL);
+                abort();
         }
 }
 #endif
@@ -558,6 +572,7 @@ GENX(pan_emit_tls)(const struct pan_tls_info *info,
                          */
                         cfg.tls_address_mode = MALI_ADDRESS_MODE_PACKED;
 
+                        /* The shift is only used for packed mode */
                         assert((info->tls.ptr & 4095) == 0);
                         cfg.tls_base_pointer = info->tls.ptr >> 8;
 #else
@@ -731,6 +746,9 @@ GENX(pan_emit_fbd)(const struct panfrost_device *dev,
 #if PAN_ARCH >= 6
                 bool force_clean_write = pan_force_clean_write(fb, tile_size);
 
+#if PAN_ARCH >= 9
+                cfg.frame_argument = 0x10000;
+#endif
                 cfg.sample_locations =
                         panfrost_sample_positions(dev, pan_sample_pattern(fb->nr_samples));
                 cfg.pre_frame_0 = pan_fix_frame_shader_mode(fb->bifrost.pre_post.modes[0], force_clean_write);
@@ -940,7 +958,7 @@ GENX(pan_emit_tiler_heap)(const struct panfrost_device *dev,
         pan_pack(out, TILER_HEAP, heap) {
                 heap.size = dev->tiler_heap->size;
                 heap.base = dev->tiler_heap->ptr.gpu;
-                heap.bottom = dev->tiler_heap->ptr.gpu;
+                heap.bottom = dev->tiler_heap->ptr.gpu + 64;
                 heap.top = dev->tiler_heap->ptr.gpu + dev->tiler_heap->size;
         }
 }
@@ -951,30 +969,39 @@ GENX(pan_emit_tiler_ctx)(const struct panfrost_device *dev,
                          unsigned nr_samples,
                          bool first_provoking_vertex,
                          mali_ptr heap,
+                         mali_ptr scratch,
                          void *out)
 {
         unsigned max_levels = dev->tiler_features.max_levels;
         assert(max_levels >= 2);
 
         pan_pack(out, TILER_CONTEXT, tiler) {
-                /* TODO: Select hierarchy mask more effectively */
-                tiler.hierarchy_mask = (max_levels >= 8) ? 0xFF : 0x28;
+                /* TODO: Select hierarchy mask more effectively. */
 
-                /* For large framebuffers, disable the smallest bin size to
-                 * avoid pathological tiler memory usage. Required to avoid OOM
-                 * on dEQP-GLES31.functional.fbo.no_attachments.maximums.all on
-                 * Mali-G57.
+                /* Disable the smallest hierarchy level. This is required to
+                 * use 32x32 tiles on v10, and helps reduce tiler heap memory
+                 * usage for other GPUs. The rasteriser can efficiently skip
+                 * primitives not entering the current quadrant of a tile, so
+                 * this should not hurt performance much.
+                 * Even for GPUs earlier than v10, cores get fed tiles in
+                 * 32x32 pixel blocks, so making all of the tiles use the same
+                 * set of primitive lists could help with performance.
+                 * Maybe then v10 should disable two levels?
                  */
-                if (MAX2(fb_width, fb_height) >= 4096)
-                        tiler.hierarchy_mask &= ~1;
+                tiler.hierarchy_mask = (max_levels >= 8) ? 0xFE : 0x28;
 
                 tiler.fb_width = fb_width;
                 tiler.fb_height = fb_height;
                 tiler.heap = heap;
+#if PAN_ARCH >= 10
+                tiler.scratch = scratch;
+#endif
                 tiler.sample_pattern = pan_sample_pattern(nr_samples);
 #if PAN_ARCH >= 9
                 tiler.first_provoking_vertex = first_provoking_vertex;
 #endif
+                tiler.state.word1 = 31;
+                tiler.state.word3 = 0x10000000;
         }
 }
 #endif
@@ -984,24 +1011,43 @@ GENX(pan_emit_fragment_job)(const struct pan_fb_info *fb,
                             mali_ptr fbd,
                             void *out)
 {
+#if PAN_ARCH < 10
         pan_section_pack(out, FRAGMENT_JOB, HEADER, header) {
                 header.type = MALI_JOB_TYPE_FRAGMENT;
                 header.index = 1;
         }
+#endif
 
-        pan_section_pack(out, FRAGMENT_JOB, PAYLOAD, payload) {
-                payload.bound_min_x = fb->extent.minx >> MALI_TILE_SHIFT;
-                payload.bound_min_y = fb->extent.miny >> MALI_TILE_SHIFT;
-                payload.bound_max_x = fb->extent.maxx >> MALI_TILE_SHIFT;
-                payload.bound_max_y = fb->extent.maxy >> MALI_TILE_SHIFT;
+#if PAN_ARCH < 10
+#define BOUND_SHIFT MALI_TILE_SHIFT
+#else
+#define BOUND_SHIFT 0
+#endif
+
+        pan_section_pack_cs_v10(out, fb->cs_fragment, FRAGMENT_JOB, PAYLOAD, payload) {
+                payload.bound_min_x = fb->extent.minx >> BOUND_SHIFT;
+                payload.bound_min_y = fb->extent.miny >> BOUND_SHIFT;
+                payload.bound_max_x = fb->extent.maxx >> BOUND_SHIFT;
+                payload.bound_max_y = fb->extent.maxy >> BOUND_SHIFT;
                 payload.framebuffer = fbd;
 
 #if PAN_ARCH >= 5
                 if (fb->tile_map.base) {
+#if PAN_ARCH < 0
                         payload.has_tile_enable_map = true;
+#endif
                         payload.tile_enable_map = fb->tile_map.base;
                         payload.tile_enable_map_row_stride = fb->tile_map.stride;
                 }
+#else
+                assert(!fb->tile_map.base);
 #endif
         }
+
+#if PAN_ARCH >= 10
+        /* TODO: Do this here? */
+        pan_pack_ins(fb->cs_fragment, FRAGMENT_LAUNCH, launch) {
+                launch.has_tile_enable_map = !!fb->tile_map.base;
+        }
+#endif
 }

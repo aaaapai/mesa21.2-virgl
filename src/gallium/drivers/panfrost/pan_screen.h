@@ -50,12 +50,14 @@ static const struct pipe_driver_query_info panfrost_driver_query_list[] = {
 
 struct panfrost_batch;
 struct panfrost_context;
+struct panfrost_cs;
 struct panfrost_resource;
 struct panfrost_compiled_shader;
 struct pan_fb_info;
 struct pan_blend_state;
 
 /* Virtual table of per-generation (GenXML) functions */
+
 
 struct panfrost_vtable {
         /* Prepares the renderer state descriptor or shader program descriptor
@@ -100,6 +102,10 @@ struct panfrost_vtable {
                                struct panfrost_compile_inputs *inputs,
                                struct util_dynarray *binary,
                                struct pan_shader_info *info);
+
+        void (*emit_csf_toplevel)(struct panfrost_batch *);
+
+        void (*init_cs)(struct panfrost_context *ctx, struct panfrost_cs *cs);
 };
 
 struct panfrost_screen {
@@ -112,6 +118,8 @@ struct panfrost_screen {
         struct {
                 struct panfrost_pool bin_pool;
         } indirect_draw;
+
+        struct sw_winsys *sw_winsys;
 
         struct panfrost_vtable vtbl;
         struct disk_cache *disk_cache;
@@ -138,6 +146,7 @@ void panfrost_cmdstream_screen_init_v5(struct panfrost_screen *screen);
 void panfrost_cmdstream_screen_init_v6(struct panfrost_screen *screen);
 void panfrost_cmdstream_screen_init_v7(struct panfrost_screen *screen);
 void panfrost_cmdstream_screen_init_v9(struct panfrost_screen *screen);
+void panfrost_cmdstream_screen_init_v10(struct panfrost_screen *screen);
 
 #define perf_debug(dev, ...) \
         do { \

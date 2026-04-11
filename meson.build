@@ -865,14 +865,13 @@ endif
 
 with_gallium_st_nine =  get_option('gallium-nine')
 if with_gallium_st_nine
-  if not with_gallium_softpipe
-    error('The nine state tracker requires gallium softpipe/llvmpipe.')
-  elif not [
+  if not [
              with_gallium_crocus,
              with_gallium_freedreno,
              with_gallium_i915,
              with_gallium_iris,
              with_gallium_nouveau,
+             with_gallium_panfrost,
              with_gallium_r300,
              with_gallium_r600,
              with_gallium_radeonsi,
@@ -1433,7 +1432,7 @@ if not ['linux'].contains(host_machine.system())
   endif
 endif
 
-foreach h : ['xlocale.h', 'linux/futex.h', 'endian.h', 'dlfcn.h', 'sys/shm.h', 'cet.h', 'pthread_np.h']
+foreach h : ['linux/futex.h', 'endian.h', 'dlfcn.h', 'sys/shm.h', 'cet.h', 'pthread_np.h']
   if cc.check_header(h)
     pre_args += '-DHAVE_@0@'.format(h.to_upper().underscorify())
   endif
@@ -1443,11 +1442,9 @@ functions_to_detect = {
   'strtof': '',
   'mkostemp': '',
   'timespec_get': '#include <time.h>',
-  'memfd_create': '',
   'random_r': '',
   'flock': '',
   'strtok_r': '',
-  'getrandom': '',
   'qsort_s': '',
 }
 

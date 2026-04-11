@@ -404,6 +404,24 @@ bi_copy_component(bi_builder *b, nir_intrinsic_instr *instr, bi_index tmp)
                        srcs, channels, nr, nir_dest_bit_size(instr->dest));
 }
 
+static bi_index
+bi_load_sysval(bi_builder *b, int sysval,
+               unsigned nr_components, unsigned offset);
+
+static bi_index
+bi_vertex_id_offset(bi_builder *b, bool offset)
+{
+        bi_index vtx = bi_vertex_id(b);
+
+        if (!offset)
+                return vtx;
+
+        bi_index first =
+                bi_load_sysval(b, PAN_SYSVAL_VERTEX_INSTANCE_OFFSETS, 1, 0);
+
+        return bi_iadd_u32(b, vtx, first, false);
+}
+
 static void
 bi_emit_load_attr(bi_builder *b, nir_intrinsic_instr *instr)
 {
@@ -419,8 +437,15 @@ bi_emit_load_attr(bi_builder *b, nir_intrinsic_instr *instr)
         bi_index dest = (component == 0) ? bi_dest_index(&instr->dest) : bi_temp(b->shader);
         bi_instr *I;
 
+        /* The attribute offset field was removed from the compute job payload
+         * in v10. */
+        bool needs_offset = b->shader->arch >= 10 &&
+                b->shader->nir->info.has_transform_feedback_varyings;
+
+        bi_index vertex_id = bi_vertex_id_offset(b, needs_offset);
+
         if (immediate) {
-                I = bi_ld_attr_imm_to(b, dest, bi_vertex_id(b),
+                I = bi_ld_attr_imm_to(b, dest, vertex_id,
                                       bi_instance_id(b), regfmt, vecsize,
                                       imm_index);
         } else {
@@ -431,7 +456,7 @@ bi_emit_load_attr(bi_builder *b, nir_intrinsic_instr *instr)
                 else if (base != 0)
                         idx = bi_iadd_u32(b, idx, bi_imm_u32(base), false);
 
-                I = bi_ld_attr_to(b, dest, bi_vertex_id(b), bi_instance_id(b),
+                I = bi_ld_attr_to(b, dest, vertex_id, bi_instance_id(b),
                                   idx, regfmt, vecsize);
         }
 
@@ -1878,16 +1903,7 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
          * and lower here if needed.
          */
         case nir_intrinsic_load_vertex_id:
-                if (b->shader->malloc_idvs) {
-                        bi_mov_i32_to(b, dst, bi_vertex_id(b));
-                } else {
-                        bi_index first = bi_load_sysval(b,
-                                                        PAN_SYSVAL_VERTEX_INSTANCE_OFFSETS,
-                                                        1, 0);
-
-                        bi_iadd_u32_to(b, dst, bi_vertex_id(b), first, false);
-                }
-
+                bi_mov_i32_to(b, dst, bi_vertex_id_offset(b, !b->shader->malloc_idvs));
                 break;
 
         /* We only use in our transform feedback lowering */
@@ -2884,7 +2900,7 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
                 break;
 
         case nir_op_i2i16:
-                assert(src_sz == 8 || src_sz == 32);
+                assert(src_sz == 32 || src_sz == 16 || src_sz == 8);
 
                 if (src_sz == 8)
                         bi_v2s8_to_v2s16_to(b, dst, s0);
@@ -2893,7 +2909,7 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
                 break;
 
         case nir_op_u2u16:
-                assert(src_sz == 8 || src_sz == 32);
+                assert(src_sz == 32 || src_sz == 16 || src_sz == 8);
 
                 if (src_sz == 8)
                         bi_v2u8_to_v2u16_to(b, dst, s0);
@@ -4975,6 +4991,8 @@ bi_compile_variant_nir(nir_shader *nir,
         }
 
         bi_validate(ctx, "NIR -> BIR");
+
+        _mesa_hash_table_u64_destroy(ctx->allocated_vec);
 
         /* If the shader doesn't write any colour or depth outputs, it may
          * still need an ATEST at the very end! */
