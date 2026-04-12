@@ -159,15 +159,6 @@ if not with_shared_glapi
   with_gles2 = 'disabled'
 endif
 
-# We require OpenGL for OpenGL ES
-if not with_opengl
-  if (with_gles1 == 'enabled' or with_gles2 == 'enabled') and not with_opengl
-    error('building OpenGL ES without OpenGL is not supported.')
-  endif
-  with_gles1 = 'disabled'
-  with_gles2 = 'disabled'
-endif
-
 with_gles1 = with_gles1 != 'disabled'
 with_gles2 = with_gles2 != 'disabled'
 with_any_opengl = with_opengl or with_gles1 or with_gles2
