@@ -1,0 +1,100 @@
+name: Build Android Vulkan Driver
+
+on:
+  [workflow_dispatch]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        arch: [ "aarch64" ]
+      fail-fast: false
+
+    name: "Build"
+
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_NDK_HOME: "${ANDROID_SDK_ROOT}/ndk-bundle"
+
+    steps:
+      - uses: actions/checkout@main
+
+      - name: CCache
+        uses: hendrikmuhs/ccache-action@main
+        with:
+            key: ${{ runner.os }}-mesa2507
+            max-size: 3G  
+
+      - name: Setup ccache in PATH
+        run: |
+          echo "/usr/lib/ccache" >> $GITHUB_PATH
+          echo "CCACHE_MAXSIZE=3G" >> $GITHUB_ENV
+      
+      - name: Build
+        run: |
+          pip3 install meson
+          sudo apt update
+          sudo apt install -y libxrandr-dev libxxf86vm-dev libxcb-*-dev libx11-xcb-dev libxfixes-dev libx11-dev
+          cp -R /usr/include/X11 include/
+          cp -R /usr/include/xcb include/
+          
+          pip3 install mako
+          envsubst < android-cross >build-crossfile
+          git clone --depth 1 https://gitlab.freedesktop.org/mesa/drm.git
+          cd drm
+          meson setup "build-android" \
+            --prefix=/tmp/build \
+            --native-file="../build-crossfile" \
+            --cross-file "../build-crossfile" \
+            -Ddefault_library=static \
+            --wrap-mode=nofallback \
+            -Dintel=disabled \
+            -Dradeon=disabled \
+            -Damdgpu=disabled \
+            -Dnouveau=disabled \
+            -Dvmwgfx=disabled \
+            -Dfreedreno=disabled \
+            -Dvc4=disabled \
+            -Detnaviv=disabled \
+            -Dfreedreno-kgsl=false
+          meson compile -C "build-android" -j 6
+          meson install -C "build-android"
+
+          cd ..
+
+          envsubst < android-cross >build-crossfile
+          meson setup "build-android" \
+            --prefix=/tmp/build \
+            --wrap-mode=nofallback \
+            -Dforce_fallback_for=llvm \
+            -Dosmesa=true \
+            -Dgles1=disabled \
+            -Dgles2=disabled \
+            --native-file="build-crossfile" \
+            --cross-file "build-crossfile" \
+            --buildtype release \
+            -Dplatforms=android \
+            -Dplatform-sdk-version=29 \
+            -Dandroid-stub=true \
+            -Dshared-llvm=disabled \
+            -Dxlib-lease=disabled \
+            -Degl=disabled \
+            -Dvulkan-beta=true \
+            -Dvulkan-layers=device-select \
+            -Degl-native-platform=android \
+            -Dgbm=disabled \
+            -Dopengl=false \
+            -Dvulkan-drivers=panfrost \
+            -Dtools= \
+            -Dgallium-drivers= \
+            -Dcpp_rtti=false \
+            -Degl-lib-suffix=_mesa \
+            -Dshared-glapi=false
+          meson compile -C "build-android" -j 6
+          meson install -C "build-android"
+      - name: Upload libraries
+        uses: actions/upload-artifact@main
+        with:
+          name: libmesa_${{matrix.arch}}
+          path: |
+                /tmp/build
