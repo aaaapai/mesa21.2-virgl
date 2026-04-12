@@ -1,0 +1,36 @@
+[binaries]
+ar = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+c = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang']
+cpp = ['ccache', '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++']
+nm = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm'
+llvm-config = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-config'
+ld = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/lld'
+#cmake = ''
+strip = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+# Android doesn't come with a pkg-config, but we need one for meson to be happy not
+# finding all the optional deps it looks for.  Use system pkg-config pointing at a
+# directory we get to populate with any .pc files we want to add for Android
+pkg-config = ['env', 'PKG_CONFIG_LIBDIR=/tmp/build/lib/pkgconfig:$PWD/mesa_deps/spirv-tools/pkgconfig:$PWD/deps', '/usr/bin/pkg-config']
+
+c_host = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang'
+cpp_host = '$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++'
+
+[built-in options]
+c_args = ['-DANDROID', '-O3', '-DVK_USE_64_BIT_PTR_DEFINES', '-DVK_USE_PLATFORM_ANDROID_KHR', '-DHAVE_OPENGL', '-fPIC', '-DPIC', '-fwhole-program-vtables', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-DLLVM_AVAILABLE', '-fdata-sections', '-ffunction-sections', '-fmerge-all-constants', '-fno-emulated-tls', '-march=armv8-a+simd+crc+crypto+fp16', '-DHAVE_STRUCT_TIMESPEC', '-DHAS_SCHED_H', '-I/tmp/build/include', '-Wno-macro-redefined', '-I/tmp/build/include/libdrm', '-I${PWD}/src/mesa', '-I${PWD}/src/util', '-I$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include', '-Wno-error', '-Wno-format-extra-args', '-Wno-format']
+c_link_args = ['-ldl', '-flto=thin', '-Wl,-plugin-opt=-emulated-tls=0', '-fuse-ld=lld', '-L/tmp/build/lib', '-L/tmp/build/lib/libdrm', '-L${PWD}/mesa_deps/spirv-tools']
+cpp_args = ['-DANDROID', '-DVK_USE_64_BIT_PTR_DEFINES', '-O3', '-DVK_USE_PLATFORM_ANDROID_KHR', '-DHAVE_OPENGL', '-fPIC', '-DPIC', '-fwhole-program-vtables', '-mllvm', '-polly', '-Wno-incompatible-function-pointer-types', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-flto=thin', '-DLLVM_AVAILABLE', '-fdata-sections', '-ffunction-sections', '-fmerge-all-constants', '-fno-emulated-tls', '-march=armv8-a+simd+crc+crypto+fp16', '-DHAVE_STRUCT_TIMESPEC', '-DHAS_SCHED_H', '-I/tmp/build/include', '-Wno-macro-redefined', '-I/tmp/build/include/libdrm', '-Wno-error', '-I$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include']
+cpp_link_args = ['-ldl', '-flto=thin', '-Wl,-plugin-opt=-emulated-tls=0', '-fuse-ld=lld', '-lc++_static', '-lc++abi', '-L/tmp/build/lib', '-L/tmp/build/lib/libdrm', '-L${PWD}/mesa_deps/spirv-tools']
+# c_args = ['-DANDROID', '-O0', '-DVK_USE_PLATFORM_ANDROID_KHR', '-DHAVE_OPENGL', '-fPIC', '-DPIC', '-g3' ,'-funwind-tables' ,'-fno-optimize-sibling-calls', '-DHAVE_STRUCT_TIMESPEC', '-DHAS_SCHED_H', '-I/tmp/build/include', '-Wno-macro-redefined', '-I/tmp/build/include/libdrm', '-I$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include']
+# c_link_args = ['-ldl', '-fuse-ld=lld', '-L/tmp/build/lib', '-L/tmp/build/lib/libdrm', '-L${PWD}/mesa_deps/spirv-tools']
+# cpp_args = ['-DANDROID', '-O0', '-DVK_USE_PLATFORM_ANDROID_KHR', '-DHAVE_OPENGL', '-fPIC', '-DPIC', '-g3' ,'-funwind-tables' ,'-fno-optimize-sibling-calls', '-Wno-error=implicit-function-declaration', '-Wno-int-conversion', '-DHAVE_STRUCT_TIMESPEC', '-DHAS_SCHED_H', '-I/tmp/build/include', '-Wno-macro-redefined', '-I/tmp/build/include/libdrm', '-I$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include']
+# cpp_link_args = ['-ldl', '-fuse-ld=lld', '-lc++_static', '-lc++abi', '-L/tmp/build/lib', '-L/tmp/build/lib/libdrm', '-L${PWD}/mesa_deps/spirv-tools']
+
+[properties]
+skip_sanity_check = true
+cpp_rtti = true
+
+[host_machine]
+system = 'android'
+cpu_family = 'aarch64'
+cpu = 'armv8a'
+endian = 'little'
