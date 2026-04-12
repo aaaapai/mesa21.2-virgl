@@ -86,7 +86,7 @@ jobs:
             -Dopengl=false \
             -Dvulkan-drivers=panfrost \
             -Dtools= \
-            -Dgallium-drivers= \
+            -Dgallium-drivers=panfrost \
             -Dcpp_rtti=false \
             -Degl-lib-suffix=_mesa \
             -Dshared-glapi=false
