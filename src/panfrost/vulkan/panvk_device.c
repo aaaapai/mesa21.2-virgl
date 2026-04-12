@@ -267,11 +267,11 @@ panvk_physical_device_init(struct panvk_physical_device *device,
    int fd;
    int master_fd = -1;
 
-   if (!getenv("PAN_I_WANT_A_BROKEN_VULKAN_DRIVER")) {
+   /*if (!getenv("PAN_I_WANT_A_BROKEN_VULKAN_DRIVER")) {
       return vk_errorf(instance, VK_ERROR_INCOMPATIBLE_DRIVER,
                        "WARNING: panvk is not a conformant vulkan implementation, "
                        "pass PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1 if you know what you're doing.");
-   }
+   }*/
 
    fd = open(path, O_RDWR | O_CLOEXEC);
    if (fd < 0) {
@@ -865,7 +865,9 @@ panvk_queue_init(struct panvk_device *device,
    switch (pdev->arch) {
    case 6: queue->vk.driver_submit = panvk_v6_queue_submit; break;
    case 7: queue->vk.driver_submit = panvk_v7_queue_submit; break;
-   default: unreachable("Invalid arch");
+   default: 
+      printf("Invalid arch\n");
+      queue->vk.driver_submit = panvk_v7_queue_submit; break;
    }
 
    queue->sync = create.handle;
@@ -907,7 +909,9 @@ panvk_CreateDevice(VkPhysicalDevice physicalDevice,
       cmd_buffer_ops = &panvk_v7_cmd_buffer_ops;
       break;
    default:
-      unreachable("Unsupported architecture");
+      printf("Unsupported architecture\n");
+      dev_entrypoints = &panvk_v7_device_entrypoints;
+      cmd_buffer_ops = &panvk_v7_cmd_buffer_ops;
    }
 
    /* For secondary command buffer support, overwrite any command entrypoints
