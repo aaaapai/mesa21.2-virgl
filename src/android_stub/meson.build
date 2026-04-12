@@ -2,7 +2,7 @@ if with_android_stub
   stub_libs = []
 
   foreach lib : ['backtrace', 'cutils', 'hardware', 'log', 'nativewindow', 'sync']
-    stub_libs += shared_library(
+    stub_libs += staitc_library(
       lib,
       files(lib + '_stub.cpp'),
       include_directories : inc_include,
