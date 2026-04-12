@@ -67,7 +67,7 @@ jobs:
             --prefix=/tmp/build \
             --wrap-mode=nofallback \
             -Dforce_fallback_for=llvm \
-            -Dosmesa=false \
+            -Dosmesa=true \
             -Dgles1=disabled \
             -Dgles2=enabled \
             --native-file="build-crossfile" \
