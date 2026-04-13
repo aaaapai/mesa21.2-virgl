@@ -204,7 +204,7 @@ libegl = shared_library(
   override_options : override_for_egl,
   gnu_symbol_visibility : 'hidden',
   include_directories : incs_for_egl,
-  link_with : [link_for_egl, libglapi],
+  link_with : [link_for_egl, libgallium_dri],
   link_args : [ld_args_bsymbolic, ld_args_gc_sections],
   dependencies : [deps_for_egl, dep_dl, dep_libdrm, dep_clock, dep_thread, idep_mesautil],
   install : true,
