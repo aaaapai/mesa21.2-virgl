@@ -755,14 +755,27 @@ static const __DRIextension **
 dri2_open_driver(_EGLDisplay *disp)
 {
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+   const __DRIextension **extensions;
    static const char *search_path_vars[] = {
       "LIBGL_DRIVERS_PATH",
+      "LD_LIBRARY_PATH",
       NULL,
    };
 
-   return loader_open_driver(dri2_dpy->driver_name,
+   /*return loader_open_driver(dri2_dpy->driver_name,
                              &dri2_dpy->driver,
-                             search_path_vars);
+                             search_path_vars);*/
+   extensions = loader_open_driver("gallium",
+                                     &dri2_dpy->driver,
+                                     search_path_vars);
+
+   if (extensions == NULL) {
+      extensions = loader_open_driver(dri2_dpy->driver_name,
+                                     &dri2_dpy->driver,
+                                     search_path_vars);
+   }
+
+   return extensions;
 }
 
 static EGLBoolean
