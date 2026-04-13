@@ -6,6 +6,12 @@
 		amdgpu_winsys_create*;
 		fd_drm_screen_create*;
 		ac_init_shared_llvm_once*;
+                _glapi_get_proc_address;
+                _glapi_get_proc_offset;
+                _glapi_get_proc_name;
+                glXGetProcAddress;
+                glXGetProcAddressARB;
+                gl*;
 	local:
 		*;
 };
