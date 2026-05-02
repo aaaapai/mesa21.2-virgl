@@ -1,0 +1,11 @@
+{
+	global:
+		drm*;
+    panvk*;
+    wsi*;
+    vk_common*;
+    vk_cmd*;
+    vk*;
+	local:
+		*;
+};
