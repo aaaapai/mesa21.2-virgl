@@ -99,8 +99,7 @@ if with_platform_wayland
   libpanvk_files += [wayland_drm_client_protocol_h, wayland_drm_protocol_c]
 endif
 
-panvk_ld_args += ['-Wl,--version-script', join_paths(meson.current_source_dir(), 'panvk.sym')]
-panvk_link_depends += files('panvk.sym')
+panvk_ld_args = ['-Wl,--version-script', join_paths(meson.current_source_dir(), 'panvk.sym')]
 
 libvulkan_panfrost = shared_library(
   'vulkan_panfrost',
