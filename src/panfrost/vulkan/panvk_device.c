@@ -1078,11 +1078,11 @@ panvk_GetInstanceProcAddr(VkInstance _instance, const char *pName)
  */
 PUBLIC
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
-vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName);
+vkGetInstanceProcAddr(VkInstance instance, const char *pName);
 
 PUBLIC
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
-vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName)
+vkGetInstanceProcAddr(VkInstance instance, const char *pName)
 {
    return panvk_GetInstanceProcAddr(instance, pName);
 }
@@ -1092,11 +1092,11 @@ vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName)
  */
 PUBLIC
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
-vk_icdGetPhysicalDeviceProcAddr(VkInstance  _instance,
+vkGetPhysicalDeviceProcAddr(VkInstance  _instance,
                                 const char* pName);
 
 PFN_vkVoidFunction
-vk_icdGetPhysicalDeviceProcAddr(VkInstance  _instance,
+vkGetPhysicalDeviceProcAddr(VkInstance  _instance,
                                 const char* pName)
 {
    VK_FROM_HANDLE(panvk_instance, instance, _instance);
