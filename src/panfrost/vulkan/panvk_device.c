@@ -1539,10 +1539,10 @@ panvk_DestroySampler(VkDevice _device,
  * suppress Wmissing-prototypes.
  */
 PUBLIC VKAPI_ATTR VkResult VKAPI_CALL
-vk_icdNegotiateLoaderICDInterfaceVersion(uint32_t *pSupportedVersion);
+vkNegotiateLoaderICDInterfaceVersion(uint32_t *pSupportedVersion);
 
 PUBLIC VKAPI_ATTR VkResult VKAPI_CALL
-vk_icdNegotiateLoaderICDInterfaceVersion(uint32_t *pSupportedVersion)
+vkNegotiateLoaderICDInterfaceVersion(uint32_t *pSupportedVersion)
 {
    /* For the full details on loader interface versioning, see
     * <https://github.com/KhronosGroup/Vulkan-LoaderAndValidationLayers/blob/master/loader/LoaderAndLayerInterface.md>.
