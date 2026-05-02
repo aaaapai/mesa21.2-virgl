@@ -139,7 +139,6 @@ libvulkan_panfrost = shared_library(
   c_args : [no_override_init_args, panvk_flags],
   link_args : [ld_args_bsymbolic, ld_args_gc_sections],
   install : true,
-  vs_module_defs : vulkan_api_def,
 )
 
 panfrost_icd = custom_target(
