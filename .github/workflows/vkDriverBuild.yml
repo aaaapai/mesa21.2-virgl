@@ -80,7 +80,7 @@ jobs:
             -Dxlib-lease=disabled \
             -Degl=enabled \
             -Dvulkan-beta=true \
-            -Dvulkan-layers=overlay-layer \
+            -Dvulkan-layers=overlay \
             -Degl-native-platform=android \
             -Dgbm=disabled \
             -Dopengl=false \
