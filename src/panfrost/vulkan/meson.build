@@ -153,6 +153,7 @@ panfrost_icd = custom_target(
     '--out', '@OUTPUT@',
   ],
   build_by_default : true,
+  install_dir : with_vulkan_icd_dir,
   install : true,
 )
 
