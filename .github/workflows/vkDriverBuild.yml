@@ -34,7 +34,7 @@ jobs:
         run: |
           pip3 install meson
           sudo apt update
-          sudo apt install -y libxrandr-dev libxxf86vm-dev libxcb-*-dev libx11-xcb-dev libxfixes-dev libx11-dev
+          sudo apt install -y libxrandr-dev libxxf86vm-dev libxcb-*-dev libx11-xcb-dev libxfixes-dev glslang-tools libx11-dev
           cp -R /usr/include/X11 include/
           cp -R /usr/include/xcb include/
           
