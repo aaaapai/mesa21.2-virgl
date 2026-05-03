@@ -1067,10 +1067,23 @@ panvk_EnumerateInstanceExtensionProperties(const char *pLayerName,
 PFN_vkVoidFunction
 panvk_GetInstanceProcAddr(VkInstance _instance, const char *pName)
 {
-   VK_FROM_HANDLE(panvk_instance, instance, _instance);
-   return vk_instance_get_proc_addr(&instance->vk,
+    VK_FROM_HANDLE(panvk_instance, instance, _instance);
+
+    const char *base_name = pName;
+    if (strncmp(pName, "vk", 2) == 0)
+        base_name = pName + 2;   // 例如 "CreateInstance"
+
+    char prefixed_name[256];
+    int ret = snprintf(prefixed_name, sizeof(prefixed_name), "panvk_%s", base_name);
+    if (ret < 0 || ret >= (int)sizeof(prefixed_name)) {
+        return vk_instance_get_proc_addr(&instance->vk,
                                     &panvk_instance_entrypoints,
                                     pName);
+    }
+
+    // 用 dlsym 查找该符号
+    void *sym = dlsym(RTLD_DEFAULT, prefixed_name);
+    return (PFN_vkVoidFunction)sym;
 }
 
 /* The loader wants us to expose a second GetInstanceProcAddr function
