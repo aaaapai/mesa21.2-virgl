@@ -427,7 +427,7 @@ enumerate_physical_devices(struct vk_instance *instance)
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
-vk_common_EnumeratePhysicalDevices(VkInstance _instance, uint32_t *pPhysicalDeviceCount,
+vkEnumeratePhysicalDevices(VkInstance _instance, uint32_t *pPhysicalDeviceCount,
                                    VkPhysicalDevice *pPhysicalDevices)
 {
    VK_FROM_HANDLE(vk_instance, instance, _instance);
