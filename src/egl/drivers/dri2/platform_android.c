@@ -63,6 +63,13 @@
 #endif
 #endif
 
+extern int native_window_set_surface_damage(ANativeWindow* window,
+                                            const void* rects,
+                                            size_t num_rects);
+typedef struct android_native_rect {
+    int32_t left, top, right, bottom;
+} android_native_rect_t;
+
 static struct dri_image *
 droid_create_image_from_buffer_info(
    struct dri2_egl_display *dri2_dpy, int width, int height,
@@ -730,7 +737,7 @@ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
    if (dri2_surf->back)
       dri2_surf->back->age = 1;
 
-#if ANDROID_API_LEVEL >= 26
+#if ANDROID_API_LEVEL >= 23
    if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
       int supported = 0;
       ANativeWindow_query(dri2_surf->window,
@@ -747,13 +754,13 @@ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
                damage[4*i + 2] = rects[4*i + 2];
                damage[4*i + 3] = rects[4*i + 3];
             }
-            ANativeWindow_setBuffersDamageRegion(dri2_surf->window, damage, n);
+            native_window_set_surface_damage(dri2_surf->window, damage, n);
             free(damage);
          } else {
             _eglLog(_EGL_WARNING, "Failed to allocate damage region");
          }
       } else {
-         ANativeWindow_setBuffersDamageRegion(dri2_surf->window, NULL, 0);
+         native_window_set_surface_damage(dri2_surf->window, NULL, 0);
       }
    }
 #endif
