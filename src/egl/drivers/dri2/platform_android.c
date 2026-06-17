@@ -38,6 +38,9 @@
 #include <drm-uapi/drm_fourcc.h>
 #include <sync/sync.h>
 #include <sys/types.h>
+#include <android/api-level.h>
+#include <vulkan/vulkan_core.h>
+#include <vulkan/vulkan_android.h>
 
 #include "util/compiler.h"
 #include "util/libsync.h"
@@ -51,6 +54,15 @@
 #include "platform_android.h"
 #include "dri_util.h"
 
+#include "kopper_interface.h"
+
+#if ANDROID_API_LEVEL >= 26
+#include <android/native_window.h>
+#ifndef ANATIVEWINDOW_QUERY_BUFFER_DAMAGE_SUPPORTED
+#define ANATIVEWINDOW_QUERY_BUFFER_DAMAGE_SUPPORTED 0x1000
+#endif
+#endif
+
 static struct dri_image *
 droid_create_image_from_buffer_info(
    struct dri2_egl_display *dri2_dpy, int width, int height,
@@ -58,10 +70,11 @@ droid_create_image_from_buffer_info(
    struct u_gralloc_buffer_color_info *color_info, void *priv)
 {
    unsigned error;
+   uint64_t mod = buf_info->modifier;
 
    return dri2_from_dma_bufs(
       dri2_dpy->dri_screen_render_gpu, width, height, buf_info->drm_fourcc,
-      buf_info->modifier, buf_info->fds, buf_info->num_planes,
+      mod, buf_info->fds, buf_info->num_planes,
       buf_info->strides, buf_info->offsets, color_info->yuv_color_space,
       color_info->sample_range, color_info->horizontal_siting,
       color_info->vertical_siting, 0, &error, priv);
@@ -92,6 +105,13 @@ droid_create_image_from_native_buffer(_EGLDisplay *disp,
 
    img = droid_create_image_from_buffer_info(dri2_dpy, buf->width, buf->height,
                                              &buf_info, &color_info, priv);
+   if (!img && buf_info.modifier != DRM_FORMAT_MOD_LINEAR) {
+      uint64_t old_mod = buf_info.modifier;
+      buf_info.modifier = DRM_FORMAT_MOD_LINEAR;
+      img = droid_create_image_from_buffer_info(dri2_dpy, buf->width, buf->height,
+                                                &buf_info, &color_info, priv);
+      buf_info.modifier = old_mod;
+   }
 
    if (!img) {
       /* If dri driver is gallium virgl, real modifier info queried back from
@@ -387,6 +407,15 @@ droid_create_pbuffer_surface(_EGLDisplay *disp, _EGLConfig *conf,
    return droid_create_surface(disp, EGL_PBUFFER_BIT, conf, NULL, attrib_list);
 }
 
+static _EGLSurface *
+droid_create_pixmap_surface(_EGLDisplay *disp, _EGLConfig *conf,
+                            void *native_pixmap, const EGLint *attrib_list)
+{
+   _eglError(EGL_BAD_PARAMETER,
+             "eglCreatePlatformPixmapSurfaceEXT not supported on Android");
+   return NULL;
+}
+
 static EGLBoolean
 droid_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
 {
@@ -399,6 +428,7 @@ droid_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
       ANativeWindow_release(dri2_surf->window);
    }
 
+   free(dri2_surf->compression_modifiers);
    if (dri2_surf->dri_image_back) {
       _eglLog(_EGL_DEBUG, "%s : %d : destroy dri_image_back", __func__,
               __LINE__);
@@ -471,24 +501,53 @@ get_front_bo(struct dri2_egl_surface *dri2_surf, unsigned int format)
    if (dri2_surf->dri_image_front)
       return 0;
 
-   if (dri2_surf->base.Type == EGL_WINDOW_BIT) {
-      /* According current EGL spec, front buffer rendering
-       * for window surface is not supported now.
-       * and mesa doesn't have the implementation of this case.
-       * Add warning message, but not treat it as error.
-       */
-      _eglLog(
-         _EGL_DEBUG,
-         "DRI driver requested unsupported front buffer for window surface");
-   } else if (dri2_surf->base.Type == EGL_PBUFFER_BIT) {
-      dri2_surf->dri_image_front = dri_create_image(
-         dri2_dpy->dri_screen_render_gpu, dri2_surf->base.Width,
-         dri2_surf->base.Height, format, NULL, 0, 0, NULL);
-      if (!dri2_surf->dri_image_front) {
-         _eglLog(_EGL_WARNING, "dri2_image_front allocation failed");
+   if (dri2_surf->base.Type == EGL_PBUFFER_BIT) {
+      int count = 0;
+      uint64_t *mods = NULL;
+
+      struct dri_image *img;
+      
+      if (dri2_surf->base.CompressionRate != EGL_SURFACE_COMPRESSION_FIXED_RATE_NONE_EXT) {
+         struct dri2_egl_display *dri2_dpy =
+            dri2_egl_display(dri2_surf->base.Resource.Display);
+         if (dri2_query_compression_modifiers(dri2_dpy->dri_screen_render_gpu,
+                                              format,
+                                              dri2_surf->base.CompressionRate,
+                                              0, NULL, &count) &&
+             count > 0) {
+            mods = malloc(count * sizeof(uint64_t));
+            if (mods) {
+               if (!dri2_query_compression_modifiers(dri2_dpy->dri_screen_render_gpu,
+                                                     format,
+                                                     dri2_surf->base.CompressionRate,
+                                                     count, mods, &count)) {
+                  free(mods);
+                  mods = NULL;
+               }
+            }
+         }
+      }
+
+      if (mods && count > 0) {
+         img = dri_create_image_with_modifiers(
+            dri2_dpy->dri_screen_render_gpu,
+            dri2_surf->base.Width, dri2_surf->base.Height,
+            format, 0, mods, count, NULL);
+      } else {
+         img = dri_create_image(
+            dri2_dpy->dri_screen_render_gpu,
+            dri2_surf->base.Width, dri2_surf->base.Height,
+            format, NULL, 0, 0, NULL);
+      }
+      if (img) {
+         dri2_surf->dri_image_front = img;
+      } else {
+         _eglLog(_EGL_WARNING, "dri_image_front allocation failed");
          return -1;
       }
-   }
+   } else {
+      _eglLog(_EGL_DEBUG, "DRI driver requested front buffer for window surface (ignored)");
+    }
 
    return 0;
 }
@@ -626,6 +685,37 @@ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
    if (has_mutable_rb && draw->RequestedRenderBuffer == EGL_SINGLE_BUFFER &&
        draw->ActiveRenderBuffer == EGL_SINGLE_BUFFER) {
       _eglLog(_EGL_DEBUG, "%s: remain in shared buffer mode", __func__);
+      
+      if (dri2_dpy->kopper) {
+         kopperQuerySurfaceSize(dri2_surf->dri_drawable,
+                                &dri2_surf->base.Width,
+                                &dri2_surf->base.Height);
+      }
+
+      return EGL_TRUE;
+   }
+
+   if (dri2_dpy->kopper) {
+      if (draw->DamageRegion.num_rects > 0) {
+         kopperSwapBuffersWithDamage(dri2_surf->dri_drawable,
+                                     __DRI2_FLUSH_CONTEXT | __DRI2_FLUSH_INVALIDATE_ANCILLARY,
+                                     draw->DamageRegion.num_rects,
+                                     draw->DamageRegion.rects);
+      } else {
+         kopperSwapBuffers(dri2_surf->dri_drawable,
+                           __DRI2_FLUSH_CONTEXT | __DRI2_FLUSH_INVALIDATE_ANCILLARY);
+      }
+      kopperQuerySurfaceSize(dri2_surf->dri_drawable,
+                             &dri2_surf->base.Width,
+                             &dri2_surf->base.Height);
+
+      if (has_mutable_rb &&
+          draw->ActiveRenderBuffer != draw->RequestedRenderBuffer) {
+         bool mode = (draw->RequestedRenderBuffer == EGL_SINGLE_BUFFER);
+         if (!droid_set_shared_buffer_mode(disp, draw, mode))
+            return EGL_FALSE;
+         draw->ActiveRenderBuffer = draw->RequestedRenderBuffer;
+      }
       return EGL_TRUE;
    }
 
@@ -639,6 +729,34 @@ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
     */
    if (dri2_surf->back)
       dri2_surf->back->age = 1;
+
+#if ANDROID_API_LEVEL >= 26
+   if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
+      int supported = 0;
+      ANativeWindow_query(dri2_surf->window,
+                          ANATIVEWINDOW_QUERY_BUFFER_DAMAGE_SUPPORTED,
+                          &supported);
+      if (supported && draw->DamageRegion.num_rects > 0) {
+         EGLint *rects = draw->DamageRegion.rects;
+         int n = draw->DamageRegion.num_rects;
+         EGLint *damage = malloc(n * 4 * sizeof(EGLint));
+         if (damage) {
+            for (int i = 0; i < n; i++) {
+               damage[4*i + 0] = rects[4*i + 0];
+               damage[4*i + 1] = dri2_surf->base.Height - rects[4*i + 1] - rects[4*i + 3];
+               damage[4*i + 2] = rects[4*i + 2];
+               damage[4*i + 3] = rects[4*i + 3];
+            }
+            ANativeWindow_setBuffersDamageRegion(dri2_surf->window, damage, n);
+            free(damage);
+         } else {
+            _eglLog(_EGL_WARNING, "Failed to allocate damage region");
+         }
+      } else {
+         ANativeWindow_setBuffersDamageRegion(dri2_surf->window, NULL, 0);
+      }
+   }
+#endif
 
    dri2_flush_drawable_for_swapbuffers_flags(disp, draw,
                                              __DRI2_NOTHROTTLE_SWAPBUFFER);
@@ -680,6 +798,12 @@ droid_query_surface(_EGLDisplay *disp, _EGLSurface *surf, EGLint attribute,
                     EGLint *value)
 {
    struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
+   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+
+   if (dri2_dpy->kopper) {
+      break;
+   } // 可能将会删除这个
+
    switch (attribute) {
    case EGL_WIDTH:
       if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
@@ -778,68 +902,41 @@ droid_destroy_loader_image_state(void *loaderPrivate)
 #endif
 }
 
+static const struct droid_visual {
+   int hal_format;
+   enum pipe_format pipe_format;
+} droid_visuals[] = {
+   { HAL_PIXEL_FORMAT_RGBA_8888,   PIPE_FORMAT_RGBA8888_UNORM },
+   { HAL_PIXEL_FORMAT_RGBX_8888,   PIPE_FORMAT_RGBX8888_UNORM },
+   { HAL_PIXEL_FORMAT_RGB_565,     PIPE_FORMAT_B5G6R5_UNORM   },
+   { HAL_PIXEL_FORMAT_BGRA_8888,   PIPE_FORMAT_BGRA8888_UNORM },
+   { HAL_PIXEL_FORMAT_RGBA_FP16,   PIPE_FORMAT_R16G16B16A16_FLOAT },
+   { HAL_PIXEL_FORMAT_RGBA_1010102, PIPE_FORMAT_R10G10B10A2_UNORM },
+#ifdef HAL_PIXEL_FORMAT_YCBCR_420_888
+   { HAL_PIXEL_FORMAT_YCBCR_420_888, PIPE_FORMAT_NV12 },
+#endif
+};
+
 static void
 droid_add_configs_for_visuals(_EGLDisplay *disp)
 {
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
-   static const struct {
-      int hal_format;
-      enum pipe_format pipe_format;
-   } visuals[] = {
-      {HAL_PIXEL_FORMAT_RGBA_8888, PIPE_FORMAT_RGBA8888_UNORM},
-      {HAL_PIXEL_FORMAT_RGBX_8888, PIPE_FORMAT_RGBX8888_UNORM},
-      {HAL_PIXEL_FORMAT_RGB_565, PIPE_FORMAT_B5G6R5_UNORM},
-      /* This must be after HAL_PIXEL_FORMAT_RGBA_8888, we only keep BGRA
-       * visual if it turns out RGBA visual is not available.
-       */
-      {HAL_PIXEL_FORMAT_BGRA_8888, PIPE_FORMAT_BGRA8888_UNORM},
-   };
+   unsigned format_count[ARRAY_SIZE(droid_visuals)] = {0};
 
-   unsigned int format_count[ARRAY_SIZE(visuals)] = {0};
-
-   /* The nesting of loops is significant here. Also significant is the order
-    * of the HAL pixel formats. Many Android apps (such as Google's official
-    * NDK GLES2 example app), and even portions the core framework code (such
-    * as SystemServiceManager in Nougat), incorrectly choose their EGLConfig.
-    * They neglect to match the EGLConfig's EGL_NATIVE_VISUAL_ID against the
-    * window's native format, and instead choose the first EGLConfig whose
-    * channel sizes match those of the native window format while ignoring the
-    * channel *ordering*.
-    *
-    * We can detect such buggy clients in logcat when they call
-    * eglCreateSurface, by detecting the mismatch between the EGLConfig's
-    * format and the window's format.
-    *
-    * As a workaround, we generate EGLConfigs such that all EGLConfigs for HAL
-    * pixel format i precede those for HAL pixel format i+1. In my
-    * (chadversary) testing on Android Nougat, this was good enough to pacify
-    * the buggy clients.
-    */
-   bool has_rgba = false;
-   for (int i = 0; i < ARRAY_SIZE(visuals); i++) {
-      /* Only enable BGRA configs when RGBA is not available. BGRA configs are
-       * buggy on stock Android.
-       */
-      if (visuals[i].hal_format == HAL_PIXEL_FORMAT_BGRA_8888 && has_rgba)
-         continue;
+   for (int i = 0; i < ARRAY_SIZE(droid_visuals); i++) {
       for (int j = 0; dri2_dpy->driver_configs[j]; j++) {
          const struct gl_config *gl_config =
             (struct gl_config *) dri2_dpy->driver_configs[j];
-
-         /* Rather than have duplicate table entries for _SRGB formats, just
-          * use the linear version of the format for the comparision:
-          */
-         enum pipe_format linear_format =
-            util_format_linear(gl_config->color_format);
-         if (linear_format != visuals[i].pipe_format)
+         enum pipe_format linear = util_format_linear(gl_config->color_format);
+         if (linear != droid_visuals[i].pipe_format)
             continue;
 
          const EGLint surface_type = EGL_WINDOW_BIT | EGL_PBUFFER_BIT;
          const EGLint config_attrs[] = {
             EGL_NATIVE_VISUAL_ID,
-            visuals[i].hal_format,
+            droid_visuals[i].hal_format,
             EGL_NATIVE_VISUAL_TYPE,
-            visuals[i].hal_format,
+            droid_visuals[i].hal_format,
             EGL_FRAMEBUFFER_TARGET_ANDROID,
             EGL_TRUE,
             EGL_RECORDABLE_ANDROID,
@@ -853,14 +950,9 @@ droid_add_configs_for_visuals(_EGLDisplay *disp)
             format_count[i]++;
       }
 
-      if (visuals[i].hal_format == HAL_PIXEL_FORMAT_RGBA_8888 && format_count[i])
-         has_rgba = true;
-   }
-
-   for (int i = 0; i < ARRAY_SIZE(format_count); i++) {
       if (!format_count[i]) {
          _eglLog(_EGL_DEBUG, "No DRI config supports native format 0x%x",
-                 visuals[i].hal_format);
+                 droid_visuals[i].hal_format);
       }
    }
 }
@@ -1014,10 +1106,59 @@ static const __DRIextension *droid_swrast_image_loader_extensions[] = {
    NULL,
 };
 
+static_assert(sizeof(struct kopper_vk_surface_create_storage) >=
+                 sizeof(VkAndroidSurfaceCreateInfoKHR),
+              "");
+static void
+droid_kopper_set_surface_create_info(void *_draw, struct kopper_loader_info *out)
+{
+   struct dri2_egl_surface *dri2_surf = _draw;
+   struct dri2_egl_display *dri2_dpy =
+      dri2_egl_display(dri2_surf->base.Resource.Display);
+   VkAndroidSurfaceCreateInfoKHR *asci =
+      (VkAndroidSurfaceCreateInfoKHR *)&out->bos;
+
+   asci->sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+   asci->pNext = NULL;
+   asci->flags = 0;
+   asci->window = dri2_surf->window;   /* ANativeWindow* */
+
+   out->present_opaque = dri2_surf->base.PresentOpaque;
+
+   switch (dri2_surf->base.CompressionRate) {
+   case EGL_SURFACE_COMPRESSION_FIXED_RATE_NONE_EXT:
+      out->compression = 0;
+      break;
+   case EGL_SURFACE_COMPRESSION_FIXED_RATE_DEFAULT_EXT:
+      out->compression = UINT32_MAX;
+      break;
+#define EGL_VK_COMP(NUM) \
+   case EGL_SURFACE_COMPRESSION_FIXED_RATE_##NUM##BPC_EXT: \
+      out->compression = VK_IMAGE_COMPRESSION_FIXED_RATE_##NUM##BPC_BIT_EXT; \
+      break
+   EGL_VK_COMP(1); EGL_VK_COMP(2); EGL_VK_COMP(3); EGL_VK_COMP(4);
+   EGL_VK_COMP(5); EGL_VK_COMP(6); EGL_VK_COMP(7); EGL_VK_COMP(8);
+   EGL_VK_COMP(9); EGL_VK_COMP(10); EGL_VK_COMP(11); EGL_VK_COMP(12);
+#undef EGL_VK_COMP
+   default:
+      UNREACHABLE("unknown compression rate");
+   }
+}
+
+static void
+droid_kopper_get_drawable_info(struct dri_drawable *draw, int *w, int *h,
+                               void *loaderPrivate)
+{
+   struct dri2_egl_surface *dri2_surf = loaderPrivate;
+   *w = dri2_surf->base.Width;
+   *h = dri2_surf->base.Height;
+}
+
 static EGLBoolean
 droid_load_driver(_EGLDisplay *disp, bool swrast)
 {
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+   dri2_detect_swrast_kopper(disp);
 
    if (disp->Options.Zink)
       dri2_dpy->driver_name = strdup("zink");
@@ -1040,8 +1181,11 @@ droid_load_driver(_EGLDisplay *disp, bool swrast)
       }
    }
 
-   dri2_dpy->loader_extensions = droid_image_loader_extensions;
-   dri2_detect_swrast_kopper(disp);
+   if (dri2_dpy->kopper) {
+      dri2_dpy->loader_extensions = kopper_loader_extensions;
+   } else {
+      dri2_dpy->loader_extensions = droid_image_loader_extensions;
+   }
 
    return true;
 
@@ -1050,6 +1194,77 @@ error:
    dri2_dpy->driver_name = NULL;
    return false;
 }
+
+static EGLBoolean
+droid_kopper_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
+{
+   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
+   kopperSetSwapInterval(dri2_surf->dri_drawable, interval);
+   return EGL_TRUE;
+}
+
+static EGLBoolean
+droid_kopper_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
+{
+   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(draw);
+   kopperSwapBuffers(dri2_surf->dri_drawable,
+                     __DRI2_FLUSH_CONTEXT | __DRI2_FLUSH_INVALIDATE_ANCILLARY);
+   return EGL_TRUE;
+}
+
+static EGLBoolean
+droid_kopper_swap_buffers_with_damage(_EGLDisplay *disp, _EGLSurface *draw,
+                                      const EGLint *rects, EGLint numRects)
+{
+   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(draw);
+   if (numRects)
+      kopperSwapBuffersWithDamage(dri2_surf->dri_drawable,
+                                  __DRI2_FLUSH_CONTEXT | __DRI2_FLUSH_INVALIDATE_ANCILLARY,
+                                  numRects, rects);
+   else
+      kopperSwapBuffers(dri2_surf->dri_drawable,
+                        __DRI2_FLUSH_CONTEXT | __DRI2_FLUSH_INVALIDATE_ANCILLARY);
+
+   kopperQuerySurfaceSize(dri2_surf->dri_drawable,
+                          &dri2_surf->base.Width,
+                          &dri2_surf->base.Height);
+   return EGL_TRUE;
+}
+
+static EGLint
+droid_kopper_query_buffer_age(_EGLDisplay *disp, _EGLSurface *surf)
+{
+   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
+   return kopperQueryBufferAge(dri2_surf->dri_drawable);
+}
+
+static const struct dri2_egl_display_vtbl droid_kopper_display_vtbl = {
+   .authenticate = NULL,
+   .create_window_surface = droid_create_window_surface,
+   .create_pixmap_surface = NULL,
+   .create_pbuffer_surface = droid_create_pbuffer_surface,
+   .destroy_surface = droid_destroy_surface,
+   .swap_interval = droid_kopper_swap_interval,
+   .swap_buffers = droid_kopper_swap_buffers,
+   .swap_buffers_with_damage = droid_kopper_swap_buffers_with_damage,
+   .query_buffer_age = droid_kopper_query_buffer_age,
+   .query_surface = droid_query_surface,
+   .create_image = droid_create_image_khr,
+   .get_dri_drawable = dri2_surface_get_dri_drawable,
+   .set_shared_buffer_mode = droid_set_shared_buffer_mode,
+};
+
+static const __DRIkopperLoaderExtension kopper_loader_extension = {
+   .base = {__DRI_KOPPER_LOADER, 1},
+   .SetSurfaceCreateInfo = droid_kopper_set_surface_create_info,
+   .GetDrawableInfo = droid_kopper_get_drawable_info,
+};
+
+static const __DRIextension *kopper_loader_extensions[] = {
+   &kopper_loader_extension.base,
+   &image_lookup_extension.base,
+   NULL,
+};
 
 static void
 droid_unload_driver(_EGLDisplay *disp)
@@ -1165,6 +1380,7 @@ droid_open_device(_EGLDisplay *disp, bool swrast)
    if (dri2_dpy->fd_render_gpu < 0) {
       _eglLog(_EGL_WARNING, "Failed to open %s DRM device",
               vendor_name ? "desired" : "any");
+
       return EGL_FALSE;
    }
 
@@ -1177,6 +1393,8 @@ dri2_initialize_android(_EGLDisplay *disp)
    bool device_opened = false;
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    const char *err;
+
+   dri2_dpy->front_rendering_usage = 0;
 
    dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_AUTO);
    if (dri2_dpy->gralloc == NULL) {
@@ -1245,20 +1463,8 @@ dri2_initialize_android(_EGLDisplay *disp)
    disp->Extensions.KHR_image = EGL_TRUE;
 
    dri2_dpy->front_rendering_usage = 0;
-#if ANDROID_API_LEVEL >= 24
-   if (!dri2_dpy->swrast_not_kms &&
-       dri2_dpy->loader_extensions == droid_image_loader_extensions &&
-       /* In big GL, front rendering is done at the core API level by directly
-        * rendering on the front buffer. However, in ES, the front buffer is
-        * completely inaccessible through the core ES API.
-        *
-        * EGL_KHR_mutable_render_buffer is Android's attempt to re-introduce
-        * front rendering into ES by squeezing into EGL. Unlike big GL, this
-        * extension redirects GL_BACK used by ES for front rendering. Thus we
-        * restrict the enabling of this extension to ES only.
-        */
-       (disp->ClientAPIs & ~(EGL_OPENGL_ES_BIT | EGL_OPENGL_ES2_BIT |
-                             EGL_OPENGL_ES3_BIT_KHR)) == 0) {
+
+   if (!dri2_dpy->swrast_not_kms) {
       /* For cros gralloc, if the front rendering query is supported, then all
        * available window surface configs support front rendering because:
        *
@@ -1291,7 +1497,10 @@ dri2_initialize_android(_EGLDisplay *disp)
    /* Fill vtbl last to prevent accidentally calling virtual function during
     * initialization.
     */
-   dri2_dpy->vtbl = &droid_display_vtbl;
+   if (dri2_dpy->kopper)
+      dri2_dpy->vtbl = &droid_kopper_display_vtbl;
+   else
+      dri2_dpy->vtbl = &droid_display_vtbl;
 
    return EGL_TRUE;
 
