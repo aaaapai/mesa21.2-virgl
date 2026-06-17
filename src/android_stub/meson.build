@@ -7,7 +7,7 @@ if with_android_stub
   endif
 
   foreach lib : lib_names
-    stub_libs += shared_library(
+    stub_libs += static_library(
       lib,
       files(lib + '_stub.cpp'),
       include_directories : inc_include,
