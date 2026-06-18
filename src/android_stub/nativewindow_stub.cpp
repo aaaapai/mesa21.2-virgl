@@ -1,4 +1,3 @@
-#include <vndk/window.h>
 #include <system/window.h>
 #include <dlfcn.h>
 #include <stdlib.h>
