@@ -282,7 +282,7 @@ int32_t ANativeWindow_getHeight(ANativeWindow* window) {
 
 
 
-/*typedef int (*native_window_set_surface_damage_t)(ANativeWindow* window,
+typedef int (*native_window_set_surface_damage_t)(ANativeWindow* window,
                                                   const android_native_rect_t* rects,
                                                   size_t num_rects);
 
@@ -329,4 +329,4 @@ int native_window_set_surface_damage(ANativeWindow* window,
     return 0;
 }
 
-} // extern "C"*/
+} // extern "C"
