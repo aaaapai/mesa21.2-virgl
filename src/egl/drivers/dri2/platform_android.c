@@ -63,6 +63,40 @@
 #endif
 #endif
 
+enum {
+    NATIVE_WINDOW_SET_USAGE                 =  0,
+    NATIVE_WINDOW_CONNECT                   =  1,   /* deprecated */
+    NATIVE_WINDOW_DISCONNECT                =  2,   /* deprecated */
+    NATIVE_WINDOW_SET_CROP                  =  3,   /* private */
+    NATIVE_WINDOW_SET_BUFFER_COUNT          =  4,
+    NATIVE_WINDOW_SET_BUFFERS_GEOMETRY      =  5,   /* deprecated */
+    NATIVE_WINDOW_SET_BUFFERS_TRANSFORM     =  6,
+    NATIVE_WINDOW_SET_BUFFERS_TIMESTAMP     =  7,
+    NATIVE_WINDOW_SET_BUFFERS_DIMENSIONS    =  8,
+    NATIVE_WINDOW_SET_BUFFERS_FORMAT        =  9,
+    NATIVE_WINDOW_SET_SCALING_MODE          = 10,   /* private */
+    NATIVE_WINDOW_LOCK                      = 11,   /* private */
+    NATIVE_WINDOW_UNLOCK_AND_POST           = 12,   /* private */
+    NATIVE_WINDOW_API_CONNECT               = 13,   /* private */
+    NATIVE_WINDOW_API_DISCONNECT            = 14,   /* private */
+    NATIVE_WINDOW_SET_BUFFERS_USER_DIMENSIONS = 15, /* private */
+    NATIVE_WINDOW_SET_POST_TRANSFORM_CROP   = 16,   /* private */
+    NATIVE_WINDOW_SET_BUFFERS_STICKY_TRANSFORM = 17,/* private */
+    NATIVE_WINDOW_SET_SIDEBAND_STREAM       = 18,
+    NATIVE_WINDOW_SET_BUFFERS_DATASPACE     = 19,
+    NATIVE_WINDOW_SET_SURFACE_DAMAGE        = 20,   /* private */
+    NATIVE_WINDOW_SET_SHARED_BUFFER_MODE    = 21,
+    NATIVE_WINDOW_SET_AUTO_REFRESH          = 22,
+};
+static inline int native_window_set_surface_damage(
+        struct ANativeWindow* window,
+        const android_native_rect_t* rects, size_t numRects)
+{
+    return window->perform(window, NATIVE_WINDOW_SET_SURFACE_DAMAGE,
+            rects, numRects);
+}
+
+
 static struct dri_image *
 droid_create_image_from_buffer_info(
    struct dri2_egl_display *dri2_dpy, int width, int height,
