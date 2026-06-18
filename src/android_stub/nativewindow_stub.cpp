@@ -282,13 +282,6 @@ int32_t ANativeWindow_getHeight(ANativeWindow* window) {
 
 
 
-typedef struct android_native_rect {
-    int32_t left;
-    int32_t top;
-    int32_t right;
-    int32_t bottom;
-} android_native_rect_t;
-
 typedef int (*native_window_set_surface_damage_t)(ANativeWindow* window,
                                                   const android_native_rect_t* rects,
                                                   size_t num_rects);
