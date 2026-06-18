@@ -56,19 +56,12 @@
 
 #include "kopper_interface.h"
 
-#if ANDROID_API_LEVEL >= 26
+#if ANDROID_API_LEVEL >= 23
 #include <android/native_window.h>
 #ifndef ANATIVEWINDOW_QUERY_BUFFER_DAMAGE_SUPPORTED
 #define ANATIVEWINDOW_QUERY_BUFFER_DAMAGE_SUPPORTED 0x1000
 #endif
 #endif
-
-extern int native_window_set_surface_damage(ANativeWindow* window,
-                                            const void* rects,
-                                            size_t num_rects);
-typedef struct android_native_rect {
-    int32_t left, top, right, bottom;
-} android_native_rect_t;
 
 static struct dri_image *
 droid_create_image_from_buffer_info(
