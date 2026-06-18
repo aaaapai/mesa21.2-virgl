@@ -1,6 +1,6 @@
 if with_android_stub
   stub_libs = []
-  lib_names = ['hardware', 'nativewindow', 'sync']
+  lib_names = ['hardware', 'log', 'nativewindow', 'sync']
 
   if with_libbacktrace
     lib_names += ['backtrace']
@@ -17,9 +17,6 @@ if with_android_stub
 
   dep_android = declare_dependency(
     link_with : stub_libs,
-    dependencies : [
-      dependency('log'),
-    ]
   )
 
 endif
