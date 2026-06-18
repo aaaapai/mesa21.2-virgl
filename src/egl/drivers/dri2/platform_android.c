@@ -56,55 +56,6 @@
 
 #include "kopper_interface.h"
 
-#if ANDROID_API_LEVEL >= 23
-#include <android/native_window.h>
-#ifndef ANATIVEWINDOW_QUERY_BUFFER_DAMAGE_SUPPORTED
-#define ANATIVEWINDOW_QUERY_BUFFER_DAMAGE_SUPPORTED 0x1000
-#endif
-#endif
-
-static const __DRIkopperLoaderExtension kopper_loader_extension = {
-   .base = {__DRI_KOPPER_LOADER, 1},
-   .SetSurfaceCreateInfo = droid_kopper_set_surface_create_info,
-   .GetDrawableInfo = droid_kopper_get_drawable_info,
-};
-static const __DRIextension *kopper_loader_extensions[] = {
-   &kopper_loader_extension.base,
-   &image_lookup_extension.base,
-   NULL,
-};
-
-/* External function implemented in android_surface_damage.cpp */
-extern int native_window_set_surface_damage(ANativeWindow* window,
-                                            const android_native_rect_t* rects,
-                                            size_t num_rects);
-
-enum {
-    NATIVE_WINDOW_SET_USAGE                 =  0,
-    NATIVE_WINDOW_CONNECT                   =  1,   /* deprecated */
-    NATIVE_WINDOW_DISCONNECT                =  2,   /* deprecated */
-    NATIVE_WINDOW_SET_CROP                  =  3,   /* private */
-    NATIVE_WINDOW_SET_BUFFER_COUNT          =  4,
-    NATIVE_WINDOW_SET_BUFFERS_GEOMETRY      =  5,   /* deprecated */
-    NATIVE_WINDOW_SET_BUFFERS_TRANSFORM     =  6,
-    NATIVE_WINDOW_SET_BUFFERS_TIMESTAMP     =  7,
-    NATIVE_WINDOW_SET_BUFFERS_DIMENSIONS    =  8,
-    NATIVE_WINDOW_SET_BUFFERS_FORMAT        =  9,
-    NATIVE_WINDOW_SET_SCALING_MODE          = 10,   /* private */
-    NATIVE_WINDOW_LOCK                      = 11,   /* private */
-    NATIVE_WINDOW_UNLOCK_AND_POST           = 12,   /* private */
-    NATIVE_WINDOW_API_CONNECT               = 13,   /* private */
-    NATIVE_WINDOW_API_DISCONNECT            = 14,   /* private */
-    NATIVE_WINDOW_SET_BUFFERS_USER_DIMENSIONS = 15, /* private */
-    NATIVE_WINDOW_SET_POST_TRANSFORM_CROP   = 16,   /* private */
-    NATIVE_WINDOW_SET_BUFFERS_STICKY_TRANSFORM = 17,/* private */
-    NATIVE_WINDOW_SET_SIDEBAND_STREAM       = 18,
-    NATIVE_WINDOW_SET_BUFFERS_DATASPACE     = 19,
-    NATIVE_WINDOW_SET_SURFACE_DAMAGE        = 20,   /* private */
-    NATIVE_WINDOW_SET_SHARED_BUFFER_MODE    = 21,
-    NATIVE_WINDOW_SET_AUTO_REFRESH          = 22,
-};
-
 
 static struct dri_image *
 droid_create_image_from_buffer_info(
@@ -737,30 +688,6 @@ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
       return EGL_TRUE;
    }
 
-   if (dri2_dpy->kopper) {
-      if (draw->DamageRegion.num_rects > 0) {
-         kopperSwapBuffersWithDamage(dri2_surf->dri_drawable,
-                                     __DRI2_FLUSH_CONTEXT | __DRI2_FLUSH_INVALIDATE_ANCILLARY,
-                                     draw->DamageRegion.num_rects,
-                                     draw->DamageRegion.rects);
-      } else {
-         kopperSwapBuffers(dri2_surf->dri_drawable,
-                           __DRI2_FLUSH_CONTEXT | __DRI2_FLUSH_INVALIDATE_ANCILLARY);
-      }
-      kopperQuerySurfaceSize(dri2_surf->dri_drawable,
-                             &dri2_surf->base.Width,
-                             &dri2_surf->base.Height);
-
-      if (has_mutable_rb &&
-          draw->ActiveRenderBuffer != draw->RequestedRenderBuffer) {
-         bool mode = (draw->RequestedRenderBuffer == EGL_SINGLE_BUFFER);
-         if (!droid_set_shared_buffer_mode(disp, draw, mode))
-            return EGL_FALSE;
-         draw->ActiveRenderBuffer = draw->RequestedRenderBuffer;
-      }
-      return EGL_TRUE;
-   }
-
    for (int i = 0; i < dri2_surf->color_buffers_count; i++) {
       if (dri2_surf->color_buffers[i].age > 0)
          dri2_surf->color_buffers[i].age++;
@@ -771,34 +698,6 @@ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
     */
    if (dri2_surf->back)
       dri2_surf->back->age = 1;
-
-#if ANDROID_API_LEVEL >= 23
-   if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
-      int supported = 0;
-      ANativeWindow_query(dri2_surf->window,
-                          ANATIVEWINDOW_QUERY_BUFFER_DAMAGE_SUPPORTED,
-                          &supported);
-      if (supported && draw->Damage.num_rects > 0) {
-         EGLint *rects = draw->Damage.rects;
-         int n = draw->Damage.num_rects;
-         android_native_rect_t *damage = malloc(n * sizeof(android_native_rect_t));
-         if (damage) {
-            for (int i = 0; i < n; i++) {
-               damage[i].left   = rects[4*i + 0];
-               damage[i].top    = dri2_surf->base.Height - rects[4*i + 1] - rects[4*i + 3];
-               damage[i].right  = rects[4*i + 0] + rects[4*i + 2];
-               damage[i].bottom = dri2_surf->base.Height - rects[4*i + 1];
-            }
-            native_window_set_surface_damage(dri2_surf->window, damage, n);
-            free(damage);
-         } else {
-            _eglLog(_EGL_WARNING, "Failed to allocate damage region");
-         }
-      } else {
-         native_window_set_surface_damage(dri2_surf->window, NULL, 0);
-      }
-   }
-#endif
 
    dri2_flush_drawable_for_swapbuffers_flags(disp, draw,
                                              __DRI2_NOTHROTTLE_SWAPBUFFER);
@@ -1191,6 +1090,17 @@ droid_kopper_get_drawable_info(struct dri_drawable *draw, int *w, int *h,
    *h = dri2_surf->base.Height;
 }
 
+static const __DRIkopperLoaderExtension kopper_loader_extension = {
+   .base = {__DRI_KOPPER_LOADER, 1},
+   .SetSurfaceCreateInfo = droid_kopper_set_surface_create_info,
+   .GetDrawableInfo = droid_kopper_get_drawable_info,
+};
+static const __DRIextension *kopper_loader_extensions[] = {
+   &kopper_loader_extension.base,
+   &image_lookup_extension.base,
+   NULL,
+};
+
 static EGLBoolean
 droid_load_driver(_EGLDisplay *disp, bool swrast)
 {
@@ -1512,7 +1422,6 @@ dri2_initialize_android(_EGLDisplay *disp)
          disp->Extensions.KHR_mutable_render_buffer = EGL_TRUE;
       }
    }
-#endif
 
    /* Create configs *after* enabling extensions because presence of DRI
     * driver extensions can affect the capabilities of EGLConfigs.
