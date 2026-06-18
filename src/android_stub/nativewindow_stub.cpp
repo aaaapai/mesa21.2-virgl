@@ -1,4 +1,4 @@
-#include <system/window.h>
+#include <vndk/window.h>
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <android/log.h>
