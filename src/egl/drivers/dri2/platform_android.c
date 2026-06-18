@@ -63,6 +63,22 @@
 #endif
 #endif
 
+static const __DRIkopperLoaderExtension kopper_loader_extension = {
+   .base = {__DRI_KOPPER_LOADER, 1},
+   .SetSurfaceCreateInfo = droid_kopper_set_surface_create_info,
+   .GetDrawableInfo = droid_kopper_get_drawable_info,
+};
+static const __DRIextension *kopper_loader_extensions[] = {
+   &kopper_loader_extension.base,
+   &image_lookup_extension.base,
+   NULL,
+};
+
+/* External function implemented in android_surface_damage.cpp */
+extern int native_window_set_surface_damage(ANativeWindow* window,
+                                            const android_native_rect_t* rects,
+                                            size_t num_rects);
+
 enum {
     NATIVE_WINDOW_SET_USAGE                 =  0,
     NATIVE_WINDOW_CONNECT                   =  1,   /* deprecated */
@@ -88,13 +104,6 @@ enum {
     NATIVE_WINDOW_SET_SHARED_BUFFER_MODE    = 21,
     NATIVE_WINDOW_SET_AUTO_REFRESH          = 22,
 };
-static inline int native_window_set_surface_damage(
-        struct ANativeWindow* window,
-        const android_native_rect_t* rects, size_t numRects)
-{
-    return window->perform(window, NATIVE_WINDOW_SET_SURFACE_DAMAGE,
-            rects, numRects);
-}
 
 
 static struct dri_image *
@@ -462,7 +471,6 @@ droid_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
       ANativeWindow_release(dri2_surf->window);
    }
 
-   free(dri2_surf->compression_modifiers);
    if (dri2_surf->dri_image_back) {
       _eglLog(_EGL_DEBUG, "%s : %d : destroy dri_image_back", __func__,
               __LINE__);
@@ -770,16 +778,16 @@ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
       ANativeWindow_query(dri2_surf->window,
                           ANATIVEWINDOW_QUERY_BUFFER_DAMAGE_SUPPORTED,
                           &supported);
-      if (supported && draw->DamageRegion.num_rects > 0) {
-         EGLint *rects = draw->DamageRegion.rects;
-         int n = draw->DamageRegion.num_rects;
-         EGLint *damage = malloc(n * 4 * sizeof(EGLint));
+      if (supported && draw->Damage.num_rects > 0) {
+         EGLint *rects = draw->Damage.rects;
+         int n = draw->Damage.num_rects;
+         android_native_rect_t *damage = malloc(n * sizeof(android_native_rect_t));
          if (damage) {
             for (int i = 0; i < n; i++) {
-               damage[4*i + 0] = rects[4*i + 0];
-               damage[4*i + 1] = dri2_surf->base.Height - rects[4*i + 1] - rects[4*i + 3];
-               damage[4*i + 2] = rects[4*i + 2];
-               damage[4*i + 3] = rects[4*i + 3];
+               damage[i].left   = rects[4*i + 0];
+               damage[i].top    = dri2_surf->base.Height - rects[4*i + 1] - rects[4*i + 3];
+               damage[i].right  = rects[4*i + 0] + rects[4*i + 2];
+               damage[i].bottom = dri2_surf->base.Height - rects[4*i + 1];
             }
             native_window_set_surface_damage(dri2_surf->window, damage, n);
             free(damage);
@@ -832,31 +840,26 @@ droid_query_surface(_EGLDisplay *disp, _EGLSurface *surf, EGLint attribute,
                     EGLint *value)
 {
    struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
-   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
-
-   if (dri2_dpy->kopper) {
-      break;
-   } // 可能将会删除这个
 
    switch (attribute) {
    case EGL_WIDTH:
-      if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
+      if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window && !dri2_egl_display(disp)->kopper) {
          ANativeWindow_query(dri2_surf->window,
                              ANATIVEWINDOW_QUERY_DEFAULT_WIDTH, value);
          return EGL_TRUE;
       }
       break;
    case EGL_HEIGHT:
-      if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
+      if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window && !dri2_egl_display(disp)->kopper) {
          ANativeWindow_query(dri2_surf->window,
                              ANATIVEWINDOW_QUERY_DEFAULT_HEIGHT, value);
          return EGL_TRUE;
       }
       break;
    default:
-      break;
+      return _eglQuerySurface(disp, surf, attribute, value);
    }
-   return _eglQuerySurface(disp, surf, attribute, value);
+   return EGL_TRUE;
 }
 
 static _EGLImage *
@@ -1286,18 +1289,6 @@ static const struct dri2_egl_display_vtbl droid_kopper_display_vtbl = {
    .create_image = droid_create_image_khr,
    .get_dri_drawable = dri2_surface_get_dri_drawable,
    .set_shared_buffer_mode = droid_set_shared_buffer_mode,
-};
-
-static const __DRIkopperLoaderExtension kopper_loader_extension = {
-   .base = {__DRI_KOPPER_LOADER, 1},
-   .SetSurfaceCreateInfo = droid_kopper_set_surface_create_info,
-   .GetDrawableInfo = droid_kopper_get_drawable_info,
-};
-
-static const __DRIextension *kopper_loader_extensions[] = {
-   &kopper_loader_extension.base,
-   &image_lookup_extension.base,
-   NULL,
 };
 
 static void
