@@ -304,6 +304,9 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
                           native_window))
       goto cleanup_surface;
 
+   if (dri2_dpy->kopper && type == EGL_WINDOW_BIT && window)
+       dri2_surf->window = window;
+
    if (type == EGL_WINDOW_BIT) {
       int format;
       int buffer_count;
@@ -346,6 +349,9 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       ANativeWindow_query(window, ANATIVEWINDOW_QUERY_DEFAULT_HEIGHT,
                           &dri2_surf->base.Height);
 
+      if (dri2_dpy->kopper) {
+         // Nothing to do
+      } else {
       dri2_surf->gralloc_usage =
          ((strcmp(dri2_dpy->driver_name, "kms_swrast") == 0) ||
           (strcmp(dri2_dpy->driver_name, "swrast") == 0))
@@ -359,6 +365,9 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
          _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
          goto cleanup_surface;
       }
+
+      }
+
    }
 
    config = dri2_get_dri_config(dri2_conf, type, dri2_surf->base.GLColorspace);
@@ -371,8 +380,12 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
    if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
       goto cleanup_surface;
 
+   
    if (window) {
+      if (!dri2_dpy->kopper) {
       ANativeWindow_acquire(window);
+      }
+      if (!dri2_surf->window)
       dri2_surf->window = window;
    }
 
@@ -449,11 +462,14 @@ droid_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
 static EGLBoolean
 droid_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
 {
+   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
    struct ANativeWindow *window = dri2_surf->window;
 
-   if (ANativeWindow_setSwapInterval(window, interval))
-      return EGL_FALSE;
+   if (dri2_dpy->kopper)
+      kopperSetSwapInterval(dri2_surf->dri_drawable, interval);
+   else
+      ANativeWindow_setSwapInterval(window, interval);
 
    surf->SwapInterval = interval;
    return EGL_TRUE;
@@ -608,6 +624,13 @@ droid_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
    images->front = NULL;
    images->back = NULL;
 
+   if (dri2_egl_display(dri2_surf->base.Resource.Display)->kopper) {
+      kopperQuerySurfaceSize(dri2_surf->dri_drawable,
+                             &dri2_surf->base.Width,
+                             &dri2_surf->base.Height);
+      return 1;
+   }
+
    if (update_buffers(dri2_surf) < 0)
       return 0;
 
@@ -739,17 +762,26 @@ droid_query_surface(_EGLDisplay *disp, _EGLSurface *surf, EGLint attribute,
                     EGLint *value)
 {
    struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
+   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
 
    switch (attribute) {
    case EGL_WIDTH:
-      if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window && !dri2_egl_display(disp)->kopper) {
+      if (dri2_dpy->kopper) {
+         *value = dri2_surf->base.Width;
+         return EGL_TRUE;
+      }
+      if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
          ANativeWindow_query(dri2_surf->window,
                              ANATIVEWINDOW_QUERY_DEFAULT_WIDTH, value);
          return EGL_TRUE;
       }
       break;
    case EGL_HEIGHT:
-      if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window && !dri2_egl_display(disp)->kopper) {
+      if (dri2_dpy->kopper) {
+         *value = dri2_surf->base.Height;
+         return EGL_TRUE;
+      }
+      if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
          ANativeWindow_query(dri2_surf->window,
                              ANATIVEWINDOW_QUERY_DEFAULT_HEIGHT, value);
          return EGL_TRUE;
@@ -983,7 +1015,11 @@ droid_swrast_get_drawable_info(struct dri_drawable *drawable,
 {
    struct dri2_egl_surface *dri2_surf = loaderPrivate;
 
-   update_buffers(dri2_surf);
+   if (dri2_egl_display(dri2_surf->base.Resource.Display)->kopper) {
+      kopperQuerySurfaceSize(dri2_surf->dri_drawable, &dri2_surf->base.Width, &dri2_surf->base.Height);
+   } else {
+      update_buffers(dri2_surf);
+   }
 
    *x = 0;
    *y = 0;
