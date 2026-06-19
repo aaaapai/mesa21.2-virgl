@@ -39,7 +39,7 @@ endif
 
 libgallium_dri = shared_library(
   libgallium_name,
-  files('dri_target.c'),
+  files('dri_target.c', 'glxshim.cpp'),
   include_directories : [
     inc_include, inc_src, inc_mesa, inc_gallium, inc_gallium_aux, inc_util, inc_gallium_drivers,
     inc_gallium_winsys, include_directories('../../frontends/dri'),
