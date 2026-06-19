@@ -1367,7 +1367,7 @@ dri2_initialize_android(_EGLDisplay *disp)
 
    if (disp->Options.Zink) {
       dri2_dpy->driver_name = strdup("zink");
-      dri2_dpy->loader_extensions = droid_kopper_image_loader_extensions;
+      dri2_dpy->loader_extensions = kopper_loader_extensions;
       dri2_dpy->fd_render_gpu = -1;
       dri2_dpy->pure_swrast = true;
       dri2_detect_swrast_kopper(disp);
