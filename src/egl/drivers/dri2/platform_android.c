@@ -1365,6 +1365,22 @@ dri2_initialize_android(_EGLDisplay *disp)
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    const char *err;
 
+   if (disp->Options.Zink) {
+      dri2_dpy->driver_name = strdup("zink");
+      dri2_dpy->loader_extensions = droid_kopper_image_loader_extensions;
+      dri2_dpy->fd_render_gpu = -1;
+      dri2_dpy->pure_swrast = true;
+      dri2_detect_swrast_kopper(disp);
+
+      if (!dri2_create_screen(disp)) {
+         err = "DRI2: Failed to create kopper screen";
+         goto cleanup;
+      }
+
+      device_opened = EGL_TRUE;
+   }
+
+   if (!disp->Options.Zink) {
    dri2_dpy->front_rendering_usage = 0;
 
    dri2_dpy->gralloc = u_gralloc_create(U_GRALLOC_TYPE_AUTO);
@@ -1397,6 +1413,8 @@ dri2_initialize_android(_EGLDisplay *disp)
    if (!device_opened) {
       err = "DRI2: failed to open device";
       goto cleanup;
+   }
+   
    }
 
    dri2_dpy->fd_display_gpu = dri2_dpy->fd_render_gpu;
