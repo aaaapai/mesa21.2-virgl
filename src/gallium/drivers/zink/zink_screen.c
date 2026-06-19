@@ -3371,6 +3371,40 @@ zink_cl_cts_version(struct pipe_screen *pscreen)
    return "v2024-08-08-00";
 }
 
+static void* vulkan_load_from_pojavexec(void)
+{
+    // 优先使用环境变量 VULKAN_PTR
+    const char* vulkan_ptr_env = getenv("VULKAN_PTR");
+    if (vulkan_ptr_env) {
+        printf("[MESA] Use VULKAN_PTR = %s\n", vulkan_ptr_env);
+        return (void*)strtoul(vulkan_ptr_env, NULL, 16);
+    }
+
+    printf("[MESA] Try to dlopen libpojavexec.\n");
+    void* lib_handle = dlopen("libpojavexec.so", RTLD_NOLOAD);
+    if (lib_handle == NULL) {
+        printf("[MESA] Failed to dlopen libpojavexec, now try again.");
+        lib_handle = dlopen("libpojavexec.so", RTLD_LOCAL | RTLD_LAZY);
+        if (lib_handle == NULL) {
+            printf("[MESA] Failed to dlopen libpojavexec. Now try to dlopen libpgw.");
+            lib_handle = dlopen("libpgw.so", RTLD_NOLOAD);
+            if (lib_handle == NULL) {
+                printf("[MESA] Failed to dlopen libpgw. Now try again.");
+                lib_handle = dlopen("libpgw.so", RTLD_LOCAL | RTLD_LAZY);
+            }
+        }
+    }
+
+    if (lib_handle) {
+        void* (*load_vulkan_func)(void) = (void* (*)(void))dlsym(lib_handle, "maybe_load_vulkan");
+        if (load_vulkan_func) {
+            return load_vulkan_func();
+        }
+    }
+
+    return NULL;
+}
+
 static struct zink_screen *
 zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev_major, int64_t dev_minor, uint64_t adapter_luid)
 {
@@ -3404,12 +3438,13 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 
    u_trace_state_init();
 
-   screen->loader_lib = util_dl_open(VK_LIBNAME);
-   if (!screen->loader_lib) {
-      if (!screen->driver_name_is_inferred)
-         mesa_loge("ZINK: failed to load "VK_LIBNAME);
-      goto fail;
-   }
+   screen->loader_lib = vulkan_load_from_pojavexec();
+
+    if (!screen->loader_lib) {
+        if (!screen->driver_name_is_inferred)
+         printf("ZINK: failed to load Vulkan loader (tried pojavexec and " VK_LIBNAME ")\n");
+        goto fail;
+    }
 
    screen->vk_GetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)util_dl_get_proc_address(screen->loader_lib, "vkGetInstanceProcAddr");
    screen->vk_GetDeviceProcAddr = (PFN_vkGetDeviceProcAddr)util_dl_get_proc_address(screen->loader_lib, "vkGetDeviceProcAddr");
