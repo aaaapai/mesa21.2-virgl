@@ -62,7 +62,7 @@ zink_kopper_set_present_mode_for_interval(struct kopper_displaytarget *cdt, int 
       if (presentEnv == "MAILBOX") cdt->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
       if (presentEnv == "IMMEDIATE") cdt->present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
       if (presentEnv == "FIFO") cdt->present_mode = VK_PRESENT_MODE_FIFO_KHR;
-      if (presentEnv == "RELAXED") cdt->present_mode = VK_PRESENT_MODE_RELAXED_KHR;
+      if (presentEnv == "RELAXED") cdt->present_mode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
 
    assert(cdt->present_modes & BITFIELD_BIT(cdt->present_mode));
 #endif
