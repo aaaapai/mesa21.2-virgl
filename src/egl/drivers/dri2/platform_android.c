@@ -1160,8 +1160,6 @@ droid_load_driver(_EGLDisplay *disp, bool swrast)
       }
    }
 
-   }
-
    if (dri2_dpy->kopper) {
       dri2_dpy->loader_extensions = kopper_loader_extensions;
    } else {
