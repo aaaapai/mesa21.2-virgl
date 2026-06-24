@@ -304,9 +304,6 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
                           native_window))
       goto cleanup_surface;
 
-   if (dri2_dpy->kopper && type == EGL_WINDOW_BIT && window)
-       dri2_surf->window = window;
-
    if (type == EGL_WINDOW_BIT) {
       int format;
       int buffer_count;
@@ -349,9 +346,6 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       ANativeWindow_query(window, ANATIVEWINDOW_QUERY_DEFAULT_HEIGHT,
                           &dri2_surf->base.Height);
 
-      if (dri2_dpy->kopper) {
-         // Nothing to do
-      } else {
       dri2_surf->gralloc_usage =
          ((strcmp(dri2_dpy->driver_name, "kms_swrast") == 0) ||
           (strcmp(dri2_dpy->driver_name, "swrast") == 0))
@@ -366,8 +360,6 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
          goto cleanup_surface;
       }
 
-      }
-
    }
 
    config = dri2_get_dri_config(dri2_conf, type, dri2_surf->base.GLColorspace);
@@ -376,6 +368,9 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
                 "Unsupported surfacetype/colorspace configuration");
       goto cleanup_surface;
    }
+
+   if (dri2_dpy->kopper)
+       dri2_surf->window = window;
 
    if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
       goto cleanup_surface;
@@ -619,23 +614,21 @@ droid_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
                         uint32_t buffer_mask, struct __DRIimageList *images)
 {
    struct dri2_egl_surface *dri2_surf = loaderPrivate;
+   struct dri2_egl_display *dri2_dpy = dri2_egl_display(dri2_surf->base.Resource.Display);
 
    images->image_mask = 0;
    images->front = NULL;
    images->back = NULL;
 
-   if (dri2_egl_display(dri2_surf->base.Resource.Display)->kopper) {
+   if (dri2_dpy->kopper) {
       kopperQuerySurfaceSize(dri2_surf->dri_drawable,
                              &dri2_surf->base.Width,
                              &dri2_surf->base.Height);
-      return 1;
-   }
-
-   if (update_buffers(dri2_surf) < 0)
+   } else if (update_buffers(dri2_surf) < 0)
       return 0;
 
    if (_eglSurfaceInSharedBufferMode(&dri2_surf->base)) {
-      if (get_back_bo(dri2_surf) < 0)
+      if (!dri2_dpy->kopper && get_back_bo(dri2_surf) < 0)
          return 0;
 
       /* We have dri_image_back because this is a window surface and
@@ -650,7 +643,7 @@ droid_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
    }
 
    if (buffer_mask & __DRI_IMAGE_BUFFER_FRONT) {
-      if (get_front_bo(dri2_surf, format) < 0)
+      if (!dri2_dpy->kopper && get_front_bo(dri2_surf, format) < 0)
          return 0;
 
       if (dri2_surf->dri_image_front) {
@@ -660,7 +653,7 @@ droid_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
    }
 
    if (buffer_mask & __DRI_IMAGE_BUFFER_BACK) {
-      if (get_back_bo(dri2_surf) < 0)
+      if (!dri2_dpy->kopper && get_back_bo(dri2_surf) < 0)
          return 0;
 
       if (dri2_surf->dri_image_back) {
@@ -1132,6 +1125,9 @@ static const __DRIkopperLoaderExtension kopper_loader_extension = {
    .GetDrawableInfo = droid_kopper_get_drawable_info,
 };
 static const __DRIextension *kopper_loader_extensions[] = {
+   &droid_image_loader_extension.base,
+   &droid_mutable_render_buffer_extension.base,
+   &swrast_loader_extension.base,
    &kopper_loader_extension.base,
    &image_lookup_extension.base,
    NULL,
@@ -1163,6 +1159,8 @@ droid_load_driver(_EGLDisplay *disp, bool swrast)
          goto error;
       }
    }
+
+   if (!dri2_dpy->kopper) dri2_load_driver(disp);
 
    if (dri2_dpy->kopper) {
       dri2_dpy->loader_extensions = kopper_loader_extensions;
@@ -1400,6 +1398,7 @@ dri2_initialize_android(_EGLDisplay *disp)
       dri2_dpy->loader_extensions = droid_swrast_image_loader_extensions;
       dri2_dpy->fd_render_gpu = -1;
       dri2_dpy->pure_swrast = true;
+      dri2_load_driver(disp);
       dri2_detect_swrast_kopper(disp);
 
       if (!dri2_create_screen(disp)) {
