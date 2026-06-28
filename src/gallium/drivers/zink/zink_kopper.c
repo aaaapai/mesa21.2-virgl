@@ -53,17 +53,9 @@ zink_kopper_set_present_mode_for_interval(struct kopper_displaytarget *cdt, int 
          cdt->present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
       else
          cdt->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-
    } else if (interval > 0) {
       cdt->present_mode = VK_PRESENT_MODE_FIFO_KHR;
    }
-
-      const char* presentEnv = getenv("ZINK_PRESENT_MODES");
-      if (presentEnv == "MAILBOX") cdt->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-      if (presentEnv == "IMMEDIATE") cdt->present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
-      if (presentEnv == "FIFO") cdt->present_mode = VK_PRESENT_MODE_FIFO_KHR;
-      if (presentEnv == "RELAXED") cdt->present_mode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
-
    assert(cdt->present_modes & BITFIELD_BIT(cdt->present_mode));
 #endif
 }
@@ -341,6 +333,7 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
 
    /* different display platforms have, by vulkan spec, different sizing methodologies */
    switch (cdt->type) {
+   case KOPPER_ANDROID:
    case KOPPER_X11:
    case KOPPER_WIN32:
       /* With Xcb, minImageExtent, maxImageExtent, and currentExtent must always equal the window size.
@@ -361,7 +354,6 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
          cswap->scci.imageExtent.height = cdt->caps.currentExtent.height;
       }
       break;
-   case KOPPER_ANDROID:
    case KOPPER_WAYLAND:
       /* On Wayland, currentExtent is the special value (0xFFFFFFFF, 0xFFFFFFFF), indicating that the
        * surface size will be determined by the extent of a swapchain targeting the surface. Whatever the

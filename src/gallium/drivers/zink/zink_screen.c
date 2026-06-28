@@ -30,6 +30,7 @@
 #include "zink_fence.h"
 #include "vk_format.h"
 #include "zink_format.h"
+#include "zink_framebuffer.h"
 #include "zink_program.h"
 #include "zink_public.h"
 #include "zink_query.h"
@@ -275,6 +276,20 @@ zink_is_parallel_shader_compilation_finished(struct pipe_screen *screen, void *s
       finished &= util_queue_fence_is_signalled(&prog->base.cache_fence);
    }
    return finished;
+}
+
+static uint32_t
+hash_framebuffer_state(const void *key)
+{
+   struct zink_framebuffer_state* s = (struct zink_framebuffer_state*)key;
+   return _mesa_hash_data(key, offsetof(struct zink_framebuffer_state, attachments) + sizeof(s->attachments[0]) * s->num_attachments);
+}
+
+static bool
+equals_framebuffer_state(const void *a, const void *b)
+{
+   struct zink_framebuffer_state *s = (struct zink_framebuffer_state*)a;
+   return memcmp(a, b, offsetof(struct zink_framebuffer_state, attachments) + sizeof(s->attachments[0]) * s->num_attachments) == 0;
 }
 
 static VkDeviceSize
@@ -766,7 +781,7 @@ zink_init_screen_caps(struct zink_screen *screen)
 #if defined(MVK_VERSION)
    caps->fbfetch = 0;
 #else
-   caps->fbfetch = screen->info.have_KHR_dynamic_rendering_local_read;
+   caps->fbfetch = 1;
 #endif
    caps->fbfetch_coherent = caps->fbfetch && screen->info.have_EXT_rasterization_order_attachment_access;
 
@@ -1600,6 +1615,12 @@ zink_destroy_screen(struct pipe_screen *pscreen)
 
    if (screen->gfx_push_constant_layout)
       VKSCR(DestroyPipelineLayout)(screen->dev, screen->gfx_push_constant_layout, NULL);
+   if (!screen->info.have_KHR_imageless_framebuffer) {
+      hash_table_foreach(&screen->framebuffer_cache, entry) {
+         struct zink_framebuffer* fb = (struct zink_framebuffer*)entry->data;
+         zink_destroy_framebuffer(screen, fb);
+      }
+   }
 
    for (unsigned i = 0; i < ARRAY_SIZE(screen->pipeline_libs); i++)
       _mesa_set_fini(&screen->pipeline_libs[i], NULL);
@@ -2400,11 +2421,18 @@ bool
 zink_screen_init_semaphore(struct zink_screen *screen)
 {
    VkSemaphoreCreateInfo sci = {0};
-   VkSemaphoreTypeCreateInfo tci = {0};
-   sci.pNext = &tci;
    sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-   tci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
-   tci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+   sci.flags = 0;
+
+   VkSemaphoreTypeCreateInfo tci = {0};
+   if (screen->use_timeline_semaphore) {
+      tci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+      tci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+      tci.initialValue = 0;
+      sci.pNext = &tci;
+   } else {
+      sci.pNext = NULL;
+   }
 
    return VKSCR(CreateSemaphore)(screen->dev, &sci, NULL, &screen->sem) == VK_SUCCESS;
 }
@@ -2564,6 +2592,79 @@ zink_screen_timeline_wait(struct zink_screen *screen, uint64_t batch_id, uint64_
 
    if (success)
       zink_screen_update_last_finished(screen, batch_id);
+
+   return success;
+}
+
+struct noop_submit_info {
+   struct zink_screen *screen;
+   VkFence fence;
+};
+
+static void
+noop_submit(void *data, void *gdata, int thread_index)
+{
+   struct noop_submit_info *n = data;
+   VkSubmitInfo si = {0};
+   si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+   if (n->VKSCR(QueueSubmit)(n->screen->queue,
+                     1, &si, n->fence) != VK_SUCCESS) {
+      mesa_loge("ZINK: vkQueueSubmit failed");
+      n->screen->device_lost = true;
+   }
+}
+
+bool
+zink_screen_batch_id_wait(struct zink_screen *screen, uint64_t batch_id, uint64_t timeout)
+{
+   if (zink_screen_check_last_finished(screen, batch_id))
+      return true;
+
+   if (screen->use_timeline_semaphore)
+      return zink_screen_timeline_wait(screen, batch_id, timeout);
+
+   if (!timeout)
+      return false;
+
+   uint32_t new_id = 0;
+   while (!new_id)
+      new_id = p_atomic_inc_return(&screen->curr_batch);
+   VkResult ret;
+   struct noop_submit_info n;
+   uint64_t abs_timeout = os_time_get_absolute_timeout(timeout);
+   uint64_t remaining = PIPE_TIMEOUT_INFINITE;
+   VkFenceCreateInfo fci = {0};
+   struct util_queue_fence fence;
+   util_queue_fence_init(&fence);
+   fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+
+   if (VKSCR(CreateFence)(screen->dev, &fci, NULL, &n.fence) != VK_SUCCESS) {
+      mesa_loge("ZINK: vkCreateFence failed");
+      return false;
+   }
+
+   n.screen = screen;
+   if (screen->threaded) {
+      /* must use thread dispatch for sanity */
+      util_queue_add_job(&screen->flush_queue, &n, &fence, noop_submit, NULL, 0);
+      util_queue_fence_wait(&fence);
+   } else {
+      noop_submit(&n, NULL, 0);
+   }
+   if (timeout != PIPE_TIMEOUT_INFINITE) {
+      int64_t time_ns = os_time_get_nano();
+      remaining = abs_timeout > time_ns ? abs_timeout - time_ns : 0;
+   }
+
+   if (remaining)
+      ret = VKSCR(WaitForFences)(screen->dev, 1, &n.fence, VK_TRUE, remaining);
+   else
+      ret = VKSCR(GetFenceStatus)(screen->dev, n.fence);
+   VKSCR(DestroyFence)(screen->dev, n.fence, NULL);
+   bool success = zink_screen_handle_vkresult(screen, ret);
+
+   if (success)
+      zink_screen_update_last_finished(screen, new_id);
 
    return success;
 }
@@ -3590,11 +3691,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    }
 
    zink_internal_setup_moltenvk(screen);
-   if (!screen->info.have_KHR_timeline_semaphore && !screen->info.feats12.timelineSemaphore) {
-      if (!screen->driver_name_is_inferred)
-         mesa_loge("zink: KHR_timeline_semaphore is required");
-      goto fail;
-   }
 
    /* Reject IMG blobs with DDK below 24.1@6554834 if not forced */
    if (zink_driverid(screen) == VK_DRIVER_ID_IMAGINATION_PROPRIETARY && screen->info.props.driverVersion < 6554834) {
@@ -3749,10 +3845,31 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 
    screen->driconf.inline_uniforms = debug_get_bool_option("ZINK_INLINE_UNIFORMS", screen->is_cpu);
 
+   if (!screen->info.have_KHR_timeline_semaphore && !screen->info.feats12.timelineSemaphore) {
+      mesa_logw("zink: KHR_timeline_semaphore not supported, using fallback synchronization");
+      screen->use_timeline_semaphore = false;
+   } else {
+      screen->use_timeline_semaphore = true;
+   }
+
+   if (screen->use_timeline_semaphore) {
+
    if (!zink_screen_init_semaphore(screen)) {
       if (!screen->driver_name_is_inferred)
          mesa_loge("zink: failed to create timeline semaphore");
       goto fail;
+   }
+
+   }
+   
+   screen->use_legacy_rendering = !(screen->vk_version >= VK_MAKE_VERSION(1,3,0) ||
+                                    screen->info.have_KHR_dynamic_rendering);
+   if (screen->use_legacy_rendering) {
+      mesa_logw("zink: VK_KHR_dynamic_rendering not supported, using legacy renderpass path.");
+   }
+
+   if (!screen->info.have_KHR_imageless_framebuffer) {
+      _mesa_hash_table_init(&screen->framebuffer_cache, screen, hash_framebuffer_state, equals_framebuffer_state);
    }
 
    bool can_db = true;

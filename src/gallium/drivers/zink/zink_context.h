@@ -311,6 +311,9 @@ zink_copy_image_buffer(struct zink_context *ctx, struct zink_resource *dst, stru
                        unsigned buffer_layer_stride,
                        unsigned level, const struct pipe_box *src_box, enum pipe_map_flags map_flags);
 
+unsigned
+framebuffer_get_num_layers(const struct pipe_framebuffer_state *fb);
+
 #endif
 
 #endif

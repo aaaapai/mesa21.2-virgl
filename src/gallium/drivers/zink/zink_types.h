@@ -298,6 +298,8 @@ struct zink_fence {
    bool submitted;
    bool completed;
    struct util_dynarray mfences;
+   
+   VkFence fence;
 };
 
 
@@ -682,6 +684,7 @@ struct zink_batch_state {
    bool has_work;
    bool has_reordered_work;
    bool has_unsync;
+
 };
 
 static inline struct zink_batch_state *
@@ -943,6 +946,10 @@ struct zink_gfx_pipeline_state {
       } shader_keys_optimal;
    };
    struct zink_blend_state *blend_state;
+
+   struct zink_render_pass *render_pass;
+   struct zink_render_pass *next_render_pass; // will be used next time rp is begun
+
    VkFormat rendering_formats[PIPE_MAX_COLOR_BUFS];
    VkPipelineRenderingCreateInfo rendering_info;
    VkPipeline pipeline;
@@ -1141,11 +1148,11 @@ struct zink_gfx_program {
    /* separable */
    struct zink_gfx_program *full_prog;
 
-   struct hash_table pipelines[11]; // [number of draw modes we support]
+   struct hash_table pipelines[2][11]; // [dynamic, renderpass][number of draw modes we support]
    uint32_t last_variant_hash;
 
-   uint32_t last_finalized_hash[4]; //[primtype idx]
-   struct zink_gfx_pipeline_cache_entry *last_pipeline[4]; //[primtype idx]
+   uint32_t last_finalized_hash[2][4]; //[dynamic, renderpass][primtype idx]
+   struct zink_gfx_pipeline_cache_entry *last_pipeline[2][4]; //[dynamic, renderpass][primtype idx]
 
    struct zink_gfx_lib_cache *libs;
 };
@@ -1191,6 +1198,49 @@ struct zink_rt_attrib {
   bool needs_write;
   bool resolve;
   bool feedback_loop;
+};
+
+struct zink_render_pass_state {
+   union {
+      struct {
+         uint8_t num_cbufs : 5; /* PIPE_MAX_COLOR_BUFS = 8 */
+         uint8_t have_zsbuf : 1;
+         uint8_t samples:1; //for fs samplemask
+         uint32_t num_zsresolves : 1;
+         uint32_t num_cresolves : 24; /* PIPE_MAX_COLOR_BUFS, but this is a struct hole */
+      };
+      uint32_t val; //for comparison
+   };
+   struct zink_rt_attrib rts[PIPE_MAX_COLOR_BUFS + 1];
+   unsigned num_rts;
+   uint32_t clears; //for extra verification and update flagging
+   uint16_t msaa_expand_mask;
+   uint16_t msaa_samples; //used with VK_EXT_multisampled_render_to_single_sampled
+};
+
+struct zink_pipeline_rt {
+   VkFormat format;
+   VkSampleCountFlagBits samples;
+};
+
+struct zink_render_pass_pipeline_state {
+   uint32_t num_attachments:14;
+   uint32_t msaa_samples : 8;
+   uint32_t fbfetch:1;
+   uint32_t color_read:1;
+   uint32_t depth_read:1;
+   uint32_t depth_write:1;
+   uint32_t num_cresolves:4;
+   uint32_t num_zsresolves:1;
+   bool samples:1; //for fs samplemask
+   struct zink_pipeline_rt attachments[PIPE_MAX_COLOR_BUFS + 1];
+   unsigned id;
+};
+
+struct zink_render_pass {
+   VkRenderPass render_pass;
+   struct zink_render_pass_state state;
+   unsigned pipeline_state;
 };
 
 /** resource types */
@@ -1364,6 +1414,22 @@ struct zink_format_props {
    VkFormatFeatureFlags2 linearTilingFeatures;
    VkFormatFeatureFlags2 optimalTilingFeatures;
    VkFormatFeatureFlags2 bufferFeatures;
+};
+
+struct zink_render_pass_key {
+   uint32_t num_color_attachments;
+   VkFormat color_formats[PIPE_MAX_COLOR_BUFS];
+   VkFormat depth_format, stencil_format;
+   VkSampleCountFlagBits samples;
+   uint32_t viewMask;
+   bool clear_color[PIPE_MAX_COLOR_BUFS];
+   bool clear_depth, clear_stencil;
+};
+
+struct zink_framebuffer_key {
+   VkRenderPass render_pass;
+   uint32_t width, height, layers;
+   uint64_t attachment_views[PIPE_MAX_COLOR_BUFS + 2];
 };
 
 struct zink_screen {
@@ -1559,6 +1625,10 @@ struct zink_screen {
       /* intel driver is somehow broken for srgb-compatible dmabufs...but only in mesa CI */
       bool srgb_dmabufs;
    } driver_workarounds;
+   
+   bool use_timeline_semaphore;
+   bool use_legacy_rendering;
+
 };
 
 static inline struct zink_screen *
@@ -1595,6 +1665,35 @@ struct zink_surface_key {
 struct zink_surface {
    struct zink_surface_key key;
    VkImageView image_view;
+};
+
+
+/** framebuffer types */
+struct zink_framebuffer_state {
+   uint32_t width;
+   uint16_t height;
+   uint32_t layers:6;
+   uint32_t samples:6;
+   uint32_t num_attachments:4;
+   union {
+      struct zink_surface_info infos[PIPE_MAX_COLOR_BUFS + 1];
+      VkImageView attachments[PIPE_MAX_COLOR_BUFS + 1];
+   };
+};
+
+struct zink_framebuffer {
+   struct pipe_reference reference;
+
+   /* current objects */
+   VkFramebuffer fb;
+   struct zink_render_pass *rp;
+
+   struct zink_framebuffer_state state;
+   union {
+      struct pipe_surface *surfaces[PIPE_MAX_COLOR_BUFS + 1];
+      VkFramebufferAttachmentImageInfo infos[PIPE_MAX_COLOR_BUFS + 1];
+   };
+   struct hash_table objects;
 };
 
 
@@ -1772,6 +1871,7 @@ struct zink_context {
 
    uint32_t transient_attachments;
    struct pipe_framebuffer_state fb_state;
+   struct hash_table framebuffer_cache;
    VkFormat fb_formats[PIPE_MAX_COLOR_BUFS + 1];
    struct zink_resource *fb_resolve[2];
 
@@ -1825,8 +1925,11 @@ struct zink_context {
    } dynamic_fb;
    uint32_t fb_layer_mismatch; //bitmask
    struct set rendering_state_cache[6]; //[util_logbase2_ceil(msrtss samplecount)]
+   struct set render_pass_state_cache;
+   struct hash_table *render_pass_cache;
    struct zink_resource *swapchain;
    VkExtent2D swapchain_size;
+   bool fb_changed;
    bool awaiting_resolve; //from tc info
    bool in_rp; //renderpass is currently active
    bool rp_draw; //renderpass has draws
@@ -1987,6 +2090,11 @@ struct zink_context {
 
    bool gfx_dirty;
    bool mesh_dirty;
+
+   struct hash_table *render_pass_cache;
+   struct hash_table *framebuffer_cache;
+   bool in_legacy_render_pass;
+   struct zink_framebuffer *framebuffer;
 
    bool shobj_draw : 1; //using shader objects for draw
    bool is_device_lost;

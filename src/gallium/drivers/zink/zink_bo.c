@@ -727,7 +727,7 @@ init_timeline_wait(struct zink_context *ctx, struct zink_resource *res, bool com
    VkTimelineSemaphoreSubmitInfo timeline = {
       VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
       NULL,
-      1,
+      screen->use_timeline_semaphore ? 1 : 0,
       &screen->curr_batch
    };
 
@@ -748,6 +748,7 @@ init_timeline_wait(struct zink_context *ctx, struct zink_resource *res, bool com
       simple_mtx_lock(screen->queue_lock);
    }
    *wait = screen->sem;
+   if (!screen->use_timeline_semaphore) return (VkTimelineSemaphoreSubmitInfo){0};
    timeline.pWaitSemaphoreValues = &screen->curr_batch;
 
    return timeline;
@@ -760,6 +761,7 @@ buffer_commit_single(struct zink_context *ctx, struct zink_resource *res, struct
    VkSemaphore sem = zink_create_semaphore(screen);
    VkTimelineSemaphoreSubmitInfo timeline = init_timeline_wait(ctx, res, commit, &wait);
    VkBindSparseInfo sparse = {0};
+   VkFence fence = VK_NULL_HANDLE;
    sparse.sType = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO;
    sparse.pNext = &timeline;
    sparse.bufferBindCount = 1;
@@ -780,10 +782,27 @@ buffer_commit_single(struct zink_context *ctx, struct zink_resource *res, struct
    mem_bind.memoryOffset = bo_offset * ZINK_SPARSE_BUFFER_PAGE_SIZE + (commit ? (bo->mem ? 0 : bo->offset) : 0);
    mem_bind.flags = 0;
    sparse_bind.pBinds = &mem_bind;
+   VkResult ret;
 
-   VkResult ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, VK_NULL_HANDLE);
-   if (zink_screen_handle_vkresult(screen, ret))
-      return sem;
+   if (!screen->use_timeline_semaphore) {
+      VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+      if (VKSCR(CreateFence)(screen->dev, &fci, NULL, &fence) != VK_SUCCESS) {
+         mesa_loge("ZINK: vkCreateFence failed");
+         VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+         return VK_NULL_HANDLE;
+      }
+      sparse.pNext = NULL;
+      ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, fence);
+      if (ret == VK_SUCCESS) {
+         vkWaitForFences(screen->dev, 1, &fence, VK_TRUE, UINT64_MAX);
+      }
+      VKSCR(DestroyFence)(screen->dev, fence, NULL);
+      VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+      return ret == VK_SUCCESS ? VK_NULL_HANDLE : VK_NULL_HANDLE;
+   } else {
+      ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, VK_NULL_HANDLE);
+      if (zink_screen_handle_vkresult(screen, ret)) return sem;
+   }
    VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
    return VK_NULL_HANDLE;
 }
@@ -914,6 +933,7 @@ texture_commit_single(struct zink_context *ctx, struct zink_resource *res, VkSpa
    struct zink_screen *screen = zink_screen(ctx->base.screen);
    VkSemaphore sem = zink_create_semaphore(screen);
    VkTimelineSemaphoreSubmitInfo timeline = init_timeline_wait(ctx, res, commit, &wait);
+   VkFence fence = VK_NULL_HANDLE;
    VkBindSparseInfo sparse = {0};
    sparse.sType = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO;
    sparse.pNext = &timeline;
@@ -929,11 +949,30 @@ texture_commit_single(struct zink_context *ctx, struct zink_resource *res, VkSpa
    sparse_ibind.pBinds = ibind;
    sparse.pImageBinds = &sparse_ibind;
 
-   VkResult ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, VK_NULL_HANDLE);
-   if (zink_screen_handle_vkresult(screen, ret))
-      return sem;
-   VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
-   return VK_NULL_HANDLE;
+   VkResult ret;
+
+   if (!screen->use_timeline_semaphore) {
+      VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+      if (VKSCR(CreateFence)(screen->dev, &fci, NULL, &fence) != VK_SUCCESS) {
+         mesa_loge("ZINK: vkCreateFence failed");
+         VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+         return VK_NULL_HANDLE;
+      }
+      sparse.pNext = NULL;
+      ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, fence);
+      if (ret == VK_SUCCESS) {
+         vkWaitForFences(screen->dev, 1, &fence, VK_TRUE, UINT64_MAX);
+      }
+      VKSCR(DestroyFence)(screen->dev, fence, NULL);
+      VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+      return ret == VK_SUCCESS ? VK_NULL_HANDLE : VK_NULL_HANDLE;
+   } else {
+      ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, VK_NULL_HANDLE);
+      if (zink_screen_handle_vkresult(screen, ret)) return sem;
+      VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+      return VK_NULL_HANDLE;
+   }
+
 }
 
 static VkSemaphore
@@ -942,6 +981,7 @@ texture_commit_miptail(struct zink_context *ctx, struct zink_resource *res, stru
    struct zink_screen *screen = zink_screen(ctx->base.screen);
    VkSemaphore sem = zink_create_semaphore(screen);
    VkTimelineSemaphoreSubmitInfo timeline = init_timeline_wait(ctx, res, commit, &wait);
+   VkFence fence = VK_NULL_HANDLE;
    VkBindSparseInfo sparse = {0};
    sparse.sType = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO;
    sparse.pNext = &timeline;
@@ -963,12 +1003,31 @@ texture_commit_miptail(struct zink_context *ctx, struct zink_resource *res, stru
    mem_bind.memoryOffset = bo_offset + (commit ? (bo->mem ? 0 : bo->offset) : 0);
    mem_bind.flags = 0;
    sparse_bind.pBinds = &mem_bind;
+   
+   VkResult ret;
 
-   VkResult ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, VK_NULL_HANDLE);
-   if (zink_screen_handle_vkresult(screen, ret))
-      return sem;
-   VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
-   return VK_NULL_HANDLE;
+   if (!screen->use_timeline_semaphore) {
+      VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+      if (VKSCR(CreateFence)(screen->dev, &fci, NULL, &fence) != VK_SUCCESS) {
+         mesa_loge("ZINK: vkCreateFence failed");
+         VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+         return VK_NULL_HANDLE;
+      }
+      sparse.pNext = NULL;
+      ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, fence);
+      if (ret == VK_SUCCESS) {
+         vkWaitForFences(screen->dev, 1, &fence, VK_TRUE, UINT64_MAX);
+      }
+      VKSCR(DestroyFence)(screen->dev, fence, NULL);
+      VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+      return ret == VK_SUCCESS ? VK_NULL_HANDLE : VK_NULL_HANDLE;
+   } else {
+      ret = VKSCR(QueueBindSparse)(screen->queue_sparse, 1, &sparse, VK_NULL_HANDLE);
+      if (zink_screen_handle_vkresult(screen, ret)) return sem;
+      VKSCR(DestroySemaphore)(screen->dev, sem, NULL);
+      return VK_NULL_HANDLE;
+   }
+
 }
 
 bool

@@ -190,6 +190,9 @@ bool
 zink_screen_timeline_wait(struct zink_screen *screen, uint64_t batch_id, uint64_t timeout);
 
 bool
+zink_screen_batch_id_wait(struct zink_screen *screen, uint64_t batch_id, uint64_t timeout);
+
+bool
 zink_is_depth_format_supported(struct zink_screen *screen, VkFormat format);
 
 #define GET_PROC_ADDR_INSTANCE_LOCAL(screen, instance, x) PFN_vk##x vk_##x = (PFN_vk##x)(screen)->vk_GetInstanceProcAddr(instance, "vk"#x)

@@ -104,7 +104,12 @@ zink_create_gfx_pipeline(struct zink_screen *screen,
    VkPipelineColorBlendStateCreateInfo blend_state = {0};
    blend_state.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
    if (state->blend_state) {
-      unsigned num_attachments = state->rendering_info.colorAttachmentCount;
+      unsigned num_attachments = state->render_pass ?
+                                 state->render_pass->state.num_rts :
+                                 state->rendering_info.colorAttachmentCount;
+      if (state->render_pass && state->render_pass->state.have_zsbuf)
+         num_attachments--;
+
       blend_state.pAttachments = state->blend_state->attachments;
       blend_state.attachmentCount = num_attachments;
       blend_state.logicOpEnable = state->blend_state->logicop_enable;
@@ -362,7 +367,10 @@ zink_create_gfx_pipeline(struct zink_screen *screen,
    if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB)
       pci.flags |= VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
    pci.layout = prog->base.layout;
-   pci.pNext = &state->rendering_info;
+   if (state->render_pass)
+      pci.renderPass = state->render_pass->render_pass;
+   else
+      pci.pNext = &state->rendering_info;
    if (!is_mesh) {
       if (needs_vi)
          pci.pVertexInputState = &vertex_input_state;

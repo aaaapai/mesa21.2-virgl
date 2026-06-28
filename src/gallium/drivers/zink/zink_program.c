@@ -986,10 +986,12 @@ zink_program_finish(struct zink_context *ctx, struct zink_program *pg)
    if (pg->is_compute)
       return;
    struct zink_gfx_program *prog = (struct zink_gfx_program*)pg;
-   for (int i = 0; i < ARRAY_SIZE(prog->pipelines); ++i) {
-      hash_table_foreach(&prog->pipelines[i], entry) {
-         struct zink_gfx_pipeline_cache_entry *pc_entry = entry->data;
-         util_queue_fence_wait(&pc_entry->fence);
+   for (int r = 0; r < ARRAY_SIZE(prog->pipelines); ++r) {
+      for (int i = 0; i < ARRAY_SIZE(prog->pipelines[0]); ++i) {
+         hash_table_foreach(&prog->pipelines[r][i], entry) {
+            struct zink_gfx_pipeline_cache_entry *pc_entry = entry->data;
+            util_queue_fence_wait(&pc_entry->fence);
+         }
       }
    }
 }
@@ -1337,8 +1339,10 @@ gfx_program_create(struct zink_context *ctx,
    prog->has_edgeflags = prog->shaders[MESA_SHADER_VERTEX] &&
                          prog->shaders[MESA_SHADER_VERTEX]->has_edgeflags;
 
-   for (int i = 0; i < ARRAY_SIZE(prog->pipelines); ++i) {
+   for (int r = 0; r < ARRAY_SIZE(prog->pipelines); ++r) {
+   for (int i = 0; i < ARRAY_SIZE(prog->pipelines[0]); ++i) {
       _mesa_hash_table_init(&prog->pipelines[i], prog->base.ralloc_ctx, NULL, zink_get_gfx_pipeline_eq_func(screen, prog));
+   }
    }
    return prog;
 
@@ -1512,8 +1516,10 @@ create_gfx_program_separable(struct zink_context *ctx, struct zink_shader **stag
    */
    p_atomic_add(&prog->base.reference.count, refs - 1);
 
-   for (int i = 0; i < ARRAY_SIZE(prog->pipelines); ++i) {
+   for (int r = 0; r < ARRAY_SIZE(prog->pipelines); ++r) {
+   for (int i = 0; i < ARRAY_SIZE(prog->pipelines[0]); ++i) {
       _mesa_hash_table_init(&prog->pipelines[i], prog->base.ralloc_ctx, NULL, zink_get_gfx_pipeline_eq_func(screen, prog));
+   }
    }
 
    for (int i = 0; i < MESA_SHADER_MESH_STAGES; ++i) {
@@ -1846,7 +1852,8 @@ zink_destroy_gfx_program(struct zink_screen *screen,
 {
    if (prog->is_separable)
       zink_gfx_program_reference(screen, &prog->full_prog, NULL);
-   for (int i = 0; i < ARRAY_SIZE(prog->pipelines); ++i) {
+   for (int r = 0; r < ARRAY_SIZE(prog->pipelines); ++r) {
+   for (int i = 0; i < ARRAY_SIZE(prog->pipelines[0]); ++i) {
       hash_table_foreach(&prog->pipelines[i], entry) {
          struct zink_gfx_pipeline_cache_entry *pc_entry = entry->data;
 
@@ -1855,6 +1862,7 @@ zink_destroy_gfx_program(struct zink_screen *screen,
          VKSCR(DestroyPipeline)(screen->dev, pc_entry->gpl.unoptimized_pipeline, NULL);
          free(pc_entry);
       }
+   }
    }
 
    deinit_program(screen, &prog->base);

@@ -494,6 +494,7 @@ zink_blit(struct pipe_context *pctx,
    bool zsbuf_unused = ctx->zsbuf_unused;
    bool zsbuf_readonly = ctx->zsbuf_readonly;
    ctx->unordered_blitting = !(info->render_condition_enable && ctx->render_condition_active) &&
+                             zink_screen(ctx->base.screen)->info.have_KHR_dynamic_rendering &&
                              !needs_present_readback &&
                              zink_get_cmdbuf(ctx, src, dst) == ctx->bs->reordered_cmdbuf;
    VkCommandBuffer cmdbuf = ctx->bs->cmdbuf;
