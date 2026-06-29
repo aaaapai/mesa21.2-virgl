@@ -2632,7 +2632,7 @@ zink_screen_batch_id_wait(struct zink_screen *screen, uint64_t batch_id, uint64_
    VkResult ret;
    struct noop_submit_info n;
    uint64_t abs_timeout = os_time_get_absolute_timeout(timeout);
-   uint64_t remaining = PIPE_TIMEOUT_INFINITE;
+   uint64_t remaining = 0xffffffffffffffffull;
    VkFenceCreateInfo fci = {0};
    struct util_queue_fence fence;
    util_queue_fence_init(&fence);
@@ -2651,7 +2651,7 @@ zink_screen_batch_id_wait(struct zink_screen *screen, uint64_t batch_id, uint64_
    } else {
       noop_submit(&n, NULL, 0);
    }
-   if (timeout != PIPE_TIMEOUT_INFINITE) {
+   if (timeout != 0xffffffffffffffffull) {
       int64_t time_ns = os_time_get_nano();
       remaining = abs_timeout > time_ns ? abs_timeout - time_ns : 0;
    }

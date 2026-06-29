@@ -250,9 +250,9 @@ zink_context_destroy(struct pipe_context *pctx)
       hash_table_foreach(&ctx->framebuffer_cache, he)
          zink_destroy_framebuffer(screen, he->data);
    } else if (ctx->framebuffer) {
-      struct hash_entry *entry = _mesa_hash_table_search(&screen->framebuffer_cache, &ctx->framebuffer->state);
+      struct hash_entry *entry = _mesa_hash_table_search(&ctx->framebuffer_cache, &ctx->framebuffer->state);
       if (zink_framebuffer_reference(screen, &ctx->framebuffer, NULL))
-         _mesa_hash_table_remove(&screen->framebuffer_cache, entry);
+         _mesa_hash_table_remove(&ctx->framebuffer_cache, entry);
    }
 
    hash_table_foreach(ctx->render_pass_cache, he)
@@ -3566,13 +3566,12 @@ zink_batch_rp(struct zink_context *ctx)
           struct zink_framebuffer *fb = zink_get_framebuffer_image(ctx);
           struct zink_screen *screen = zink_screen(ctx->base.screen);
 
-          struct hash_entry *he = _mesa_hash_table_search(&screen->framebuffer_cache, &ctx->framebuffer->state);
+          struct hash_entry *he = _mesa_hash_table_search(&ctx->framebuffer_cache, &ctx->framebuffer->state);
           if (ctx->framebuffer && !ctx->framebuffer->state.num_attachments) {
              /* if this has no attachments then its lifetime has ended */
-             _mesa_hash_table_remove(&screen->framebuffer_cache, he);
+             _mesa_hash_table_remove(&ctx->framebuffer_cache, he);
              he = NULL;
-             /* ensure an unflushed fb doesn't get destroyed by deferring it */
-             util_dynarray_append(&ctx->batch.state->dead_framebuffers, struct zink_framebuffer*, ctx->framebuffer);
+             zink_framebuffer_reference(screen, &ctx->framebuffer, NULL);
              ctx->framebuffer = NULL;
       }
       /* a framebuffer loses 1 ref every time we unset it;
@@ -3580,7 +3579,7 @@ zink_batch_rp(struct zink_context *ctx)
        * get_framebuffer()
        */
       if (zink_framebuffer_reference(screen, &ctx->framebuffer, NULL) && he)
-         _mesa_hash_table_remove(&screen->framebuffer_cache, he);
+         _mesa_hash_table_remove(&ctx->framebuffer_cache, he);
    }
    ctx->fb_changed |= ctx->framebuffer != fb;
    ctx->framebuffer = fb;
@@ -3980,7 +3979,7 @@ stall(struct zink_context *ctx)
    if (screen->use_timeline_semaphore)
    zink_screen_timeline_wait(screen, ctx->last_batch_state->fence.batch_id, OS_TIMEOUT_INFINITE);
    else
-   zink_vkfence_wait(screen, ctx->last_batch_state, 0xffffffffffffffffull);
+   zink_vkfence_wait(screen, &ctx->last_batch_state, OS_TIMEOUT_INFINITE);
 }
 
 void
@@ -4575,9 +4574,9 @@ zink_wait_on_batch(struct zink_context *ctx, uint64_t batch_id)
    }
    struct zink_fence *fence;
 
-   assert(ctx->last_batch_state);
-   if (batch_id == zink_batch_state(ctx->last_batch_state)->fence.batch_id)
-      fence = ctx->last_batch_state;
+   struct zink_batch_state *bs = ctx->last_batch_state;
+   if (bs && batch_id == bs->fence.batch_id)
+      fence = &bs->fence;
    else {
       for (bs = ctx->batch_states; bs; bs = bs->next) {
          if (bs->fence.batch_id < batch_id)
@@ -4597,7 +4596,7 @@ zink_wait_on_batch(struct zink_context *ctx, uint64_t batch_id)
       fence = &bs->fence;
    }
    assert(fence);
-   sync_flush(ctx, zink_batch_state(fence));
+   sync_flush(ctx, (struct zink_batch_state *)fence);
    zink_vkfence_wait(screen, fence, 0xffffffffffffffffull);
 
 }
@@ -4626,10 +4625,10 @@ zink_check_batch_completion(struct zink_context *ctx, uint64_t batch_id)
    
    struct zink_fence *fence;
 
-   if (ctx->last_batch_state && batch_id == zink_batch_state(ctx->last_batch_state)->fence.batch_id)
-      fence = ctx->last_batch_state;
+   struct zink_batch_state *bs = ctx->last_batch_state;
+   if (bs && batch_id == bs->fence.batch_id)
+      fence = &bs->fence;
    else {
-      struct zink_batch_state *bs;
       for (bs = ctx->batch_states; bs; bs = bs->next) {
          if (bs->fence.batch_id < batch_id)
             continue;

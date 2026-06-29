@@ -573,7 +573,7 @@ zink_clear_texture(struct pipe_context *pctx,
      zink_blit_barriers(ctx, NULL, res, false);
      ctx->blitting = true;
      ctx->queries_disabled = true;
-     pctx->clear(pctx, PIPE_CLEAR_COLOR0, 0xffffffff, 0xff, &scissor, &tmp, 0, 0);
+     pctx->clear(pctx, PIPE_CLEAR_COLOR0, 0xffffffff, 0xff, &scissor, &color, 0, 0);
      util_blitter_restore_fb_state(ctx->blitter);
      ctx->queries_disabled = false;
      ctx->blitting = false;
