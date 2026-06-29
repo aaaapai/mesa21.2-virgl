@@ -3980,7 +3980,7 @@ stall(struct zink_context *ctx)
    if (screen->use_timeline_semaphore)
    zink_screen_timeline_wait(screen, ctx->last_batch_state->fence.batch_id, OS_TIMEOUT_INFINITE);
    else
-   zink_vkfence_wait(screen, ctx->last_batch_state, PIPE_TIMEOUT_INFINITE);
+   zink_vkfence_wait(screen, ctx->last_batch_state, 0xffffffffffffffffull);
 }
 
 void
@@ -4598,7 +4598,7 @@ zink_wait_on_batch(struct zink_context *ctx, uint64_t batch_id)
    }
    assert(fence);
    sync_flush(ctx, zink_batch_state(fence));
-   zink_vkfence_wait(screen, fence, PIPE_TIMEOUT_INFINITE);
+   zink_vkfence_wait(screen, fence, 0xffffffffffffffffull);
 
 }
 

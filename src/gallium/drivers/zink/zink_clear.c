@@ -493,7 +493,6 @@ zink_clear_texture_dynamic(struct pipe_context *pctx,
    uint8_t stencil = 0;
    if (res->aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
       util_format_unpack_rgba(pres->format, tmp.ui, data, 1);
-      zink_convert_color(screen, psurf.format, &color, &tmp);
    } else {
       if (res->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)
          util_format_unpack_z_float(pres->format, &depth, data, 1);
@@ -574,7 +573,7 @@ zink_clear_texture(struct pipe_context *pctx,
      zink_blit_barriers(ctx, NULL, res, false);
      ctx->blitting = true;
      ctx->queries_disabled = true;
-     pctx->clear(pctx, PIPE_CLEAR_COLOR0, &scissor, &color, 0, 0);
+     pctx->clear(pctx, PIPE_CLEAR_COLOR0, 0xffffffff, 0xff, &scissor, &tmp, 0, 0);
      util_blitter_restore_fb_state(ctx->blitter);
      ctx->queries_disabled = false;
      ctx->blitting = false;
@@ -598,7 +597,7 @@ zink_clear_texture(struct pipe_context *pctx,
      ctx->blitting = true;
      set_clear_fb(pctx, NULL, &surf);
      ctx->queries_disabled = true;
-     pctx->clear(pctx, flags, &scissor, NULL, depth, stencil);
+     pctx->clear(pctx, flags, 0xffffffff, 0xff, &scissor, NULL, depth, stencil);
      util_blitter_restore_fb_state(ctx->blitter);
      ctx->queries_disabled = false;
      ctx->blitting = false;

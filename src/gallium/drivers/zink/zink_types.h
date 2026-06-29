@@ -684,6 +684,8 @@ struct zink_batch_state {
    bool has_work;
    bool has_reordered_work;
    bool has_unsync;
+   
+   bool have_timelines;
 
 };
 

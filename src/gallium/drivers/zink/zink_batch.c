@@ -214,13 +214,15 @@ pop_batch_state(struct zink_context *ctx)
 void
 zink_batch_reset_all(struct zink_context *ctx)
 {
+   struct zink_screen *screen = zink_screen(ctx->base.screen);
+
    while (ctx->batch_states) {
       struct zink_batch_state *bs = ctx->batch_states;
       bs->fence.completed = true;
       pop_batch_state(ctx);
       if (bs->fence.submitted && !bs->fence.completed && bs->fence.fence)
          /* this fence is already done, so we need vulkan to release the cmdbuf */
-         zink_vkfence_wait(screen, &bs->fence, PIPE_TIMEOUT_INFINITE);
+         zink_vkfence_wait(screen, &bs->fence, 0xffffffffffffffffull);
       zink_reset_batch_state(ctx, bs);
       zink_batch_state_append(&ctx->free_batch_states, &ctx->last_free_batch_state, bs);
    }
