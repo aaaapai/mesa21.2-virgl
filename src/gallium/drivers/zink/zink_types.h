@@ -1676,7 +1676,7 @@ struct zink_framebuffer_state {
    uint32_t samples:6;
    uint32_t num_attachments:4;
    union {
-      struct zink_surface_info infos[PIPE_MAX_COLOR_BUFS + 1];
+      VkFramebufferAttachmentImageInfo infos[PIPE_MAX_COLOR_BUFS + 1];
       VkImageView attachments[PIPE_MAX_COLOR_BUFS + 1];
    };
 };
@@ -2091,9 +2091,6 @@ struct zink_context {
    bool gfx_dirty;
    bool mesh_dirty;
 
-   struct hash_table *render_pass_cache;
-   struct hash_table *framebuffer_cache;
-   bool in_legacy_render_pass;
    struct zink_framebuffer *framebuffer;
 
    bool shobj_draw : 1; //using shader objects for draw

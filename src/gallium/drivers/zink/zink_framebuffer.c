@@ -27,6 +27,8 @@
 #include "zink_render_pass.h"
 #include "zink_screen.h"
 #include "zink_surface.h"
+#include "zink_format.h"
+#include "zink_resource.h"
 
 #include "util/u_framebuffer.h"
 #include "util/u_memory.h"
@@ -107,13 +109,24 @@ out:
 }
 
 static void
-populate_attachment_info(VkFramebufferAttachmentImageInfo *att, struct zink_surface_info *info)
+fill_attachment_image_info(struct zink_surface *surf,
+                           VkFramebufferAttachmentImageInfo *info,
+                           VkFormat *viewFormatStorage)
 {
-  att->sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_ATTACHMENT_IMAGE_INFO;
-  att->pNext = NULL;
-  memcpy(&att->flags, &info->flags, offsetof(struct zink_surface_info, format));
-  att->viewFormatCount = 1 + !!info->format[1];
-  att->pViewFormats = info->format;
+   struct zink_resource *res = zink_resource(surf->base.texture);
+   struct zink_resource_object *obj = res->obj;
+   struct zink_screen *screen = zink_screen(res->base.screen);
+
+   info->sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_ATTACHMENT_IMAGE_INFO;
+   info->pNext = NULL;
+   info->flags = obj->vkflags;
+   info->usage = obj->vkusage;
+   info->width = res->base.width0;
+   info->height = res->base.height0;
+   info->layerCount = surf->key.last_layer - surf->key.first_layer + 1;
+   info->viewFormatCount = 1;
+   *viewFormatStorage = zink_get_format(screen, surf->key.format);
+   info->pViewFormats = viewFormatStorage;
 }
 
 static struct zink_framebuffer *
@@ -128,8 +141,7 @@ create_framebuffer_imageless(struct zink_context *ctx, struct zink_framebuffer_s
   if (!_mesa_hash_table_init(&fb->objects, fb, _mesa_hash_pointer, _mesa_key_pointer_equal))
      goto fail;
   memcpy(&fb->state, state, sizeof(struct zink_framebuffer_state));
-  for (int i = 0; i < state->num_attachments; i++)
-     populate_attachment_info(&fb->infos[i], &fb->state.infos[i]);
+  memcpy(fb->infos, state->infos, state->num_attachments * sizeof(VkFramebufferAttachmentImageInfo));
 
   return fb;
 fail:
@@ -148,6 +160,9 @@ zink_get_framebuffer(struct zink_context *ctx)
 
   const unsigned cresolve_offset = ctx->fb_state.nr_cbufs + !!have_zsbuf;
   unsigned num_resolves = 0;
+  VkFormat viewFormats[2 * (PIPE_MAX_COLOR_BUFS + 2)] = {0};
+  unsigned viewFormatIdx = 0;
+
   for (int i = 0; i < ctx->fb_state.nr_cbufs; i++) {
      struct pipe_surface *psurf = ctx->fb_cbufs[i];
      if (!psurf) {
@@ -156,11 +171,11 @@ zink_get_framebuffer(struct zink_context *ctx)
      struct zink_surface *surface = zink_csurface(psurf);
      struct zink_surface *transient = zink_transient_surface(psurf);
      if (transient) {
-        memcpy(&state.infos[i], &transient->info, sizeof(transient->info));
-        memcpy(&state.infos[cresolve_offset + i], &surface->info, sizeof(surface->info));
+        fill_attachment_image_info(transient, &state.infos[i], &viewFormats[viewFormatIdx++]);
+        fill_attachment_image_info(surface, &state.infos[cresolve_offset + i], &viewFormats[viewFormatIdx++]);
         num_resolves++;
      } else {
-        memcpy(&state.infos[i], &surface->info, sizeof(surface->info));
+        fill_attachment_image_info(surface, &state.infos[i], &viewFormats[viewFormatIdx++]);
      }
   }
 
@@ -170,11 +185,11 @@ zink_get_framebuffer(struct zink_context *ctx)
      struct zink_surface *surface = zink_csurface(psurf);
      struct zink_surface *transient = zink_transient_surface(psurf);
      if (transient) {
-        memcpy(&state.infos[state.num_attachments], &transient->info, sizeof(transient->info));
-        memcpy(&state.infos[zsresolve_offset], &surface->info, sizeof(surface->info));
+        fill_attachment_image_info(transient, &state.infos[state.num_attachments], &viewFormats[viewFormatIdx++]);
+        fill_attachment_image_info(surface, &state.infos[zsresolve_offset], &viewFormats[viewFormatIdx++]);
         num_resolves++;
      } else {
-        memcpy(&state.infos[state.num_attachments], &surface->info, sizeof(surface->info));
+        fill_attachment_image_info(surface, &state.infos[state.num_attachments], &viewFormats[viewFormatIdx++]);
      }
      state.num_attachments++;
   }

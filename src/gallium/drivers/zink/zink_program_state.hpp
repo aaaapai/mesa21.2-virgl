@@ -161,11 +161,11 @@ zink_get_gfx_pipeline(struct zink_context *ctx,
    if (IS_MESH) {
       state->mesh_modules_changed = false;
 
-      if (prog->last_finalized_hash[idx] == state->mesh_final_hash &&
-         !prog->inline_variants && likely(prog->last_pipeline[idx]) &&
+      if (prog->last_finalized_hash[rp_idx][idx] == state->mesh_final_hash &&
+         !prog->inline_variants && likely(prog->last_pipeline[rp_idx][idx]) &&
          /* this data is too big to compare in the fast-path */
          likely(!prog->shaders[MESA_SHADER_FRAGMENT]->fs.legacy_shadow_mask)) {
-         state->mesh_pipeline = prog->last_pipeline[idx]->pipeline;
+         state->mesh_pipeline = prog->last_pipeline[rp_idx][idx]->pipeline;
          return state->mesh_pipeline;
       }
    } else {

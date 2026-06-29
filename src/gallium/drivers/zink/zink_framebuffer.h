@@ -34,7 +34,7 @@ zink_destroy_framebuffer(struct zink_screen *screen,
                          struct zink_framebuffer *fbuf);
 
 void
--debug_describe_zink_framebuffer(char* buf, const struct zink_framebuffer *ptr);
+debug_describe_zink_framebuffer(char* buf, const struct zink_framebuffer *ptr);
 
 static inline bool
 zink_framebuffer_reference(struct zink_screen *screen,

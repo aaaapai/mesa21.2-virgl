@@ -3852,14 +3852,9 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
       screen->use_timeline_semaphore = true;
    }
 
-   if (screen->use_timeline_semaphore) {
-
    if (!zink_screen_init_semaphore(screen)) {
       if (!screen->driver_name_is_inferred)
-         mesa_loge("zink: failed to create timeline semaphore");
-      goto fail;
-   }
-
+         mesa_loge("zink: failed to create timeline semaphore, hoping it still runs well");
    }
    
    screen->use_legacy_rendering = !(screen->vk_version >= VK_MAKE_VERSION(1,3,0) ||
