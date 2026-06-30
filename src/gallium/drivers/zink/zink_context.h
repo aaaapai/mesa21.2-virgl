@@ -314,6 +314,12 @@ zink_copy_image_buffer(struct zink_context *ctx, struct zink_resource *dst, stru
 unsigned
 framebuffer_get_num_layers(const struct pipe_framebuffer_state *fb);
 
+bool
+prep_fb_attachment(struct zink_context *ctx, struct zink_resource *res, unsigned i);
+
+void
+zink_update_vk_sample_locations(struct zink_context *ctx);
+
 #endif
 
 #endif

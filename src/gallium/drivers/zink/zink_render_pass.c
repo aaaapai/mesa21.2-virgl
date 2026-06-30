@@ -24,6 +24,7 @@
 #include "zink_context.h"
 #include "zink_clear.h"
 #include "zink_kopper.h"
+#include "zink_format.h"
 #include "zink_query.h"
 #include "zink_render_pass.h"
 #include "zink_framebuffer.h"
@@ -420,7 +421,7 @@ get_render_pass(struct zink_context *ctx)
          zink_tc_init_color_attachment(ctx, &ctx->dynamic_fb.tc_info, i, &state.rts[i]);
       else
          zink_init_color_attachment(ctx, i, &state.rts[i]);
-      struct pipe_surface *surf = ctx->fb_cbufs[i];
+      struct pipe_surface *surf = ctx->fb_state.cbufs[i].texture ? &ctx->fb_state.cbufs[i] : NULL;
       if (surf) {
          clears |= !!state.rts[i].clear_color ? PIPE_CLEAR_COLOR0 << i : 0;
          struct zink_surface *transient = zink_transient_surface(surf);
@@ -445,7 +446,7 @@ get_render_pass(struct zink_context *ctx)
          zink_tc_init_zs_attachment(ctx, &ctx->dynamic_fb.tc_info, &state.rts[fb->nr_cbufs]);
       else
          zink_init_zs_attachment(ctx, &state.rts[fb->nr_cbufs]);
-      struct zink_surface *transient = zink_transient_surface(ctx->fb_zsbuf);
+      struct zink_surface *transient = zink_transient_surface(&ctx->fb_state.zsbuf);
       if (transient) {
          state.num_zsresolves = 1;
          state.rts[fb->nr_cbufs].resolve = true;
@@ -559,8 +560,7 @@ setup_framebuffer(struct zink_context *ctx)
    ctx->rp_layout_changed = false;
    ctx->rp_changed = false;
 
-   if (zink_render_update_swapchain(ctx))
-      zink_render_fixup_swapchain(ctx);
+   zink_render_fixup_swapchain(ctx);
 
    if (!ctx->fb_changed)
       return;
@@ -579,31 +579,66 @@ setup_framebuffer(struct zink_context *ctx)
 static bool
 prep_fb_attachments(struct zink_context *ctx, VkImageView *att)
 {
+
+   struct zink_screen *screen = zink_screen(ctx->base.screen);
+   struct zink_render_pass *rp = ctx->gfx_pipeline_state.render_pass;
+
    bool have_zsbuf = ctx->fb_state.zsbuf.texture && zink_is_zsbuf_used(ctx);
    const unsigned cresolve_offset = ctx->fb_state.nr_cbufs + !!have_zsbuf;
    unsigned num_resolves = 0;
+   
+/* Local helper to set up a single attachment with layout transition */
+#define PREP_ATTACHMENT(surf, idx, is_color) \
+      do { \
+         if (!surf) break; \
+         struct zink_resource *res = zink_resource(surf->base.texture); \
+         const struct zink_rt_attrib *rt = &rp->state.rts[idx]; \
+         VkPipelineStageFlags pipeline; \
+         VkAccessFlags access; \
+         VkImageLayout layout = zink_render_pass_attachment_get_barrier_info(rt, is_color, &pipeline, &access); \
+         if (screen->driver_workarounds.general_layout) \
+            layout = VK_IMAGE_LAYOUT_GENERAL; \
+         else if (res->image_bind_count[0]) \
+            layout = VK_IMAGE_LAYOUT_GENERAL; \
+         else if (!screen->info.have_EXT_attachment_feedback_loop_layout && \
+                  layout == VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT) \
+            layout = VK_IMAGE_LAYOUT_GENERAL; \
+         else if (layout != VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT && \
+                  !(is_color) && screen->driver_workarounds.general_depth_layout) \
+            layout = VK_IMAGE_LAYOUT_GENERAL; \
+         screen->image_barrier(ctx, res, layout, access, pipeline); \
+         res->obj->unordered_read = false; \
+         res->obj->unordered_write = false; \
+      } while(0)
+
    for (int i = 0; i < ctx->fb_state.nr_cbufs; i++) {
-      struct zink_surface *surf = zink_csurface(ctx->fb_cbufs[i]);
-      struct zink_surface *transient = zink_transient_surface(ctx->fb_cbufs[i]);
+      struct zink_surface *surf = zink_csurface(&ctx->fb_state.cbufs[i]);
+      struct zink_surface *transient = zink_transient_surface(&ctx->fb_state.cbufs[i]);
       if (transient) {
-         att[i] = zink_prep_fb_attachment(ctx, transient, i);
-         att[i + cresolve_offset] = zink_prep_fb_attachment(ctx, surf, i);
+         PREP_ATTACHMENT(transient, i, true);
+         att[i] = transient->image_view;
+         PREP_ATTACHMENT(surf, i, true);
+         att[i + cresolve_offset] = surf->image_view;
          num_resolves++;
       } else {
-         att[i] = zink_prep_fb_attachment(ctx, surf, i);
+         PREP_ATTACHMENT(surf, i, true);
+         att[i] = surf->image_view;
          if (!att[i])
-            /* dead swapchain */
             return false;
       }
    }
    if (have_zsbuf) {
-      struct zink_surface *surf = zink_csurface(ctx->fb_zsbuf);
-      struct zink_surface *transient = zink_transient_surface(ctx->fb_zsbuf);
+      struct zink_surface *surf = zink_csurface(&ctx->fb_state.zsbuf);
+      struct zink_surface *transient = zink_transient_surface(&ctx->fb_state.zsbuf);
+      unsigned zs_idx = ctx->fb_state.nr_cbufs;
       if (transient) {
-         att[ctx->fb_state.nr_cbufs] = zink_prep_fb_attachment(ctx, transient, ctx->fb_state.nr_cbufs);
-         att[cresolve_offset + num_resolves] = zink_prep_fb_attachment(ctx, surf, ctx->fb_state.nr_cbufs);
+         PREP_ATTACHMENT(transient, zs_idx, false);
+         att[zs_idx] = transient->image_view;
+         PREP_ATTACHMENT(surf, zs_idx, false);
+         att[cresolve_offset + num_resolves] = surf->image_view;
       } else {
-         att[ctx->fb_state.nr_cbufs] = zink_prep_fb_attachment(ctx, surf, ctx->fb_state.nr_cbufs);
+         PREP_ATTACHMENT(surf, zs_idx, false);
+         att[zs_idx] = surf->image_view;
       }
    }
    return true;
@@ -691,8 +726,8 @@ begin_render_pass(struct zink_context *ctx)
    unsigned num_cresolves = 0;
    for (int i = 0; i < ctx->fb_state.nr_cbufs; i++) {
       if (ctx->fb_state.cbufs[i].texture) {
-         struct zink_surface *surf = zink_csurface(ctx->fb_cbufs[i]);
-         struct zink_surface *transient = zink_transient_surface(ctx->fb_cbufs[i]);
+         struct zink_surface *surf = zink_csurface(&ctx->fb_state.cbufs[i]);
+         struct zink_surface *transient = zink_transient_surface(&ctx->fb_state.cbufs[i]);
          if (surf->base.format == ctx->fb_state.cbufs[i].format) {
             if (transient) {
                num_cresolves++;
@@ -705,8 +740,8 @@ begin_render_pass(struct zink_context *ctx)
       }
    }
    if (ctx->gfx_pipeline_state.render_pass->state.have_zsbuf) {
-      struct zink_surface *surf = zink_csurface(ctx->fb_zsbuf);
-      struct zink_surface *transient = zink_transient_surface(ctx->fb_zsbuf);
+      struct zink_surface *surf = zink_csurface(&ctx->fb_state.zsbuf);
+      struct zink_surface *transient = zink_transient_surface(&ctx->fb_state.zsbuf);
       if (transient) {
          assert(zink_resource(transient->base.texture)->obj->vkusage == ctx->framebuffer->state.infos[ctx->fb_state.nr_cbufs].usage);
          assert(zink_resource(surf->base.texture)->obj->vkusage == ctx->framebuffer->state.infos[cresolve_offset + num_cresolves].usage);
@@ -752,12 +787,6 @@ zink_end_render_pass(struct zink_context *ctx)
 {
    if (ctx->in_rp) {
       VKCTX(CmdEndRenderPass)(ctx->bs->cmdbuf);
-
-      for (unsigned i = 0; i < ctx->fb_state.nr_cbufs; i++) {
-         struct zink_ctx_surface *csurf = (struct zink_ctx_surface*)ctx->fb_cbufs[i];
-         if (csurf)
-            csurf->transient_init = true;
-      }
    }
    ctx->in_rp = false;
 }

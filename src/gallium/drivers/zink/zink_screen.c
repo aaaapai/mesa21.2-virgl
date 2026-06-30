@@ -1615,12 +1615,6 @@ zink_destroy_screen(struct pipe_screen *pscreen)
 
    if (screen->gfx_push_constant_layout)
       VKSCR(DestroyPipelineLayout)(screen->dev, screen->gfx_push_constant_layout, NULL);
-   if (!screen->info.have_KHR_imageless_framebuffer) {
-      hash_table_foreach(&screen->framebuffer_cache, entry) {
-         struct zink_framebuffer* fb = (struct zink_framebuffer*)entry->data;
-         zink_destroy_framebuffer(screen, fb);
-      }
-   }
 
    for (unsigned i = 0; i < ARRAY_SIZE(screen->pipeline_libs); i++)
       _mesa_set_fini(&screen->pipeline_libs[i], NULL);
@@ -3861,10 +3855,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
                                     screen->info.have_KHR_dynamic_rendering);
    if (screen->use_legacy_rendering) {
       mesa_logw("zink: VK_KHR_dynamic_rendering not supported, using legacy renderpass path.");
-   }
-
-   if (!screen->info.have_KHR_imageless_framebuffer) {
-      _mesa_hash_table_init(&screen->framebuffer_cache, screen, hash_framebuffer_state, equals_framebuffer_state);
    }
 
    bool can_db = true;

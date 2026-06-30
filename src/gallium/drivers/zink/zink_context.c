@@ -2923,7 +2923,7 @@ zink_update_fbfetch(struct zink_context *ctx)
    return ret;
 }
 
-static void
+void
 zink_update_vk_sample_locations(struct zink_context *ctx)
 {
    unsigned samples = ctx->gfx_pipeline_state.rast_samples + 1;
@@ -3006,7 +3006,7 @@ update_res_sampler_layouts(struct zink_context *ctx, struct zink_resource *res)
    }
 }
 
-static bool
+bool
 prep_fb_attachment(struct zink_context *ctx, struct zink_resource *res, unsigned i)
 {
    VkAccessFlags access;
