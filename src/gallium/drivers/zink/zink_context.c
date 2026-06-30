@@ -3580,9 +3580,11 @@ zink_batch_rp(struct zink_context *ctx)
        */
       if (zink_framebuffer_reference(screen, &ctx->framebuffer, NULL) && he)
          _mesa_hash_table_remove(&ctx->framebuffer_cache, he);
+         
+      ctx->fb_changed |= ctx->framebuffer != fb;
+      ctx->framebuffer = fb;
+
    }
-   ctx->fb_changed |= ctx->framebuffer != fb;
-   ctx->framebuffer = fb;
 
    }
    /* unable to previously determine that queries didn't split renderpasses: ensure queries start inside renderpass */
@@ -3979,7 +3981,8 @@ stall(struct zink_context *ctx)
    if (screen->use_timeline_semaphore)
    zink_screen_timeline_wait(screen, ctx->last_batch_state->fence.batch_id, OS_TIMEOUT_INFINITE);
    else
-   zink_vkfence_wait(screen, &ctx->last_batch_state, OS_TIMEOUT_INFINITE);
+   zink_vkfence_wait(screen, &ctx->last_batch_state->fence, OS_TIMEOUT_INFINITE);
+
 }
 
 void
@@ -4574,7 +4577,7 @@ zink_wait_on_batch(struct zink_context *ctx, uint64_t batch_id)
    }
    struct zink_fence *fence;
 
-   struct zink_batch_state *bs = ctx->last_batch_state;
+   bs = ctx->last_batch_state;
    if (bs && batch_id == bs->fence.batch_id)
       fence = &bs->fence;
    else {
