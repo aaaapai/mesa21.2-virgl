@@ -580,30 +580,62 @@ prep_fb_attachments(struct zink_context *ctx, VkImageView *att)
 {
    bool have_zsbuf = ctx->fb_state.zsbuf.texture && zink_is_zsbuf_used(ctx);
    const unsigned cresolve_offset = ctx->fb_state.nr_cbufs + !!have_zsbuf;
-   const unsigned zsresolve_offset = cresolve_offset + ctx->fb_state.nr_cbufs; // will adjust later
    unsigned num_resolves = 0;
+   struct pipe_context *pctx = &ctx->base;
+
    for (int i = 0; i < ctx->fb_state.nr_cbufs; i++) {
-      struct zink_surface *surf = zink_csurface(&ctx->fb_state.cbufs[i]);
-      struct zink_surface *transient = zink_transient_surface(&ctx->fb_state.cbufs[i]);
-      if (transient) {
-         att[i] = prep_fb_attachment(ctx, zink_resource(transient->base.texture), i) ? transient->image_view : VK_NULL_HANDLE;
-         att[i + cresolve_offset] = prep_fb_attachment(ctx, zink_resource(surf->base.texture), i) ? surf->image_view : VK_NULL_HANDLE;
+      struct pipe_surface *ps = &ctx->fb_state.cbufs[i];
+      struct zink_resource *res = zink_resource(ps->texture);
+      if (!res) return false;
+
+      if (res->transient) {
+         /* transient attachment: create surface from transient resource */
+         struct pipe_surface templ = *ps;
+         templ.texture = &res->transient->base.b;
+         struct zink_surface *transient_surf = zink_create_fb_surface(pctx, &templ);
+         if (!transient_surf) return false;
+         if (!prep_fb_attachment(ctx, res->transient, i)) return false;
+         att[i] = transient_surf->image_view;
+
+         /* resolve attachment: create surface from original resource */
+         struct zink_surface *resolve_surf = zink_create_fb_surface(pctx, ps);
+         if (!resolve_surf) return false;
+         if (!prep_fb_attachment(ctx, res, i)) return false;+         att[i + cresolve_offset] = resolve_surf->image_view;
          num_resolves++;
       } else {
-         att[i] = prep_fb_attachment(ctx, zink_resource(surf->base.texture), i) ? surf->image_view : VK_NULL_HANDLE;
+         struct zink_surface *surf = zink_create_fb_surface(pctx, ps);
+         if (!surf) return false;
+         if (!prep_fb_attachment(ctx, res, i)) return false;
+         att[i] = surf->image_view;
       }
    }
    if (have_zsbuf) {
-      struct zink_surface *surf = zink_csurface(&ctx->fb_state.zsbuf);
-      struct zink_surface *transient = zink_transient_surface(&ctx->fb_state.zsbuf);
-      unsigned zs_idx = ctx->fb_state.nr_cbufs;
-      if (transient) {
-         att[zs_idx] = prep_fb_attachment(ctx, zink_resource(transient->base.texture), zs_idx) ? transient->image_view : VK_NULL_HANDLE;
-         att[cresolve_offset + num_resolves] = prep_fb_attachment(ctx, zink_resource(surf->base.texture), zs_idx) ? surf->image_view : VK_NULL_HANDLE;
-      } else {
-         att[zs_idx] = prep_fb_attachment(ctx, zink_resource(surf->base.texture), zs_idx) ? surf->image_view : VK_NULL_HANDLE;
-      }
+   struct pipe_surface *ps = &ctx->fb_state.zsbuf;
+   struct zink_resource *res = zink_resource(ps->texture);
+   if (!res) return false;
+   unsigned zs_idx = ctx->fb_state.nr_cbufs;
+   if (res->transient) {
+      struct pipe_surface templ = *ps;
+      templ.texture = &res->transient->base.b;
+      struct zink_surface *transient_surf = zink_create_fb_surface(pctx, &templ);
+      if (!transient_surf) return false;
+      if (!prep_fb_attachment(ctx, res->transient, zs_idx)) return false;
+      att[zs_idx] = transient_surf->image_view;
+
+      /* resolve attachment for depth/stencil */
+      struct zink_surface *resolve_surf = zink_create_fb_surface(pctx, ps);
+      if (!resolve_surf) return false;
+      if (!prep_fb_attachment(ctx, res, zs_idx)) return false;
+      unsigned zsresolve_offset = cresolve_offset + ctx->fb_state.nr_cbufs; /* after color resolves */
+      att[zsresolve_offset] = resolve_surf->image_view;
+   } else {
+      struct zink_surface *surf = zink_create_fb_surface(pctx, ps);
+      if (!surf) return false;
+      if (!prep_fb_attachment(ctx, res, zs_idx)) return false;
+      att[zs_idx] = surf->image_view;
    }
+}
+
    return true;
 }
 
