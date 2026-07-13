@@ -233,7 +233,7 @@ lookup_ycbcr_conversion(const void *_state, uint32_t set, uint32_t binding,
              : NULL;
 }
 
-static int
+static unsigned
 type_size_vec4(const struct glsl_type *type, bool bindless)
 {
    return glsl_count_attribute_slots(type, false);
@@ -345,6 +345,13 @@ kk_lower_hw_vs(nir_shader *nir, const struct vk_graphics_pipeline_state *state)
    NIR_PASS(_, nir, msl_nir_vs_io_types);
 }
 
+static inline uint8_t
+kk_get_logical_color_att_index(const struct vk_graphics_pipeline_state *state,
+                               uint8_t i)
+{
+   return (state->cal) ? state->cal->color_map[i] : i;
+}
+
 static void
 kk_lower_fs_blend(nir_shader *nir,
                   const struct vk_graphics_pipeline_state *state)
@@ -356,12 +363,20 @@ kk_lower_fs_blend(nir_shader *nir,
    };
 
    static_assert(ARRAY_SIZE(opts.rt) == 8, "max RTs out of sync");
+   for (unsigned i = 0; i < ARRAY_SIZE(opts.rt); ++i) {
+      opts.rt[i].format = PIPE_FORMAT_NONE;
+   }
 
    for (unsigned i = 0; i < ARRAY_SIZE(opts.rt); ++i) {
+      uint8_t logical_index = kk_get_logical_color_att_index(state, i);
+      if (logical_index == MESA_VK_ATTACHMENT_UNUSED) {
+         continue;
+      }
+
+      nir_lower_blend_rt *rt = &opts.rt[logical_index];
+
       const struct vk_color_blend_attachment_state *att =
          &state->cb->attachments[i];
-      nir_lower_blend_rt *rt = &opts.rt[i];
-
       rt->format =
          vk_format_to_pipe_format(state->rp->color_attachment_formats[i]);
       rt->colormask = att->write_mask;
@@ -430,8 +445,13 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
 
    enum pipe_format rts[MAX_DRAW_BUFFERS] = {PIPE_FORMAT_NONE};
    const struct vk_render_pass_state *rp = state->rp;
-   for (uint32_t i = 0u; i < MAX_DRAW_BUFFERS; ++i)
-      rts[i] = vk_format_to_pipe_format(rp->color_attachment_formats[i]);
+   for (uint32_t i = 0u; i < rp->color_attachment_count; ++i) {
+      uint8_t logical_index = kk_get_logical_color_att_index(state, i);
+      if (logical_index != MESA_VK_ATTACHMENT_UNUSED) {
+         rts[logical_index] =
+            vk_format_to_pipe_format(rp->color_attachment_formats[i]);
+      }
+   }
 
    NIR_PASS(_, nir, msl_nir_fs_force_output_signedness, rts);
 
@@ -638,13 +658,15 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
 
       /* Serialization data. */
       u_foreach_bit(i, shader->info.vs.additional_stages_bits) {
-         ralloc_free((void *)shader->entrypoint_names[i]);
-         ralloc_free((void *)shader->msl_shaders[i]);
+         struct msl_compile_data *data = &shader->msl_data[i];
+         ralloc_free((void *)data->entrypoint_name);
+         ralloc_free((void *)data->code);
       }
    }
 
-   ralloc_free((void *)shader->entrypoint_names[shader->info.stage]);
-   ralloc_free((void *)shader->msl_shaders[shader->info.stage]);
+   struct msl_compile_data *data = &shader->msl_data[shader->info.stage];
+   ralloc_free((void *)data->entrypoint_name);
+   ralloc_free((void *)data->code);
 
    vk_shader_free(&dev->vk, pAllocator, &shader->vk);
 }
@@ -791,7 +813,7 @@ kk_compile_shader(struct kk_device *dev, nir_shader *nir,
           * For the non-emulated path we need to subtract base_instance... */
          NIR_PASS(_, nir, msl_nir_lower_instance_id);
    } else if (stage == MESA_SHADER_TESS_CTRL) {
-      NIR_PASS(_, nir, poly_nir_lower_tcs);
+      NIR_PASS(_, nir, poly_nir_lower_tcs, false);
 
       shader->info.tess.info.ccw = nir->info.tess.ccw;
       shader->info.tess.info.points = nir->info.tess.point_mode;
@@ -825,27 +847,35 @@ kk_compile_shader(struct kk_device *dev, nir_shader *nir,
    };
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
       for (uint32_t i = 0u; i < MAX_DRAW_BUFFERS; ++i) {
-         enum pipe_format format =
-            vk_format_to_pipe_format(state->rp->color_attachment_formats[i]);
-
          /* If the attachment is unused, default to 4 to avoid issues with alpha
           * to coverage with unused attachments. */
-         translate_options.rts_component_count[i] =
-            format == PIPE_FORMAT_NONE ? 4u
-                                       : util_format_get_nr_components(format);
+         translate_options.rts_component_count[i] = 4;
+      }
+      for (uint32_t i = 0u; i < state->rp->color_attachment_count; ++i) {
+         uint8_t logical_index = kk_get_logical_color_att_index(state, i);
+         if (logical_index == MESA_VK_ATTACHMENT_UNUSED) {
+            continue;
+         }
+         enum pipe_format format =
+            vk_format_to_pipe_format(state->rp->color_attachment_formats[i]);
+         if (format != PIPE_FORMAT_NONE) {
+            translate_options.rts_component_count[logical_index] =
+               util_format_get_nr_components(format);
+         }
       }
    }
-   shader->msl_shaders[stage] = nir_to_msl(nir, &translate_options);
+   struct msl_compile_data *data = &shader->msl_data[stage];
+   data->code = nir_to_msl(nir, &translate_options);
    const char *entrypoint_name = nir_shader_get_entrypoint(nir)->function->name;
 
    /* We need to steal so it doesn't get destroyed with the nir. Needs to happen
     * after nir_to_msl since that's where we rename the entrypoint.
     */
    ralloc_steal(NULL, (void *)entrypoint_name);
-   shader->entrypoint_names[stage] = (char *)entrypoint_name;
+   data->entrypoint_name = (char *)entrypoint_name;
 
    if (KK_DEBUG(MSL))
-      mesa_logi("%s\n", shader->msl_shaders[stage]);
+      mesa_logi("%s\n", data->code);
 
    ralloc_free(nir);
 
@@ -944,17 +974,19 @@ get_empty_nir(struct kk_device *dev, mesa_shader_stage stage,
 }
 
 static VkResult
-kk_compile_compute_pipeline(struct kk_device *device, const char *msl,
-                            const char *entrypoint_name,
+kk_compile_compute_pipeline(struct kk_device *device,
+                            const struct msl_compile_data *data,
                             uint32_t local_size_threads,
                             mtl_compute_pipeline_state **pipe)
 {
-   mtl_library *library = mtl_new_library(device->mtl_compiler_handle, msl);
+   mtl_library *library = mtl_new_library(
+      device->mtl_compiler_handle, data->code, MTL_MATH_MODE_FAST,
+      MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
    if (library == NULL)
       return VK_ERROR_INVALID_SHADER_NV;
 
    mtl_function_descriptor *function =
-      mtl_new_library_function_descriptor(library, entrypoint_name);
+      mtl_new_library_function_descriptor(library, data->entrypoint_name);
    mtl_compute_pipeline_state *pipeline = mtl_new_compute_pipeline_state(
       device->mtl_compiler_handle, function, local_size_threads);
    mtl_release(function);
@@ -1084,11 +1116,19 @@ gather_graphics_pipeline_create_info(
    bool has_stencil = rp->stencil_attachment_format != VK_FORMAT_UNDEFINED;
    {
       info->vs.color_attachment_count = rp->color_attachment_count;
-      for (uint8_t i = 0u; i < info->vs.color_attachment_count; ++i) {
-         VkFormat format = rp->color_attachment_formats[i];
-         info->vs.rt_formats[i] = format == VK_FORMAT_UNDEFINED
-                                     ? MTL_PIXEL_FORMAT_INVALID
-                                     : vk_format_to_mtl_pixel_format(format);
+      for (uint8_t i = 0u; i < MAX_DRAW_BUFFERS; ++i) {
+         info->vs.rt_formats[i] = MTL_PIXEL_FORMAT_INVALID;
+      }
+      for (uint8_t i = 0u; i < state->rp->color_attachment_count; ++i) {
+         uint8_t logical_index = kk_get_logical_color_att_index(state, i);
+         if (logical_index == MESA_VK_ATTACHMENT_UNUSED) {
+            continue;
+         }
+         VkFormat format = state->rp->color_attachment_formats[i];
+         info->vs.rt_formats[logical_index] =
+            format == VK_FORMAT_UNDEFINED
+               ? MTL_PIXEL_FORMAT_INVALID
+               : vk_format_to_mtl_pixel_format(format);
       }
       info->vs.d_format =
          has_depth ? vk_format_to_mtl_pixel_format(rp->depth_attachment_format)
@@ -1119,13 +1159,15 @@ gather_graphics_pipeline_create_info(
    for (uint32_t i = 1; i < shader_count; ++i) {
       struct kk_shader *s = shaders[i];
       mesa_shader_stage stage = s->info.stage;
-      uint32_t length = strlen(s->msl_shaders[stage]) + 1u;
-      vs->msl_shaders[stage] = ralloc_size(NULL, length);
-      memcpy(vs->msl_shaders[stage], s->msl_shaders[stage], length);
+      struct msl_compile_data *src_data = &s->msl_data[stage];
+      struct msl_compile_data *dst_data = &vs->msl_data[stage];
+      uint32_t length = strlen(src_data->code) + 1u;
+      dst_data->code = ralloc_size(NULL, length);
+      memcpy(dst_data->code, src_data->code, length);
 
-      length = strlen(s->entrypoint_names[stage]) + 1;
-      vs->entrypoint_names[stage] = ralloc_size(NULL, length);
-      memcpy(vs->entrypoint_names[stage], s->entrypoint_names[stage], length);
+      length = strlen(src_data->entrypoint_name) + 1;
+      dst_data->entrypoint_name = ralloc_size(NULL, length);
+      memcpy(dst_data->entrypoint_name, src_data->entrypoint_name, length);
 
       info->vs.additional_stages_bits |= BITFIELD_BIT(stage);
 
@@ -1170,11 +1212,9 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
    uint32_t stages_bits = vs->info.vs.additional_stages_bits;
    pipe->gfx.pre_render_count = util_bitcount(stages_bits) - 1u;
    for (uint32_t i = 0u; i < pipe->gfx.pre_render_count; ++i) {
-      const char *msl = vs->msl_shaders[vs_stage];
-      const char *entrypoint_name = vs->entrypoint_names[vs_stage];
       uint32_t local_thread_size =
          (i == 0u) ? 64u : vs->info.vs.tess_local_thread_size;
-      result = kk_compile_compute_pipeline(device, msl, entrypoint_name,
+      result = kk_compile_compute_pipeline(device, &vs->msl_data[vs_stage],
                                            local_thread_size,
                                            &pipe->gfx.pre_render[i]);
 
@@ -1183,24 +1223,28 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
       vs_stage = u_bit_scan(&stages_bits);
    }
 
-   mtl_library *vertex_library =
-      mtl_new_library(device->mtl_compiler_handle, vs->msl_shaders[vs_stage]);
+   const struct msl_compile_data *vs_data = &vs->msl_data[vs_stage];
+   mtl_library *vertex_library = mtl_new_library(
+      device->mtl_compiler_handle, vs_data->code, MTL_MATH_MODE_FAST,
+      MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
    if (vertex_library == NULL)
       return VK_ERROR_INVALID_SHADER_NV;
 
    mtl_function_descriptor *vertex_function =
       mtl_new_library_function_descriptor(vertex_library,
-                                          vs->entrypoint_names[vs_stage]);
+                                          vs_data->entrypoint_name);
 
+   const struct msl_compile_data *fs_data = &vs->msl_data[MESA_SHADER_FRAGMENT];
    mtl_library *fragment_library = mtl_new_library(
-      device->mtl_compiler_handle, vs->msl_shaders[MESA_SHADER_FRAGMENT]);
+      device->mtl_compiler_handle, fs_data->code, MTL_MATH_MODE_FAST,
+      MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
    if (fragment_library == NULL) {
       result = VK_ERROR_INVALID_SHADER_NV;
       goto destroy_vertex;
    }
    mtl_function_descriptor *fragment_function =
-      mtl_new_library_function_descriptor(
-         fragment_library, vs->entrypoint_names[MESA_SHADER_FRAGMENT]);
+      mtl_new_library_function_descriptor(fragment_library,
+                                          fs_data->entrypoint_name);
 
    mtl_render_pipeline_descriptor *pipeline_descriptor =
       mtl_new_render_pipeline_descriptor();
@@ -1213,7 +1257,11 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
    mtl_render_pipeline_descriptor_set_input_primitive_topology(
       pipeline_descriptor, vs->info.vs.topology);
 
-   for (uint8_t i = 0; i < vs->info.vs.color_attachment_count; ++i) {
+   /* If color attachments are reordered there might be unused / invalid gaps
+    * in the array so need to check them all, not just first
+    * color_attachment_count entries.
+    */
+   for (uint8_t i = 0; i < MAX_DRAW_BUFFERS; ++i) {
       if (vs->info.vs.rt_formats[i] != MTL_PIXEL_FORMAT_INVALID)
          mtl_render_pipeline_descriptor_set_color_attachment_format(
             pipeline_descriptor, i, vs->info.vs.rt_formats[i]);
@@ -1348,13 +1396,12 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
     */
    if (shaders[0]->vk.stage == MESA_SHADER_COMPUTE) {
       struct kk_shader *s = shaders[0];
-      const char *msl = s->msl_shaders[MESA_SHADER_COMPUTE];
-      const char *entrypoint_name = s->entrypoint_names[MESA_SHADER_COMPUTE];
       uint32_t local_size_threads = s->info.cs.local_size.x *
                                     s->info.cs.local_size.y *
                                     s->info.cs.local_size.z;
-      result = kk_compile_compute_pipeline(dev, msl, entrypoint_name,
-                                           local_size_threads, &s->pipeline.cs);
+      result =
+         kk_compile_compute_pipeline(dev, &s->msl_data[MESA_SHADER_COMPUTE],
+                                     local_size_threads, &s->pipeline.cs);
    } else {
       gather_graphics_pipeline_create_info(state, shaders, total_shaders);
       result = kk_compile_graphics_pipeline(dev, shaders[0]);
@@ -1382,12 +1429,13 @@ static void
 kk_msl_serialize(struct kk_shader *shader, mesa_shader_stage stage,
                  struct blob *blob)
 {
-   uint32_t entrypoint_length = strlen(shader->entrypoint_names[stage]) + 1;
-   uint32_t code_length = strlen(shader->msl_shaders[stage]) + 1;
+   struct msl_compile_data *data = &shader->msl_data[stage];
+   uint32_t entrypoint_length = strlen(data->entrypoint_name) + 1;
+   uint32_t code_length = strlen(data->code) + 1;
    blob_write_uint32(blob, entrypoint_length);
    blob_write_uint32(blob, code_length);
-   blob_write_bytes(blob, shader->entrypoint_names[stage], entrypoint_length);
-   blob_write_bytes(blob, shader->msl_shaders[stage], code_length);
+   blob_write_bytes(blob, data->entrypoint_name, entrypoint_length);
+   blob_write_bytes(blob, data->code, code_length);
 }
 
 static bool
@@ -1413,18 +1461,17 @@ kk_msl_deserialize(struct blob_reader *blob, mesa_shader_stage stage,
 {
    const uint32_t entrypoint_length = blob_read_uint32(blob);
    const uint32_t code_length = blob_read_uint32(blob);
-   shader->entrypoint_names[stage] =
-      ralloc_array(NULL, char, entrypoint_length);
-   if (shader->entrypoint_names[stage] == NULL)
+   struct msl_compile_data *data = &shader->msl_data[stage];
+   data->entrypoint_name = ralloc_array(NULL, char, entrypoint_length);
+   if (data->entrypoint_name == NULL)
       return VK_ERROR_OUT_OF_HOST_MEMORY;
 
-   shader->msl_shaders[stage] = ralloc_array(NULL, char, code_length);
-   if (shader->msl_shaders[stage] == NULL)
+   data->code = ralloc_array(NULL, char, code_length);
+   if (data->code == NULL)
       return VK_ERROR_OUT_OF_HOST_MEMORY;
 
-   blob_copy_bytes(blob, (void *)shader->entrypoint_names[stage],
-                   entrypoint_length);
-   blob_copy_bytes(blob, (void *)shader->msl_shaders[stage], code_length);
+   blob_copy_bytes(blob, (void *)data->entrypoint_name, entrypoint_length);
+   blob_copy_bytes(blob, (void *)data->code, code_length);
 
    if (blob->overrun)
       return VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT;
@@ -1465,14 +1512,12 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
    }
 
    if (info.stage == MESA_SHADER_COMPUTE) {
-      const char *msl = shader->msl_shaders[MESA_SHADER_COMPUTE];
-      const char *entrypoint_name =
-         shader->entrypoint_names[MESA_SHADER_COMPUTE];
       uint32_t local_size_threads = shader->info.cs.local_size.x *
                                     shader->info.cs.local_size.y *
                                     shader->info.cs.local_size.z;
       result = kk_compile_compute_pipeline(
-         dev, msl, entrypoint_name, local_size_threads, &shader->pipeline.cs);
+         dev, &shader->msl_data[MESA_SHADER_COMPUTE], local_size_threads,
+         &shader->pipeline.cs);
    } else if (info.stage == MESA_SHADER_VERTEX) {
       result = kk_compile_graphics_pipeline(dev, shader);
    }

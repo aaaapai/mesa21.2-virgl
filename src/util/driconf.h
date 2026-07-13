@@ -326,10 +326,6 @@
    DRI_CONF_OPT_B(ignore_map_unsynchronized, def, \
                   "Ignore GL_MAP_UNSYNCHRONIZED_BIT, workaround for games that use it incorrectly")
 
-#define DRI_CONF_VK_LOWER_TERMINATE_TO_DISCARD(def) \
-   DRI_CONF_OPT_B(vk_lower_terminate_to_discard, def, \
-                  "Lower terminate to discard (which is implicitly demote)")
-
 #define DRI_CONF_LIMIT_TRIG_INPUT_RANGE(def) \
    DRI_CONF_OPT_B(limit_trig_input_range, def, \
                   "Limit trig input range to [-2p : 2p] to improve sin/cos calculation precision on Intel")
@@ -414,38 +410,6 @@
    DRI_CONF_OPT_B(block_on_depleted_buffers, def, \
                   "Block clients using buffer backpressure until new buffer is available to reduce latency")
 
-#define DRI_CONF_VK_WSI_FORCE_BGRA8_UNORM_FIRST(def) \
-   DRI_CONF_OPT_B(vk_wsi_force_bgra8_unorm_first, def, \
-                  "Force vkGetPhysicalDeviceSurfaceFormatsKHR to return VK_FORMAT_B8G8R8A8_UNORM as the first format")
-
-#define DRI_CONF_VK_WSI_FORCE_SWAPCHAIN_TO_CURRENT_EXTENT(def) \
-   DRI_CONF_OPT_B(vk_wsi_force_swapchain_to_current_extent, def, \
-                  "Force VkSwapchainCreateInfoKHR::imageExtent to be VkSurfaceCapabilities2KHR::currentExtent")
-
-#define DRI_CONF_VK_WSI_DISABLE_UNORDERED_SUBMITS(def) \
-   DRI_CONF_OPT_B(vk_wsi_disable_unordered_submits, def, \
-                  "Disable unordered WSI submits to workaround application synchronization bugs")
-
-#define DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(def) \
-   DRI_CONF_OPT_I(vk_x11_override_min_image_count, def, 0, 999, \
-                  "Override the VkSurfaceCapabilitiesKHR::minImageCount (0 = no override)")
-
-#define DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(def) \
-   DRI_CONF_OPT_B(vk_x11_strict_image_count, def, \
-                  "Force the X11 WSI to create exactly the number of image specified by the application in VkSwapchainCreateInfoKHR::minImageCount")
-
-#define DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(def) \
-   DRI_CONF_OPT_B(vk_x11_ensure_min_image_count, def, \
-                  "Force the X11 WSI to create at least the number of image specified by the driver in VkSurfaceCapabilitiesKHR::minImageCount")
-
-#define DRI_CONF_VK_X11_IGNORE_SUBOPTIMAL(def) \
-   DRI_CONF_OPT_B(vk_x11_ignore_suboptimal, def, \
-                  "Force the X11 WSI to never report VK_SUBOPTIMAL_KHR")
-
-#define DRI_CONF_VK_XWAYLAND_WAIT_READY(def) \
-   DRI_CONF_OPT_B(vk_xwayland_wait_ready, def, \
-                  "Wait for fences before submitting buffers to Xwayland")
-
 #define DRI_CONF_MESA_GLTHREAD_DRIVER(def) \
    DRI_CONF_OPT_B(mesa_glthread_driver, def, \
                   "Enable offloading GL driver work to a separate thread")
@@ -504,10 +468,6 @@
 #define DRI_CONF_HEAP_MEMORY_PERCENT(def) \
    DRI_CONF_OPT_F(heap_memory_percent, def, 0.0, 1.0, \
                   "Percentage of total system memory to report as gpu heap memory (0 = driver default)")
-
-#define DRI_CONF_VK_ZERO_VRAM(def) \
-   DRI_CONF_OPT_B(vk_zero_vram, def, \
-                  "Initialize to zero all VRAM allocations")
 
 /**
  * \brief Initialization configuration options
@@ -588,79 +548,6 @@
    DRI_CONF_OPT_U64(pan_fragment_core_mask, def, 0, UINT64_MAX, \
                     "Bitmask of shader cores that may be used for fragment jobs. If unset, defaults to scheduling across all available cores.")
 
-#define DRI_CONF_PAN_ENABLE_VERTEX_PIPELINE_STORES_ATOMICS(def) \
-   DRI_CONF_OPT_B(pan_enable_vertex_pipeline_stores_atomics, def, \
-                  "Enable vertexPipelineStoresAndAtomics on v13+ (This cannot work on older generation because of speculative behaviors around vertices)")
-
-#define DRI_CONF_PAN_FORCE_ENABLE_SHADER_ATOMICS(def) \
-   DRI_CONF_OPT_B(pan_force_enable_shader_atomics, def, \
-                  "Enable fragmentStoresAndAtomics and vertexPipelineStoresAndAtomics on any architecture. (This may not work reliably and is for debug purposes only!)")
-
-/**
- * \brief Honeykrisp specific configuration options
- */
-
-#define DRI_CONF_HK_DISABLE_BORDER_EMULATION(def) \
-   DRI_CONF_OPT_B(hk_disable_border_emulation, def, \
-                  "Disable custom border colour emulation")
-
-#define DRI_CONF_HK_FAKE_MINMAX(def) \
-   DRI_CONF_OPT_B(hk_fake_minmax, def, \
-                  "Fake support for min/max filtering")
-
-#define DRI_CONF_HK_IMAGE_VIEW_MIN_LOD(def) \
-   DRI_CONF_OPT_B(hk_image_view_min_lod, def, \
-                  "Emulate VK_EXT_image_view_min_lod (conformant but slower)")
-
-#define DRI_CONF_HK_ENABLE_VERTEX_PIPELINE_STORES_ATOMICS(def) \
-   DRI_CONF_OPT_B(hk_enable_vertex_pipeline_stores_atomics, def, \
-                  "Enable vertexPipelineStoresAndAtomics")
-
-/**
- * \brief venus specific configuration options
- */
-#define DRI_CONF_VENUS_IMPLICIT_FENCING(def) \
-   DRI_CONF_OPT_B(venus_implicit_fencing, def, \
-                  "Assume the virtio-gpu kernel driver supports implicit fencing")
-
-#define DRI_CONF_VENUS_WSI_MULTI_PLANE_MODIFIERS(def) \
-   DRI_CONF_OPT_B(venus_wsi_multi_plane_modifiers, def, \
-                  "Enable support of multi-plane format modifiers for wsi images")
-
-/**
- * \brief HASVK specific configuration options
- */
-
-#define DRI_CONF_HASVK_ASSUME_FULL_SUBGROUPS(def) \
-  DRI_CONF_OPT_I(anv_assume_full_subgroups, def, 0, 32, \
-                 "Allow assuming full subgroups requirement even when it's not specified explicitly and set the given size")
-
-#define DRI_CONF_HASVK_OVERRIDE_API_VERSION(def) \
-   DRI_CONF_OPT_B(hasvk_report_vk_1_3_version, def, \
-                  "Override intel_hasvk API version")
-
-#define DRI_CONF_HASVK_SAMPLE_MASK_OUT_OPENGL_BEHAVIOUR(def) \
-   DRI_CONF_OPT_B(anv_sample_mask_out_opengl_behaviour, def, \
-                  "Ignore sample mask out when having single sampled target")
-
-/**
- * \brief DZN specific configuration options
- */
-
-#define DRI_CONF_DZN_CLAIM_WIDE_LINES(def) \
-   DRI_CONF_OPT_B(dzn_claim_wide_lines, def, "Claim wide line support")
-
-#define DRI_CONF_DZN_ENABLE_8BIT_LOADS_STORES(def) \
-   DRI_CONF_OPT_B(dzn_enable_8bit_loads_stores, def, "Enable VK_KHR_8bit_loads_stores")
-
-#define DRI_CONF_DZN_DISABLE(def) \
-   DRI_CONF_OPT_B(dzn_disable, def, "Fail instance creation")
-
-/**
- * \brief NVK specific configuration options
- */
-
- #define DRI_CONF_NVK_APP_LAYER() DRI_CONF_OPT_S_NODEF(nvk_app_layer, "Select an application layer.")
 
 /**
  * \brief Asahi specific configuration options

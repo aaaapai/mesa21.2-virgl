@@ -19,16 +19,11 @@
 #include "compiler.h"
 #include "../kraid/kraid.h"
 
-DEBUG_GET_ONCE_BOOL_OPTION(use_kraid, "PAN_USE_KRAID", false)
-
 static bool
-bi_use_kraid(void)
+bi_use_kraid(nir_shader *nir, uint64_t gpu_id)
 {
-#ifdef WITH_PANFROST_RUST
-   return debug_get_option_use_kraid();
-#else
-   return false;
-#endif
+   return pan_use_kraid(pan_arch(gpu_id), nir->info.stage,
+                        nir->info.internal);
 }
 
 /*
@@ -85,11 +80,14 @@ bi_lower_bit_size(const nir_instr *instr, void *data)
    case nir_instr_type_intrinsic: {
       nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
 
-      /* We only support ballot on 32-bit types. */
       switch (intr->intrinsic) {
       case nir_intrinsic_ballot:
       case nir_intrinsic_ballot_relaxed:
+         /* We only support ballot on 32-bit types. */
          return (nir_src_bit_size(intr->src[0]) == 32) ? 0 : 32;
+      case nir_intrinsic_read_invocation:
+         /* CLPER only supports 32-bit types. */
+         return (intr->def.bit_size < 32) ? 32 : 0;
       default:
          return 0;
       }
@@ -272,7 +270,7 @@ bi_optimize_loop(nir_shader *nir, uint64_t gpu_id, bool allow_copies)
       NIR_PASS(progress, nir, nir_opt_undef);
    } while (progress);
 
-   NIR_PASS(_, nir, nir_lower_undef_to_zero);
+   NIR_PASS(_, nir, nir_lower_undef_to_zero, NULL);
 
    NIR_PASS(_, nir, nir_remove_dead_variables, nir_var_function_temp, NULL);
 }
@@ -281,7 +279,7 @@ static void
 bi_optimize_late(nir_shader *nir, uint64_t gpu_id,
                 nir_variable_mode robust_modes)
 {
-   NIR_PASS(_, nir, nir_opt_shrink_stores, true);
+   NIR_PASS(_, nir, nir_opt_shrink_stores, false /* shrink_image_store */);
    bi_optimize_loop(nir, gpu_id, false /* allow_copies */);
 
    NIR_PASS(_, nir, nir_opt_shrink_vectors, false);
@@ -351,7 +349,7 @@ bi_optimize_late(nir_shader *nir, uint64_t gpu_id,
    while (late_algebraic_progress) {
       late_algebraic_progress = false;
       NIR_PASS(late_algebraic_progress, nir, bifrost_nir_lower_algebraic_late,
-               pan_arch(gpu_id));
+               pan_arch(gpu_id), bi_use_kraid(nir, gpu_id));
       late_algebraic |= late_algebraic_progress;
    }
 
@@ -1016,6 +1014,9 @@ bifrost_postprocess_nir(nir_shader *nir,
    };
    NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes, &mem_size_options);
 
+   if (bi_use_kraid(nir, gpu_id))
+      NIR_PASS(_, nir, pan_nir_lower_mem_to_global);
+
    nir_lower_ssbo_options ssbo_opts = {
       .native_loads = gpu_arch >= 9,
       .native_offset = gpu_arch >= 9,
@@ -1286,7 +1287,7 @@ bifrost_compile_shader_nir(nir_shader *nir,
    info->tls_size = nir->scratch_size;
    info->stage = nir->info.stage;
 
-   if (bi_use_kraid()) {
+   if (bi_use_kraid(nir, gpu_id)) {
 #ifdef WITH_PANFROST_RUST
       kraid_compile_nir(nir, inputs, binary, info);
 #endif

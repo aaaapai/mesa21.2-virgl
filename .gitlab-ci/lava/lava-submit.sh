@@ -89,6 +89,16 @@ if [ -n "${ANDROID_CTS_TAG:-}" ]; then
 		  --compression=zstd
 	)
 fi
+if [ -n "${OPENCL_CTS_TAG:-}" ]; then
+	LAVA_EXTRA_OVERLAYS+=(
+		- append-overlay
+		  --name=opencl-cts
+		  --url="$(fdo_find_s3_path "${DATA_STORAGE_PATH}/opencl-cts/${DEBIAN_ARCH}/${OPENCL_CTS_TAG}.tar.zst")"
+		  --path="/"
+		  --format=tar
+		  --compression=zstd
+	)
+fi
 if [ -n "${FLUSTER_TAG:-}" ]; then
 	LAVA_EXTRA_OVERLAYS+=(
 		- append-overlay

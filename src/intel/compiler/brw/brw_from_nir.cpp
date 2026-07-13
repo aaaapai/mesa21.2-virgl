@@ -3403,7 +3403,7 @@ emit_samplepos_setup(nir_to_brw_state &ntb)
    brw_shader &s = ntb.s;
 
    assert(s.stage == MESA_SHADER_FRAGMENT);
-   assert(brw_fs_prog_data(s.prog_data)->persample_dispatch != INTEL_NEVER);
+   assert(brw_fs_prog_data(s.prog_data)->persample_dispatch);
 
    const brw_builder abld = bld.annotate("compute sample position");
    brw_reg pos = abld.vgrf(BRW_TYPE_F, 2);
@@ -3444,7 +3444,6 @@ emit_sampleid_setup(nir_to_brw_state &ntb)
 
    assert(s.stage == MESA_SHADER_FRAGMENT);
    ASSERTED brw_fs_prog_key *key = (brw_fs_prog_key*) s.key;
-   struct brw_fs_prog_data *fs_prog_data = brw_fs_prog_data(s.prog_data);
 
    const brw_builder abld = bld.annotate("compute sample id");
    brw_reg sample_id = abld.vgrf(BRW_TYPE_UD);
@@ -3500,8 +3499,7 @@ emit_sampleid_setup(nir_to_brw_state &ntb)
    abld.AND(sample_id, tmp, brw_imm_w(0xf));
 
    if (key->multisample_fbo == INTEL_SOMETIMES) {
-      brw_check_dynamic_fs_config(abld, fs_prog_data,
-                                  INTEL_FS_CONFIG_MULTISAMPLE_FBO);
+      brw_check_dynamic_fs_config(abld, INTEL_FS_CONFIG_MULTISAMPLE_FBO);
       set_predicate(BRW_PREDICATE_NORMAL,
                     abld.SEL(sample_id, sample_id, brw_imm_ud(0)));
    }
@@ -3924,8 +3922,8 @@ brw_from_nir_emit_fs_intrinsic(nir_to_brw_state &ntb,
    case nir_intrinsic_load_barycentric_centroid:
    case nir_intrinsic_load_barycentric_sample: {
       /* Use the delta_xy values computed from the payload */
-      enum intel_barycentric_mode bary = brw_barycentric_mode(
-         reinterpret_cast<const brw_fs_prog_key *>(s.key), instr);
+      enum intel_barycentric_mode bary = intel_fs_barycentric_mode_for_persample_dispatch(
+         brw_fs_prog_data(s.prog_data)->persample_dispatch, brw_barycentric_mode(instr));
       const brw_reg srcs[] = { offset(s.delta_xy[bary], bld, 0),
                               offset(s.delta_xy[bary], bld, 1) };
       bld.LOAD_PAYLOAD(dest, srcs, ARRAY_SIZE(srcs), 0);
@@ -3953,10 +3951,7 @@ brw_from_nir_emit_fs_intrinsic(nir_to_brw_state &ntb,
          brw_reg flag_reg;
          struct brw_fs_prog_key *fs_prog_key = (struct brw_fs_prog_key *) s.key;
          if (fs_prog_key->multisample_fbo == INTEL_SOMETIMES) {
-            struct brw_fs_prog_data *fs_prog_data = brw_fs_prog_data(s.prog_data);
-
             brw_check_dynamic_fs_config(bld.exec_all().group(8, 0),
-                                        fs_prog_data,
                                         INTEL_FS_CONFIG_MULTISAMPLE_FBO);
             flag_reg = brw_flag_reg(0, 0);
          }
@@ -4020,8 +4015,8 @@ brw_from_nir_emit_fs_intrinsic(nir_to_brw_state &ntb,
          dst_xy = retype(get_nir_src(ntb, instr->src[0], -1), BRW_TYPE_F);
       } else {
          /* Use the delta_xy values computed from the payload */
-         enum intel_barycentric_mode bary = brw_barycentric_mode(
-            reinterpret_cast<const brw_fs_prog_key *>(s.key), bary_intrinsic);
+         enum intel_barycentric_mode bary = intel_fs_barycentric_mode_for_persample_dispatch(
+            brw_fs_prog_data(s.prog_data)->persample_dispatch, brw_barycentric_mode(bary_intrinsic));
          dst_xy = s.delta_xy[bary];
       }
 
@@ -4212,59 +4207,45 @@ brw_from_nir_emit_cs_intrinsic(nir_to_brw_state &ntb,
       const brw_reg_type src_type =
          brw_type_for_base_type(nir_intrinsic_src_base_type(instr));
 
+      /* ACM PRM, Vol 2a, "Dot Product Accumulate Systolic" says
+       *
+       *     When Src0 is specified as null, it is treated as an
+       *     immediate value of +0.
+       */
+      bool src0_use_null = true;
+      for (unsigned c = 0; c < nir_src_num_components(instr->src[0]); c++)
+         src0_use_null &= nir_scalar_is_zero(nir_scalar_resolved(instr->src[0].ssa, c));
+
       brw_reg src[3] = {};
       for (unsigned i = 0; i < ARRAY_SIZE(src); i++) {
          nir_src nsrc = instr->src[i];
+         brw_reg val = get_nir_src(ntb, nsrc, 0);
 
-         if (!nir_src_is_const(nsrc)) {
-            src[i] = get_nir_src(ntb, nsrc, 0);
-            continue;
-         }
-
-         /* A single constant value can be used to fill the entire
-          * cooperative matrix.  In this case get_nir_src() would give a
-          * uniform value (with stride 0), but DPAS can't use regioning,
-          * it needs the full data available in the register.
-          *
-          * So when a source is a constant, allocate the space necessary
-          * and fill it with the constant value.  Except for
-          *
-          *     When Src0 is specified as null, it is treated as an
-          *     immediate value of +0.
-          *
-          * documented in ACM PRM, Vol 2a, "Dot Product Accumulate Systolic".
-          */
-         const unsigned num_components = nir_src_num_components(nsrc);
-         const unsigned bit_size = nir_src_bit_size(nsrc);
-         const nir_const_value *nval = nir_src_as_const_value(nsrc);
-
-         assert(bit_size <= 32);
-         for (unsigned j = 1; j < num_components; j++)
-            assert(nval[0].u32 == nval[j].u32);
-         uint32_t val = nval[0].u32;
-
-         if (i == 0 && val == 0) {
+         if (i == 0 && src0_use_null) {
             src[i] = brw_null_reg();
-
+         } else if (!is_uniform(val)) {
+            src[i] = val;
          } else {
-            unsigned size = bit_size * num_components;
-            unsigned count = size / 32;
-            assert(size % 32 == 0);
+            /* DPAS can't use regioning, so broadcast the uniform value in the
+             * registers to be consumed by it.
+             */
+            assert(nir_src_bit_size(nsrc) == 32);
+            const unsigned num_components = nir_src_num_components(nsrc);
 
-            src[i] = bld.vgrf(BRW_TYPE_UD, count);
-            for (unsigned j = 0; j < count; j++)
-               bld.exec_all().MOV(offset(src[i], bld, j), brw_imm_ud(val));
+            src[i] = bld.vgrf(BRW_TYPE_UD, num_components);
+            const brw_reg scalar = retype(component(val, 0), BRW_TYPE_UD);
+            for (unsigned j = 0; j < num_components; j++)
+               bld.exec_all().MOV(offset(src[i], bld, j), scalar);
          }
       }
 
       const unsigned dpas_exec_size = devinfo->ver >= 20 ? 16 : 8;
       brw_builder bldn = bld.exec_all().group(dpas_exec_size, 0);
 
-      /* DPAS uses a different source order: Accumulator, B, A. */
       bldn.DPAS(retype(dest,   dest_type),
                 retype(src[0], dest_type),
-                retype(src[2], src_type),
                 retype(src[1], src_type),
+                retype(src[2], src_type),
                 sdepth,
                 rcount)
          ->saturate = nir_intrinsic_saturate(instr);
@@ -4747,8 +4728,10 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
    case nir_intrinsic_ssbo_atomic:
    case nir_intrinsic_ssbo_atomic_swap:
    case nir_intrinsic_load_global:
+   case nir_intrinsic_load_global_intel:
    case nir_intrinsic_load_global_constant:
    case nir_intrinsic_store_global:
+   case nir_intrinsic_store_global_intel:
    case nir_intrinsic_global_atomic:
    case nir_intrinsic_global_atomic_swap:
    case nir_intrinsic_load_scratch:
@@ -4949,6 +4932,11 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
          default:
             urb_fence = false;
             break;
+      }
+
+      if (s.stage == MESA_SHADER_COMPUTE) {
+         struct brw_cs_prog_data *cs_prog_data = brw_cs_prog_data(s.prog_data);
+         cs_prog_data->uses_fence = true;
       }
 
       unsigned fence_regs_count = 0;
@@ -5825,6 +5813,8 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
    case nir_intrinsic_store_global:
    case nir_intrinsic_global_atomic:
    case nir_intrinsic_global_atomic_swap:
+   case nir_intrinsic_load_global_intel:
+   case nir_intrinsic_store_global_intel:
    case nir_intrinsic_load_global_block_intel:
    case nir_intrinsic_store_global_block_intel:
       mode = MEMORY_MODE_UNTYPED;

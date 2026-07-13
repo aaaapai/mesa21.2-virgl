@@ -74,6 +74,7 @@ struct gen_validator {
       send_descriptor_restrictions();
       register_region_special_restrictions();
       scalar_register_restrictions();
+      xe3p_src1_encoding_restrictions();
 
    end:
       error_index++;
@@ -235,7 +236,7 @@ private:
    bool
    is_mixed_float() const
    {
-      if (gen_inst_is_send(inst) || !gen_inst_has_dst(format, inst->opcode))
+      if (gen_inst_is_send(inst) || !gen_inst_has_dst(inst->opcode))
          return false;
 
       if (num_sources == 0)
@@ -259,7 +260,7 @@ private:
       if (gen_inst_is_send(inst))
          return false;
 
-      const bool has_dst = gen_inst_has_dst(format, inst->opcode);
+      const bool has_dst = gen_inst_has_dst(inst->opcode);
       if (num_sources == 0 && !has_dst)
          return false;
 
@@ -280,7 +281,7 @@ private:
       if (gen_inst_is_send(inst))
          return false;
 
-      const bool has_dst = gen_inst_has_dst(format, inst->opcode);
+      const bool has_dst = gen_inst_has_dst(inst->opcode);
       const unsigned operands = num_sources + has_dst;
       if (operands == 0)
          return false;
@@ -544,7 +545,7 @@ private:
       /* TODO: Consider Large GRF for certain Xe platforms that support it. */
       const unsigned max_grf = devinfo->ver >= 20 ? 256 : 128;
 
-      if (gen_inst_has_dst(format, inst->opcode)) {
+      if (gen_inst_has_dst(inst->opcode)) {
          ERROR_IF(!inst->dst.indirect &&
                   inst->dst.file == GEN_GRF && inst->dst.nr >= max_grf,
                   "Destination GRF register number %u exceeds maximum %u.",
@@ -845,7 +846,7 @@ private:
          ERROR_IF(!valid, "SRND requires dst=HF and src0/src1=F.");
       }
 
-      if (!gen_inst_has_dst(format, inst->opcode))
+      if (!gen_inst_has_dst(inst->opcode))
          return;
 
       const gen_reg_type dst_type = inst->dst.type;
@@ -995,7 +996,7 @@ private:
          return;
 
       if (inst->align16) {
-         if (gen_inst_has_dst(format, inst->opcode) && !is_null(inst->dst)) {
+         if (gen_inst_has_dst(inst->opcode) && !is_null(inst->dst)) {
             ERROR_IF(inst->dst.region.hstride != 1,
                      "In Align16 mode, destination horizontal stride must be 1.");
          }
@@ -1075,7 +1076,7 @@ private:
          }
       }
 
-      if (gen_inst_has_dst(format, inst->opcode) && !is_null(inst->dst)) {
+      if (gen_inst_has_dst(inst->opcode) && !is_null(inst->dst)) {
          ERROR_IF(inst->dst.region.hstride == 0,
                   "Destination horizontal stride must not be 0.");
       }
@@ -1114,7 +1115,7 @@ private:
 
          const unsigned half_offset = devinfo->grf_size / 2;
 
-         if (gen_inst_has_dst(format, inst->opcode) && gen_type_is_bfloat(inst->dst.type)) {
+         if (gen_inst_has_dst(inst->opcode) && gen_type_is_bfloat(inst->dst.type)) {
             const unsigned dst_stride = inst->dst.region.hstride;
             const bool dst_is_packed =
                is_packed(inst->exec_size * dst_stride, inst->exec_size, dst_stride);
@@ -1258,7 +1259,7 @@ private:
          }
       }
 
-      if (!gen_inst_has_dst(format, inst->opcode) || is_null(inst->dst) ||
+      if (!gen_inst_has_dst(inst->opcode) || is_null(inst->dst) ||
           inst->dst.file != GEN_GRF || inst->dst.indirect)
          return;
 
@@ -1334,7 +1335,7 @@ private:
       if (gen_inst_is_split_send(devinfo, inst))
          return;
 
-      if (!gen_inst_has_dst(format, inst->opcode))
+      if (!gen_inst_has_dst(inst->opcode))
          return;
 
       const gen_reg_type exec_type = execution_type();
@@ -1930,7 +1931,7 @@ private:
       if (devinfo->ver < 20)
          return;
 
-      if (!gen_inst_has_dst(format, inst->opcode))
+      if (!gen_inst_has_dst(inst->opcode))
          return;
 
       if (format != GEN_FORMAT_BASIC_ONE_SRC &&
@@ -2087,6 +2088,30 @@ private:
 
       ERROR_IF(src1_is_scalar || src2_is_scalar,
                "Scalar registers are only allowed in src0.");
+   }
+
+   void
+   xe3p_src1_encoding_restrictions()
+   {
+      if (devinfo->ver < 35 || num_sources < 2)
+         return;
+
+      if (format == GEN_FORMAT_DPAS_THREE_SRC ||
+          format == GEN_FORMAT_SEND)
+         return;
+
+      if (is_null(inst->src[1]))
+         return;
+
+      const unsigned src1_stride = gen_byte_stride(inst->src[1]);
+      if (src1_stride == 0)
+         return;
+
+      const unsigned dst_stride =
+         MAX2(gen_byte_stride(inst->dst), gen_type_size_bytes(inst->dst.type));
+
+      ERROR_IF(dst_stride != src1_stride,
+               "On Xe3P+, src1 and dst byte stride must match.");
    }
 };
 

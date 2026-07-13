@@ -49,6 +49,45 @@ info on what was updated.
 Workarounds
 ===========
 
+KK_WORKAROUND_14
+----------------
+| macOS version: 26.5, 27.0 beta 1
+| Metal ticket status: Not reported
+| CTS test failure: dEQP-VK.spirv_assembly.instruction.*.float_controls2.fp*
+| Comments:
+
+Metal compiler will fold "NAN * 0.0" to "0.0" and "0.0 < abs(NAN)" to "true"
+even under blocks with pragma relaxed when the "0.0" value is constant even
+if relaxed mode preserves NAN values. Work around this by adding an always
+true conditional for multiplies such that "(false value) ? 1.0 : NAN * 0.0"
+and checking for NAN in conditionals such that "!isnan(x) && !isnan(y) && x == y"
+for less than, greater equal than and equal, while using OR and removing
+negation for not equal.
+
+KK_WORKAROUND_13
+----------------
+| macOS version: 26.5, 27.0 beta 1
+| Metal ticket: FB23291220
+| Metal ticket status: Waiting resolution
+| CTS test failure: N/A
+| Comments:
+
+Metal 4 guarantees about index buffer out-of-bounds access are not true for
+index buffers that are not 32-bit aligned, for example with 16-bit indices.
+We need to handle them manually by unrolling.
+
+KK_WORKAROUND_12
+----------------
+| macOS version: 26.x
+| Metal ticket: N/A
+| Metal ticket status: Resolved in macOS 27
+| CTS test failure: ``dEQP-VK.robustness.bind_index_buffer2.*.oo_size``
+| Comments:
+
+macOS 26.x is missing some math when configuring the register for the index
+buffer length in the Metal 4 draw paths. To avoid any unpredictable behavior,
+just handle robustness ourselves.
+
 KK_WORKAROUND_11
 ----------------
 | macOS version: 26.5
@@ -210,6 +249,7 @@ Hopefully this does not affect performance much.
 
 | Log:
 | 2025-12-08: Workaround implemented and reported to Apple
+| 2026-06-22: Fixed in macOS 27 Beta (Build 26A5353q)
 
 KK_WORKAROUND_5
 ---------------
@@ -228,6 +268,7 @@ a premature discard.
 
 | Log:
 | 2025-12-01: Workaround implemented
+| 2026-06-22: Fixed in macOS 27 Beta (Build 26A5353q)
 
 KK_WORKAROUND_4
 ---------------
@@ -244,6 +285,7 @@ fragment is discarded. This issue is present in M1 and M2 chips.
 
 | Log:
 | 2025-11-22: Workaround implemented and reported to Apple
+| 2026-06-22: Fixed in macOS 27 Beta (Build 26A5353q)
 
 KK_WORKAROUND_3
 ---------------
@@ -299,6 +341,7 @@ Alternatively, the conditional can be changed to include ``simd_ballot(true)``:
 | Log:
 | 2025-09-09: Workaround implemented and reported to Apple
 | 2026-04-28: Workaround updated to expand to all ballot/vote ops.
+| 2026-06-22: Fixed in macOS 27 Beta (Build 26A5353q)
 
 KK_WORKAROUND_2
 ---------------
@@ -336,6 +379,7 @@ tricks the MSL compiler into believing we are not doing an infinite loop
 
 | Log:
 | 2025-09-08: Workaround implemented
+| 2026-06-22: Fixed in macOS 27 Beta (Build 26A5353q)
 
 KK_WORKAROUND_1
 ---------------

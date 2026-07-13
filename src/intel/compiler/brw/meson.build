@@ -63,6 +63,7 @@ libintel_compiler_brw_files = files(
   'brw_nir_opt_divergent_atomics.c',
   'brw_nir_wa_18019110168.c',
   'brw_nir_opt_fsat.c',
+  'brw_nir_opt_systolic_vectorize.c',
   'brw_nir_rt.h',
   'brw_nir_rt.c',
   'brw_nir_rt_builder.h',
@@ -77,6 +78,7 @@ libintel_compiler_brw_files = files(
   'brw_opt_cse.cpp',
   'brw_opt_dead_code_eliminate.cpp',
   'brw_opt_fill_spill.cpp',
+  'brw_opt_predicate_logic.cpp',
   'brw_opt_register_coalesce.cpp',
   'brw_opt_saturate_propagation.cpp',
   'brw_opt_txf_combiner.cpp',
@@ -165,6 +167,7 @@ if with_tests
         'test_opt_combine_constants.cpp',
         'test_opt_copy_propagation.cpp',
         'test_opt_cse.cpp',
+        'test_opt_predicate_logic.cpp',
         'test_opt_register_coalesce.cpp',
         'test_opt_saturate_propagation.cpp',
         'test_simd_selection.cpp',
@@ -181,30 +184,3 @@ if with_tests
   )
 endif
 
-if with_intel_tools
-
-asm_testcases = [
-  ['skl', 'gfx9'],
-  ['icl', 'gfx11'],
-  ['tgl', 'gfx12'],
-  ['dg2', 'gfx12.5'],
-]
-
-test_runner = find_program('tests/run-test.py')
-foreach testcase : asm_testcases
-  _gen_name = testcase[0]
-  _gen_num = testcase[1]
-  _gen_folder = join_paths(meson.current_source_dir(), 'tests',
-                           _gen_num.replace('gfx', 'gen'))
-  test(
-    'brw_asm_' + _gen_num, test_runner,
-    args : [
-      '--gentool', gentool,
-      '--gen_name', _gen_name,
-      '--gen_folder', _gen_folder,
-    ],
-    suite : 'intel',
-  )
-endforeach
-
-endif

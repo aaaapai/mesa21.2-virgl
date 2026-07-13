@@ -203,7 +203,7 @@ impl<'a> TestShaderBuilder<'a> {
         let f = Function {
             ssa_alloc: self.alloc,
             phi_alloc: PhiAllocator::new(),
-            blocks: cfg.as_cfg(),
+            blocks: cfg.as_cfg(true),
         };
 
         let cs_info = ComputeShaderInfo {
@@ -2091,4 +2091,33 @@ fn test_op_mufu_f16_down() {
             }
         }
     }
+}
+
+/// This test makes sure the float immediate encodes correctly with F2I, but
+/// also verifies expected behavior for converting NaN.
+#[test]
+fn test_op_f2i_immediate_nan() {
+    let run = &RunSingleton::get();
+
+    let mut b = TestShaderBuilder::new(&run.sm);
+    let dst = b.alloc_ssa(RegFile::GPR);
+    b.push_op(OpF2I {
+        dst: dst.into(),
+        src: f32::NAN.into(),
+        src_type: FloatType::F32,
+        dst_type: IntType::U32,
+        ftz: false,
+        rnd_mode: FRndMode::NearestEven,
+    });
+
+    b.st_test_data(0, MemType::B32, dst.into());
+
+    let bin = b.compile();
+
+    let mut data = vec![0u32];
+    run.run.run(&bin, &mut data).unwrap();
+
+    // TODO: Make the expected result depend on the QMD setting for
+    //       `FP32_F2I_NAN_BEHAVIOR`
+    assert!([0, 0x80000000].contains(&data[0]));
 }

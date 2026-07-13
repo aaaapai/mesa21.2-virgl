@@ -19,9 +19,12 @@ struct pan_shader_info;
 
 bool pan_will_dump_shaders(unsigned arch);
 bool pan_want_debug_info(unsigned arch);
+bool pan_use_kraid(unsigned arch, mesa_shader_stage stage, bool internal);
 
 const nir_shader_compiler_options *
-pan_get_nir_shader_compiler_options(unsigned arch, bool merge_wg);
+pan_get_nir_shader_compiler_options(unsigned arch,
+                                    mesa_shader_stage stage,
+                                    bool merge_wg);
 
 /* Inputs to the backend compiler */
 struct pan_compile_inputs {
@@ -132,8 +135,6 @@ enum { PAN_VERTEX_ID = 16, PAN_INSTANCE_ID = 17, PAN_MAX_ATTRIBUTE };
  * nontrivial programs.
  */
 #define PAN_MAX_PUSH 128
-
-#define PAN_MAX_MULTIVIEW_VIEW_COUNT 8
 
 /* Architectural invariants (Midgard and Bifrost): UBO must be <= 2^16 bytes so
  * an offset to a word must be < 2^16. There are less than 2^8 UBOs */
@@ -574,5 +575,11 @@ pan_res_handle(unsigned table, unsigned index)
 
 void pan_disassemble(FILE *fp, const void *code, size_t size, uint64_t gpu_id,
                      bool verbose);
+
+static inline unsigned
+pan_max_multiview_view_count(unsigned arch)
+{
+   return arch >= 14 ? 16 : 8;
+}
 
 #endif /* __PAN_COMPILER_H__ */

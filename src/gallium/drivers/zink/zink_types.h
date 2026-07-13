@@ -638,9 +638,6 @@ struct zink_batch_state {
    struct util_dynarray acquires;
    struct util_dynarray acquire_flags;
 
-   VkAccessFlags unordered_write_access;
-   VkPipelineStageFlags unordered_write_stages;
-
    simple_mtx_t exportable_lock;
 
    struct util_queue_fence flush_completed;
@@ -1202,6 +1199,7 @@ struct zink_resource_object {
    VkPipelineStageFlags unordered_access_stage;
    VkAccessFlags unordered_access;
    VkAccessFlags last_write;
+   unsigned transfer_rp;
 
    /* 'access' is propagated from unordered_access to handle ops occurring
     * in the ordered cmdbuf which can promote barriers to unordered
@@ -1981,6 +1979,9 @@ struct zink_context {
    struct pipe_resource *index_buffer; //last index buffer
    unsigned index_size;
 
+   unsigned rp_counter;
+   unsigned last_transfer_sync;
+
    uint32_t num_so_targets;
    struct pipe_stream_output_target *so_targets[PIPE_MAX_SO_BUFFERS];
    bool dirty_so_targets;
@@ -2007,6 +2008,7 @@ struct zink_context {
    bool rasterizer_discard_changed : 1;
    bool rp_tc_info_updated : 1;
    bool last_work_was_compute : 1;
+   bool needs_transfer_sync : 1;
 };
 
 static inline struct zink_context *

@@ -76,22 +76,21 @@ op('avg',   2, 's16 s32 u16 u32', Props.NEGATE | Props.CMOD)
 op('bfe',   3, 'u32 s32', Props.NEGATE0)
 op('bfi1',  2, 'u32')
 op('bfi2',  3, 'u32')
-op('bfn',   3, 'u32', Props.CMOD, ['uint8_t ctrl'])
+op('bfn',   3, 'u16 u32', Props.CMOD, ['uint8_t ctrl'])
 op('bfrev', 1, 'u32', Props.NEGATE)
 op('cbit',  1, 'u32')
 op('cmp',   2, 'u32', Props.NEGATE | Props.CMOD)
-
 
 # With an 8/16-bit type, `index` specifies the element index of the source
 # within the 32-bit word. For example, if src_type == U16 and index == 1, this
 # converts the upper 16-bits of the input.
 op('cvt', 1, 'u8 s8 u16 s16 u32 s32 u64 s64 f32 f64 f16 bf16',
    Props.NEGATE | Props.SAT | Props.CMOD, [
-    'enum jay_type src_type',
-    'enum jay_rounding_mode rounding_mode',
-    'uint8_t index',
-    'uint8_t pad'
-])
+       'enum jay_type src_type',
+       'enum jay_rounding_mode rounding_mode',
+       'uint8_t index',
+       'uint8_t pad'
+   ])
 
 op('fbh',        1, 'u32 s32')
 op('fbl',        1, 'u32')
@@ -100,7 +99,7 @@ op('frc',        1, 'f32 f64', Props.NEGATE | Props.CMOD)
 op('mad',        3, 'u32 s32 u16 s16 f32 f64 f16 bf16',
    Props.NEGATE | Props.SAT | Props.CMOD)
 op('mac',        3, 'f32', Props.NEGATE | Props.SAT | Props.CMOD |
-                           Props.COMMUTATIVE)
+   Props.COMMUTATIVE)
 op('max',        2, 'u32 s32 u64 s64 u16 s16 f32 f64 f16 bf16',
    Props.NEGATE | Props.SAT | Props.COMMUTATIVE)
 op('min',        2, 'u32 s32 u64 s64 u16 s16 f32 f64 f16 bf16',
@@ -134,8 +133,10 @@ op('schedule_barrier', 0, None, Props.NO_DEST)
 
 for n in ['brd', 'illegal', 'goto', 'join', 'if', 'else',
           'endif', 'while', 'break', 'cont', 'call', 'calla', 'jmpi', 'ret',
-          'loop_once', 'halt', 'halt_target']:
+          'loop_once', 'halt_target']:
     op(n, 0, None, Props.NO_DEST)
+
+op('halt', 0, None, Props.NO_DEST, ['bool predicate_all'])
 
 op('send', 4, None, Props.SIDE_EFFECTS, [
     'gen_sfid sfid',
@@ -145,10 +146,11 @@ op('send', 4, None, Props.SIDE_EFFECTS, [
     'bool uniform',
     'bool bindless',
     'bool pure',
+    'bool skip_helpers',
     'enum jay_type type_0',
     'enum jay_type type_1',
+    'uint8_t mlen',
     'uint8_t ex_mlen',
-    'bool pad[2]',
     'uint32_t ex_desc_imm',
 ])
 
@@ -173,7 +175,8 @@ op('and_u32_u16', 2, 'u32')
 # per-lane value. Then offset_packed_pixel_coords adds the appropriate packed
 # 2x16-bit offset within each quad, giving 2x16-bit per-lane coordinates.
 op('expand_quad', 2, 'u32')
-op('offset_packed_pixel_coords', 1, 'u32')
+op('offset_packed_pixel_coords', 2, 'u32')
+op("coarse_pixel_corners", 1, 'u32')
 op('extract_subspan_info', 2, 'u32', Props.CMOD, ['uint16_t mask'])
 
 # Phi function representations
@@ -219,8 +222,37 @@ op('zero_flag', 0, 'u1', Props.NO_DEST, ['unsigned reg'])
 # Cross-lane shuffle. src0=data, src1=offset in bytes. Clobbers an address reg.
 op('shuffle', 2, 'u1 u32')
 
+# Indirect move. src0=data, src1=offset in bytes. Clobbers an address reg.
+op('vector_extract', 2, 'u8 u16 u32')
+
 # Shuffle with a constant lane index.
 op('broadcast_imm', 1, 'u1 u32', 0, ['unsigned lane'])
+
+# Follows hardware source order: C B A.  Data is already packed u32 slots
+# by NIR, types are used when making the gen_inst.
+op('dpas', 3, 'u32', 0, [
+    'uint8_t sdepth',
+    'uint8_t rcount',
+    'enum jay_type acc_type',
+    'enum jay_type src_type',
+    'uint8_t sbid',
+    'uint8_t pad[3]',
+])
+
+# Pack/unpack multiple sources to/from a single 32-bit def.
+op('slice_repack', 1, 'u32', 0, [
+   'uint8_t factor_log2',
+   'bool unpack',
+])
+
+# Initialize helper invocations. Takes 16-bit halves of the dispatch mask.
+op('init_helpers', 2, 'u16', Props.NO_DEST)
+
+# Compare the arguments and demote based on the result.
+op('demote', 2, 'u1 u16 u32 u64 s16 s32 s64 f16 f32 f64', Props.NEGATE | Props.NO_DEST)
+
+# Equivalent to NIR bcsel(@is_helper_invocation, source 0, source 1)
+op('helper_sel', 2, 'u1 u32')
 
 OPCODES = _opcodes
 

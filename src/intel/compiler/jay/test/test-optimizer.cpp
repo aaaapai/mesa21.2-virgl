@@ -6,6 +6,7 @@
 #include "compiler/gen/gen_enums.h"
 #include "util/lut.h"
 #include "jay_builder.h"
+#include "jay_builder_opcodes.h"
 #include "jay_ir.h"
 #include "jay_private.h"
 #include "jay_test.h"
@@ -118,8 +119,9 @@ TEST_F(Optimizer, SELToFloat)
 
 TEST_F(Optimizer, FusedNot)
 {
-   CASE(jay_BFN(b, out, wx, jay_NOT_u32(b, wy), 0, UTIL_LUT3(a & b)),
-        jay_BFN(b, out, wx, wy, 0, UTIL_LUT3(a & ~b)));
+   CASE(jay_BFN(b, JAY_TYPE_U32, out, wx, jay_NOT_u32(b, wy), 0,
+                UTIL_LUT3(a & b)),
+        jay_BFN(b, JAY_TYPE_U32, out, wx, wy, 0, UTIL_LUT3(a & ~b)));
 
    CASE(jay_AND(b, JAY_TYPE_U32, out, wx, jay_NOT_u32(b, wy)),
         jay_AND(b, JAY_TYPE_U32, out, wx, jay_negate(wy)));
@@ -176,9 +178,13 @@ TEST_F(Optimizer, FusedSat)
 TEST_F(Optimizer, InverseBallotPropagate)
 {
    CASEB({
+      jay_def tx = jay_alloc_def(b, UGPR, 1);
+      jay_def ty = jay_alloc_def(b, UGPR, 1);
       jay_def x = jay_alloc_def(b, UGPR, 1);
       jay_def f = jay_alloc_def(b, FLAG, 1);
-      jay_ADD(b, JAY_TYPE_U32, after ? f : x, wx, wy);
+      jay_BROADCAST_IMM(b, tx, wx, 0);
+      jay_BROADCAST_IMM(b, ty, wy, 0);
+      jay_ADD(b, JAY_TYPE_U32, after ? f : x, tx, ty);
       if (!after) {
          jay_MOV(b, f, x);
       }
@@ -246,7 +252,8 @@ TEST_F(Optimizer, TypeNeutralConditionalMods)
       CASEB({
          jay_def flag = jay_alloc_def(b, FLAG, 1);
          jay_def x = jay_alloc_def(b, GPR, 1);
-         jay_inst *bfn3 = jay_BFN(b, x, wx, wy, wz, UTIL_LUT3(a & b & c));
+         jay_inst *bfn3 =
+            jay_BFN(b, JAY_TYPE_U32, x, wx, wy, wz, UTIL_LUT3(a & b & c));
 
          /* BFN.ne is not permitted & should not be propagated */
          if (after && mods[i] == GEN_CONDITION_EQ) {
@@ -283,7 +290,7 @@ TEST_F(Optimizer, SignednessMismatchConditionalMods)
       NEGCASE({
          jay_def flag = jay_alloc_def(b, FLAG, 1);
          jay_def x = jay_alloc_def(b, GPR, 1);
-         jay_BFN(b, x, wx, wy, wz, UTIL_LUT3(a & b & c));
+         jay_BFN(b, JAY_TYPE_U32, x, wx, wy, wz, UTIL_LUT3(a & b & c));
          jay_CMP(b, JAY_TYPE_S32, mods[i], flag, x, 0);
          jay_SEL(b, JAY_TYPE_U32, out, x, 123, flag);
       });
@@ -303,7 +310,7 @@ TEST_F(Optimizer, FloatMismatchConditionalMods)
       NEGCASE({
          jay_def flag = jay_alloc_def(b, FLAG, 1);
          jay_def x = jay_alloc_def(b, GPR, 1);
-         jay_BFN(b, x, wx, wy, wz, UTIL_LUT3(a & b & c));
+         jay_BFN(b, JAY_TYPE_U32, x, wx, wy, wz, UTIL_LUT3(a & b & c));
          jay_CMP(b, JAY_TYPE_F32, mods[i], flag, x, 0);
          jay_SEL(b, JAY_TYPE_U32, out, x, 123, flag);
       });

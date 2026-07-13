@@ -1506,6 +1506,10 @@ print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
             fprintf(fp, "|AVAILABLE");
          if (semantics & (NIR_MEMORY_MAKE_VISIBLE))
             fprintf(fp, "|VISIBLE");
+         if (semantics & (NIR_MEMORY_CONTROL_ARRIVE))
+            fprintf(fp, "|ARRIVE");
+         if (semantics & (NIR_MEMORY_CONTROL_WAIT))
+            fprintf(fp, "|WAIT");
          break;
       }
 
@@ -1901,7 +1905,8 @@ print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
       if (instr->intrinsic == nir_intrinsic_load_uniform) {
          match = var->data.driver_location == nir_intrinsic_base(instr);
       } else {
-         match = nir_intrinsic_component(instr) >= var->data.location_frac &&
+         match = var->data.location == nir_intrinsic_io_semantics(instr).location &&
+                 nir_intrinsic_component(instr) >= var->data.location_frac &&
                  nir_intrinsic_component(instr) <
                     (var->data.location_frac + glsl_get_components(var->type));
       }
@@ -2285,6 +2290,10 @@ print_jump_instr(nir_jump_instr *instr, print_state *state)
       fprintf(fp, "halt");
       break;
 
+   case nir_jump_abort:
+      fprintf(fp, "abort");
+      break;
+
    case nir_jump_goto:
       fprintf(fp, "goto b%u",
               instr->target ? instr->target->index : -1);
@@ -2297,6 +2306,8 @@ print_jump_instr(nir_jump_instr *instr, print_state *state)
       fprintf(fp, " else b%u",
               instr->else_target ? instr->else_target->index : -1);
       break;
+   default:
+      UNREACHABLE("Unknown jump instruction");
    }
 }
 
@@ -3207,7 +3218,7 @@ nir_print_instr(const nir_instr *instr, FILE *fp)
       .def_prefix = "%",
    };
    if (instr->block) {
-      nir_function_impl *impl = nir_cf_node_get_function(&instr->block->cf_node);
+      nir_function_impl *impl = instr->block->impl;
       state.shader = impl->function->shader;
       state.divergence_valid = impl->valid_metadata & nir_metadata_divergence;
    }

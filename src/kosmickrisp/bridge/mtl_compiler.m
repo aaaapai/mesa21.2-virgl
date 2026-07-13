@@ -35,7 +35,9 @@ mtl_new_compiler(mtl_device *device)
 
 /* Library */
 mtl_library *
-mtl_new_library(mtl_compiler *compiler, const char *src)
+mtl_new_library(mtl_compiler *compiler, const char *src,
+                enum mtl_math_mode math_mode,
+                enum mtl_math_floating_point_functions math_fp_fns)
 {
    @autoreleasepool {
       id<MTL4Compiler> comp = (id<MTL4Compiler>)compiler;
@@ -46,8 +48,8 @@ mtl_new_library(mtl_compiler *compiler, const char *src)
        * dEQP-VK.spirv_assembly.instruction.graphics.float16.logical.opisnan_vector_vert
        * on M1/2 */
       opts.languageVersion = MTLLanguageVersion3_2;
-      opts.mathMode = MTLMathModeSafe;
-      opts.mathFloatingPointFunctions = MTLMathFloatingPointFunctionsPrecise;
+      opts.mathMode = (MTLMathMode)math_mode;
+      opts.mathFloatingPointFunctions = (MTLMathFloatingPointFunctions)math_fp_fns;
 
       MTL4LibraryDescriptor *desc = [[MTL4LibraryDescriptor new] autorelease];
       desc.source = ns_src;

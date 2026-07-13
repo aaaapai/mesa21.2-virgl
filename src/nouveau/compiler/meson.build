@@ -33,18 +33,6 @@ libnak_c_files = files(
   'nak_nir_rematerialize_load_const.c',
 )
 
-_libacorn_rs = static_library(
-  'acorn',
-  files('acorn/lib.rs'),
-  gnu_symbol_visibility : 'hidden',
-  rust_abi : 'rust',
-  rust_args : nouveau_rust_args,
-)
-
-idep_acorn_rs = declare_dependency(
-  link_with : _libacorn_rs,
-)
-
 libnak_deps = [
   idep_mesautil,
   idep_nir_headers,
@@ -73,6 +61,7 @@ _nak_bindings_rs = rust.bindgen(
     '--allowlist-function', 'nouveau_ws_.*',
     # provided through compiler::bindings::*
     '--blocklist-type', 'glsl_.*',
+    '--blocklist-type', 'pipe_format.*',
     '--no-prepend-enum-name',
     '--with-derive-default',
   ],
@@ -146,13 +135,11 @@ if with_tests and get_option('b_sanitize') == 'none' and not with_platform_andro
       idep_compiler.partial_dependency(link_args : true, links : true),
       idep_mesautil.partial_dependency(link_args : true, links : true),
       idep_nv_push_rs,
+      idep_acorn_rs,
     ],
     # This is needed to ensure we link against glibc
     # See also https://gitlab.freedesktop.org/mesa/mesa/-/issues/11632
     rust_args: ['-C', 'default-linker-libraries'],
-    link_with: [
-      _libacorn_rs,
-    ],
   )
 endif
 

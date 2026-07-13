@@ -531,7 +531,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
                         }
 
                         const uint32_t max_rts =
-                                V3D_MAX_RENDER_TARGETS(v3d->screen->devinfo.ver);
+                                v3d->screen->devinfo.max_render_targets;
                         if (blend->base.independent_blend_enable) {
                                 for (int i = 0; i < max_rts; i++)
                                         emit_rt_blend(v3d, job, &blend->base, i,
@@ -572,7 +572,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
                 struct pipe_blend_state *blend = &v3d->blend->base;
 
                 const uint32_t max_rts =
-                        V3D_MAX_RENDER_TARGETS(v3d->screen->devinfo.ver);
+                        v3d->screen->devinfo.max_render_targets;
                 cl_emit(&job->bcl, COLOR_WRITE_MASKS, mask) {
                         for (int i = 0; i < max_rts; i++) {
                                 int rt = blend->independent_blend_enable ? i : 0;
@@ -692,6 +692,13 @@ v3dX(emit_state)(struct pipe_context *pctx)
 
                         if (!target)
                                 continue;
+
+                        /* Transform feedback can overflow the bound buffer across
+                         * re-emits, pushing offset past buffer_size and making the
+                         * unsigned (buffer_size - offset) below underflow into a
+                         * bogus huge size.  Clamp so we never record past the end.
+                         */
+                        offset = MIN2(offset, target->buffer_size);
 
                         cl_emit(&job->bcl, TRANSFORM_FEEDBACK_BUFFER, output) {
                                 output.buffer_address =

@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "brw_eu.h"
 #include "brw_nir.h"
 #include "brw_private.h"
 #include "brw_sampler.h"
@@ -99,7 +100,7 @@ intel_nir_lower_scratch(nir_shader *nir)
  * This method is useful to calculate how much register space is needed to
  * store a particular type.
  */
-int
+unsigned
 type_size_vec4(const struct glsl_type *type, bool bindless)
 {
    return glsl_count_attribute_slots(type, false);
@@ -1556,16 +1557,17 @@ generate_fs_config_state_bits(const struct brw_fs_prog_key *key,
    if (prog_data->provoking_vertex_last == comp_value)
       f |= INTEL_FS_CONFIG_PROVOKING_VERTEX_LAST;
 
-   if (prog_data->persample_dispatch == comp_value) {
-      f |= INTEL_FS_CONFIG_PERSAMPLE_DISPATCH |
-           INTEL_FS_CONFIG_PERSAMPLE_INTERP;
-   }
-
-   if (prog_data->coarse_pixel_dispatch == comp_value)
-      f |= INTEL_FS_CONFIG_COARSE_RT_WRITES;
-
    if (prog_data->conservative_raster == comp_value)
       f |= INTEL_FS_CONFIG_CONSERVATIVE_RASTER;
+
+   if (comp_value == INTEL_ALWAYS) {
+      if (prog_data->persample_dispatch)
+         f |= INTEL_FS_CONFIG_PERSAMPLE_DISPATCH;
+
+      if (prog_data->coarse_pixel_dispatch)
+         f |= INTEL_FS_CONFIG_COARSE_RT_WRITES;
+
+   }
 
    return f;
 }
@@ -1719,7 +1721,7 @@ brw_nir_lower_fs_inputs(nir_shader *nir,
          .lower_sample_mask_in = key->coarse_pixel == INTEL_NEVER,
       };
       NIR_PASS(_, nir, nir_lower_single_sampled, &lss_opts);
-   } else if (key->persample_interp == INTEL_ALWAYS) {
+   } else if (key->persample_interp) {
       NIR_PASS(_, nir, nir_shader_intrinsics_pass,
                lower_barycentric_per_sample,
                nir_metadata_control_flow,
@@ -1921,6 +1923,10 @@ brw_nir_optimize(brw_pass_tracker *pt)
    nir_shader *nir = pt->nir;
 
    pass_tracker_new_loop(pt);
+
+   OPT(nir_opt_uub, &(nir_opt_uub_options){});
+   OPT(nir_opt_fp_math_ctrl);
+
    do {
       pass_tracker_new_iteration(pt);
 
@@ -1990,8 +1996,12 @@ brw_nir_optimize(brw_pass_tracker *pt)
       LOOP_OPT(nir_opt_gcm, false);
       LOOP_OPT(nir_opt_undef);
       LOOP_OPT(nir_lower_pack);
+
+      if (pt->compiler->devinfo->verx10 >= 125)
+         LOOP_OPT(nir_opt_shrink_vectors, true);
    } while (pt->progress);
 
+   OPT(nir_opt_shrink_stores, true);
    OPT(nir_remove_dead_variables, nir_var_function_temp, NULL);
 }
 
@@ -2247,11 +2257,19 @@ brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
    };
    OPT(nir_opt_16bit_tex_image, &options);
 
-   OPT(nir_lower_doubles, opts->softfp64, nir->options->lower_doubles_options);
+   /* Anv delays the initialization of softfp64, so we may not have
+    * softfp64 set here. The full lowering will happen during the post-process
+    * compilation.
+    */
+   nir_lower_doubles_options double_opts =
+      nir->options->lower_doubles_options;
+   if (!opts->softfp64)
+      double_opts &= ~nir_lower_fp64_full_software;
+
+   OPT(nir_lower_doubles, opts->softfp64, double_opts);
    if (OPT(nir_lower_int64_float_conversions)) {
       OPT(nir_opt_algebraic);
-      OPT(nir_lower_doubles, opts->softfp64,
-          nir->options->lower_doubles_options);
+      OPT(nir_lower_doubles, opts->softfp64, double_opts);
    }
 
    OPT(nir_lower_bit_size, lower_bit_size_callback, (void *)devinfo);
@@ -2635,6 +2653,7 @@ brw_nir_should_vectorize_mem(unsigned align_mul, unsigned align_offset,
       return false;
 
    if (low->intrinsic == nir_intrinsic_load_global ||
+       low->intrinsic == nir_intrinsic_load_global_intel ||
        low->intrinsic == nir_intrinsic_load_global_constant ||
        low->intrinsic == nir_intrinsic_load_global_constant_uniform_block_intel) {
       /* Only increase the size of loads if doing so doesn't extend into a new page. */
@@ -2829,6 +2848,41 @@ brw_nir_ssbo_intel_instr(nir_builder *b,
       return true;
    }
 
+   case nir_intrinsic_load_global:
+   case nir_intrinsic_load_global_constant: {
+      enum gl_access_qualifier access = nir_intrinsic_access(intrin) |
+         (intrin->intrinsic == nir_intrinsic_load_global_constant ?
+          ACCESS_NON_WRITEABLE | ACCESS_CAN_REORDER : 0);
+
+      b->cursor = nir_before_instr(&intrin->instr);
+      nir_def *value = nir_load_global_intel(
+         b,
+         intrin->def.num_components,
+         intrin->def.bit_size,
+         intrin->src[0].ssa,
+         .access = access,
+         .align_mul = nir_intrinsic_align_mul(intrin),
+         .align_offset = nir_intrinsic_align_offset(intrin),
+         .base = 0);
+      value->loop_invariant = intrin->def.loop_invariant;
+      value->divergent = intrin->def.divergent;
+      nir_def_replace(&intrin->def, value);
+      return true;
+   }
+
+   case nir_intrinsic_store_global: {
+      b->cursor = nir_instr_remove(&intrin->instr);
+      nir_store_global_intel(
+         b,
+         intrin->src[0].ssa,
+         intrin->src[1].ssa,
+         .access = nir_intrinsic_access(intrin),
+         .align_mul = nir_intrinsic_align_mul(intrin),
+         .align_offset = nir_intrinsic_align_offset(intrin),
+         .base = 0);
+      return true;
+   }
+
    default:
       return false;
    }
@@ -2865,6 +2919,8 @@ brw_vectorize_lower_mem_access(brw_pass_tracker *pt)
       options.robust_modes |= nir_var_mem_ubo;
    if (pt->key->robust_flags & BRW_ROBUSTNESS_SSBO)
       options.robust_modes |= nir_var_mem_ssbo;
+   if (pt->key->robust_flags & BRW_ROBUSTNESS_SLM)
+      options.robust_modes |= nir_var_mem_shared;
 
    OPT(nir_opt_load_store_vectorize, &options);
 
@@ -2936,6 +2992,7 @@ brw_vectorize_lower_mem_access(brw_pass_tracker *pt)
          .buffer_max        = UINT32_MAX,
          .shared_max        = UINT32_MAX,
          .shared_atomic_max = UINT32_MAX,
+         .global_max        = UINT32_MAX,
       };
       OPT(nir_opt_offsets, &offset_options);
 
@@ -3259,6 +3316,8 @@ brw_postprocess_nir_opts(brw_pass_tracker *pt)
       OPT(nir_opt_peephole_select, &peephole_select_options);
    }
 
+   OPT(brw_nir_opt_systolic_vectorize, devinfo);
+
    OPT(brw_nir_lower_fsign);
    OPT(brw_nir_opt_fsat);
 
@@ -3573,6 +3632,7 @@ lsc_op_for_nir_intrinsic(const nir_intrinsic_instr *intrin)
    case nir_intrinsic_load_ssbo_intel:
    case nir_intrinsic_load_shared:
    case nir_intrinsic_load_global:
+   case nir_intrinsic_load_global_intel:
    case nir_intrinsic_load_global_block_intel:
    case nir_intrinsic_load_global_constant:
    case nir_intrinsic_load_global_constant_uniform_block_intel:
@@ -3594,6 +3654,7 @@ lsc_op_for_nir_intrinsic(const nir_intrinsic_instr *intrin)
    case nir_intrinsic_store_shared_block_intel:
    case nir_intrinsic_store_ssbo_block_intel:
    case nir_intrinsic_store_scratch_intel:
+   case nir_intrinsic_store_global_intel:
       return LSC_OP_STORE;
 
    case nir_intrinsic_image_load:
@@ -4088,6 +4149,26 @@ brw_nir_quick_pressure_estimate(nir_shader *nir,
       simd_estimate[i] = DIV_ROUND_UP(convergent_size, 8 << base_simd) +
                          divergent_size * (1 << (i - base_simd));
    }
+}
+
+/**
+ * Provide a rough estimate of the payload size of a vertex shader based on
+ * the amount of inputs.
+ *
+ * This could be improved checking whether packing is enabled and what
+ * components are read.
+ */
+unsigned
+brw_nir_vs_compute_payload_size(nir_shader *nir,
+                                const struct intel_device_info *devinfo)
+{
+   unsigned n = 2; /* payload registers we can't avoid */
+
+   u_foreach_bit64(b, nir->info.inputs_read) {
+      n += 4 * ((BITFIELD64_BIT(b) & nir->info.dual_slot_inputs) ? 2 : 1);
+   }
+
+   return REG_SIZE * reg_unit(devinfo) * n;
 }
 
 unsigned

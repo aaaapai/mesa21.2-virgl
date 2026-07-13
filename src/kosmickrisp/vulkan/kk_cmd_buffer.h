@@ -28,7 +28,7 @@
 struct kk_query_pool;
 
 struct kk_root_descriptor_table {
-   struct kk_ptr root_buffer;
+   uint64_t addr;
 
    union {
       struct {
@@ -93,9 +93,9 @@ struct kk_attachment {
    VkResolveModeFlagBits resolve_mode;
    struct kk_image_view *resolve_iview;
 
-   /* Needed to track the value of storeOp in case we need to copy images for
-    * the DRM_FORMAT_MOD_LINEAR case */
+   VkAttachmentLoadOp load_op;
    VkAttachmentStoreOp store_op;
+   VkClearValue clear_value;
 };
 
 struct kk_rendering_state {
@@ -108,6 +108,7 @@ struct kk_rendering_state {
 
    uint32_t color_att_count;
    struct kk_attachment color_att[KK_MAX_RTS];
+   uint8_t color_map[KK_MAX_RTS];
    struct kk_attachment depth_att;
    struct kk_attachment stencil_att;
    struct kk_attachment fsr_att;
@@ -151,25 +152,21 @@ struct kk_graphics_state {
 
    /* Index buffer */
    struct {
-      mtl_buffer *handle;
-      uint64_t buffer_size;
-      uint64_t range;
-      uint64_t offset;
+      struct kk_addr_range gpu;
       uint8_t bytes_per_index;
+      uint64_t null_addr;
    } index;
 
    /* Vertex buffers */
    struct {
       struct kk_addr_range addr_range[KK_MAX_VBUFS];
-      mtl_buffer *handles[KK_MAX_VBUFS];
    } vb;
 
    /* Tessellation state */
    struct {
       /* Grid buffer for when the draw is indirect */
       struct kk_ptr indirect_ptr;
-      mtl_buffer *out_draws_buffer;
-      uint64_t out_draws_offset;
+      uint64_t out_draws_addr;
       struct kk_tess_info info;
       enum mesa_prim prim;
    } tess;
@@ -200,28 +197,52 @@ struct kk_uploader {
    uint32_t offset;
 };
 
+struct kk_encoder_state {
+   /* either a mtl_compute_encoder or a mtl_render_encoder */
+   mtl_command_encoder *encoder;
+   mtl_command_allocator *allocator;
+   mtl_command_buffer *cmd_buf;
+};
+
 struct kk_cmd_buffer {
    struct vk_command_buffer vk;
 
-   struct kk_encoder *encoder;
+   struct kk_encoder_state gfx;
+   /* pre and post gfx encoder states swap after every gfx encoder is committed */
+   struct kk_encoder_state cmp[2];
+   struct kk_encoder_state *pre_gfx;
+   struct kk_encoder_state *post_gfx;
+
    void *drawable;
+   mtl_argument_table *argument_table;
 
    struct {
       struct kk_graphics_state gfx;
       struct kk_compute_state cs;
       struct kk_conditional_rendering_state cond_render;
       struct kk_shader *shaders[MESA_SHADER_STAGES];
+      /* Address of the binding 0 for when compute dispatches modify it.
+       * We are trying to be nice to ourselves. */
+      uint64_t root_addr;
       /* Only tracks graphics shaders since compute is always bound for now. */
       uint32_t dirty_shaders;
    } state;
 
    struct kk_uploader uploader;
 
+   struct util_dynarray submit_cmd_bufs;
+
    /* Owned large BOs */
    struct util_dynarray large_bos;
 
    /* Does the command buffer use the geometry heap? */
    bool uses_heap;
+   /* Set at vkBeginCommandBuffer. One-time-submit buffers skip command
+    * enqueueing in the trampolines since they can never be replayed. */
+   bool one_time_submit;
+   /* Metal command buffers are single-shot: a resubmission must re-record
+    * by replaying the enqueued commands (see rerecord_cmd_buffer). */
+   bool submitted;
 };
 
 VK_DEFINE_HANDLE_CASTS(kk_cmd_buffer, vk.base, VkCommandBuffer,
@@ -255,7 +276,13 @@ kk_get_descriptors_state(struct kk_cmd_buffer *cmd,
    }
 };
 
-void kk_cmd_release_resources(struct kk_device *dev, struct kk_cmd_buffer *cmd);
+void kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd);
+void cs_start_render(struct kk_cmd_buffer *cmd);
+mtl_render_encoder *cs_get_render(struct kk_cmd_buffer *cmd);
+mtl_compute_encoder *cs_get_compute(struct kk_cmd_buffer *cmd, bool pre_gfx);
+void cs_end(struct kk_cmd_buffer *cmd);
+void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
+                                        uint64_t addr);
 
 static void
 kk_cmd_buffer_dirty_all_gfx(struct kk_cmd_buffer *cmd)
@@ -282,10 +309,6 @@ kk_compile_depth_stencil_state(struct kk_device *device,
 void kk_meta_resolve_rendering(struct kk_cmd_buffer *cmd,
                                const VkRenderingInfo *pRenderingInfo);
 
-void kk_cmd_buffer_write_descriptor_buffer(struct kk_cmd_buffer *cmd,
-                                           struct kk_descriptor_state *desc,
-                                           size_t size, size_t offset);
-
 struct kk_ptr kk_pool_alloc(struct kk_cmd_buffer *cmd, uint32_t size,
                             uint32_t alignment);
 
@@ -305,11 +328,8 @@ enum kk_grid_mode {
 struct kk_grid {
    enum kk_grid_mode mode;
    union {
-      struct {
-         uint32_t offset;
-         mtl_buffer *indirect;
-      };
       struct mtl_size size;
+      uint64_t addr;
    };
 };
 
@@ -335,12 +355,11 @@ kk_grid_1d(uint32_t x)
 }
 
 static struct kk_grid
-kk_grid_indirect(mtl_buffer *indirect, uint32_t offset)
+kk_grid_indirect(uint64_t addr)
 {
    return (struct kk_grid){
       .mode = KK_GRID_INDIRECT,
-      .indirect = indirect,
-      .offset = offset,
+      .addr = addr,
    };
 }
 

@@ -26,7 +26,9 @@ build_precompiled_shaders(struct kk_device *dev)
       const struct kk_precompiled_info *info = (void *)bin;
       const char *msl = (const char *)bin + sizeof(*info);
 
-      mtl_library *library = mtl_new_library(dev->mtl_compiler_handle, msl);
+      mtl_library *library =
+         mtl_new_library(dev->mtl_compiler_handle, msl, MTL_MATH_MODE_FAST,
+                         MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
       if (library == NULL)
          goto fail;
 

@@ -206,8 +206,10 @@ get_frame_shader(struct panvk_device *dev,
       goto out;
 
    const struct nir_shader_compiler_options *nir_options =
-      pan_get_nir_shader_compiler_options(PAN_ARCH, false);
+      pan_get_nir_shader_compiler_options(PAN_ARCH, MESA_SHADER_FRAGMENT,
+                                          false);
    nir_shader *nir = GENX(pan_get_fb_shader)(&key->key, nir_options);
+   PAN_NIR_SET_BLAKE3_INTERNAL(nir, key);
 
    NIR_PASS(_, nir, nir_shader_instructions_pass, lower_instr,
             nir_metadata_control_flow, (void *)key);

@@ -1174,6 +1174,41 @@ cmd_buffer_pre_draw_wa(struct anv_cmd_buffer *cmd_buffer)
    }
 #endif
 
+#if GFX_VER >= 12 && GFX_VER <= 30
+   const struct brw_fs_prog_data *fs_prog_data = get_gfx_fs_prog_data(gfx);
+   enum isl_aux_usage depth_aux_usage = gfx->depth_att.aux_usage;
+   if (isl_aux_usage_has_hiz(depth_aux_usage) &&
+       hw_state->wm_ds.DepthTestEnable &&
+       !hw_state->wm_ds.DepthBufferWriteEnable &&
+       fs_prog_data && fs_prog_data->computed_depth_mode != PSCDEPTH_OFF) {
+      /* According to Bspec 72161 (r890) and HSD 22019411255, we can improve
+       * performance by avoiding HiZ planes for draw calls which compute depth
+       * and perform read-only depth tests. According to HSD 22019338931, this
+       * is fixed on gfx35.
+       */
+      if (device->info->kmd_type == INTEL_KMD_TYPE_I915 || GFX_VERx10 < 125) {
+         /* We'll allow HiZ planes during this draw call, but prevent
+          * additional planes from being generated.
+          */
+         genX(cmd_buffer_disable_hiz_planes)(cmd_buffer);
+      } else {
+         /* Xe KMD doesn't allow us to disable the HiZ plane optimization.
+          * However, we support compressed depth buffers without HiZ. So, we
+          * can bypass the HiZ surface if it is in write-through mode.
+          */
+         if (depth_aux_usage == ISL_AUX_USAGE_HIZ_CCS_WT) {
+            depth_aux_usage = ISL_AUX_USAGE_ZCS;
+         } else {
+            anv_perf_warn(VK_LOG_OBJS(&cmd_buffer->device->vk.base),
+                          "Allowing HiZ planes on read-only depth test");
+         }
+      }
+   }
+
+   if (gfx->hiz_usage != depth_aux_usage)
+      genX(cmd_buffer_emit_depth_stencil)(cmd_buffer, depth_aux_usage);
+#endif
+
    genX(emit_breakpoint)(&cmd_buffer->batch, cmd_buffer->device, true);
 
 #undef anv_batch_emit_gfx

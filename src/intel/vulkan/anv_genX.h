@@ -56,6 +56,8 @@ void genX(init_cps_device_state)(struct anv_device *device);
 uint32_t genX(call_internal_shader)(nir_builder *b,
                                     enum anv_internal_kernel_name shader_name);
 
+void genX(cmd_buffer_disable_hiz_planes)(struct anv_cmd_buffer *cmd_buffer);
+
 void
 genX(set_fast_clear_state)(struct anv_cmd_buffer *cmd_buffer,
                            const struct anv_image *image,
@@ -97,8 +99,9 @@ void
 genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
                                      enum anv_color_aux_op_class aux_op);
 
-void genX(cmd_buffer_emit_gfx12_depth_wa)(struct anv_cmd_buffer *cmd_buffer,
-                                          const struct isl_surf *surf);
+void
+genX(cmd_buffer_emit_depth_stencil)(struct anv_cmd_buffer *cmd_buffer,
+                                    enum isl_aux_usage hiz_usage);
 
 void genX(cmd_buffer_set_binding_for_gfx8_vb_flush)(struct anv_cmd_buffer *cmd_buffer,
                                                     int vb_index,
@@ -555,17 +558,13 @@ void genX(write_cs_descriptor)(struct anv_dgc_cs_descriptor *desc,
 uint32_t genX(shader_cmd_size)(struct anv_device *device,
                                mesa_shader_stage stage);
 
+void genX(batch_emit_post_dispatch_wa)(struct anv_batch *batch);
+
 static inline void
 genX(cmd_buffer_post_dispatch_wa)(struct anv_cmd_buffer *cmd_buffer)
 {
 #if INTEL_NEEDS_WA_14025112257
-   if (anv_cmd_buffer_is_compute_queue(cmd_buffer)) {
-      genX(batch_emit_pipe_control)(&cmd_buffer->batch,
-                                    cmd_buffer->device->info,
-                                    cmd_buffer->state.current_pipeline,
-                                    ANV_PIPE_STATE_CACHE_INVALIDATE_BIT,
-                                    "Wa_14025112257");
-   }
+   genX(batch_emit_post_dispatch_wa)(&cmd_buffer->batch);
 #endif
 }
 

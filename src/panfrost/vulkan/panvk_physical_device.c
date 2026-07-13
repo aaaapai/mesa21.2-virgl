@@ -1,5 +1,7 @@
 /*
  * Copyright © 2021 Collabora Ltd.
+ * Copyright © 2026 Google LLC
+ * Copyright © 2026 Arm Ltd.
  *
  * Derived from tu_device.c which is:
  * Copyright © 2016 Red Hat.
@@ -40,6 +42,7 @@
 #define PER_ARCH_FUNCS(_ver)                                                   \
    void panvk_v##_ver##_get_physical_device_extensions(                        \
       const struct panvk_physical_device *device,                              \
+      const struct panvk_instance *instance,                                   \
       struct vk_device_extension_table *ext);                                  \
                                                                                \
    void panvk_v##_ver##_get_physical_device_features(                          \
@@ -192,10 +195,10 @@ free_disk_cache(struct panvk_physical_device *device)
 static VkResult
 get_core_mask(struct panvk_physical_device *device,
               const struct panvk_instance *instance, const char *option_name,
-              uint64_t *mask)
+              uint64_t opt_mask, uint64_t *mask)
 {
    uint64_t present = device->kmod.dev->props.shader_present;
-   *mask = driQueryOptionu64(&instance->dri_options, option_name) & present;
+   *mask = opt_mask & present;
 
    if (!*mask)
       return panvk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
@@ -213,10 +216,12 @@ get_core_masks(struct panvk_physical_device *device,
    VkResult result;
 
    result = get_core_mask(device, instance, "pan_compute_core_mask",
+                          instance->drirc.misc.compute_core_mask,
                           &device->compute_core_mask);
    if (result != VK_SUCCESS)
       return result;
    result = get_core_mask(device, instance, "pan_fragment_core_mask",
+                          instance->drirc.misc.fragment_core_mask,
                           &device->fragment_core_mask);
 
    return result;
@@ -229,8 +234,9 @@ get_device_heaps(struct panvk_physical_device *device,
    int host_coherent_not_cached_idx = -1;
    int host_cached_not_coherent_idx = -1;
 
-   const uint64_t heap_size = os_get_gpu_heap_size(
-      instance->heap_memory_percent, &instance->heap_memory_percent);
+   const uint64_t heap_size =
+      os_get_gpu_heap_size(instance->drirc.misc.heap_memory_percent,
+                           &instance->drirc.misc.heap_memory_percent);
 
    device->memory.heap_count = 1;
    device->memory.heaps[0] = (VkMemoryHeap){
@@ -353,8 +359,7 @@ panvk_get_gpu_system_timestamp_period(const struct panvk_physical_device *device
        !device->kmod.dev->props.timestamp_frequency)
       return 0;
 
-   const float ns_per_s = 1000000000.0;
-   return ns_per_s / (float)device->kmod.dev->props.timestamp_frequency;
+   return device->kmod.dev->props.timestamp_cycles_to_ns_factor;
 }
 
 void
@@ -424,9 +429,8 @@ panvk_physical_device_init(struct panvk_physical_device *device,
    device->formats.all = pan_format_table(arch);
    device->formats.blendable = pan_blendable_format_table(arch);
 
-   unsigned core_id_range;
    unsigned core_count =
-      pan_query_core_count(&device->kmod.dev->props, &core_id_range);
+      pan_query_core_count(&device->kmod.dev->props);
 
    memset(device->name, 0, sizeof(device->name));
    sprintf(device->name, "%s MC%u", device->model->name, core_count);
@@ -454,7 +458,7 @@ panvk_physical_device_init(struct panvk_physical_device *device,
       vk_warn_non_conformant_implementation("panvk");
 
    struct vk_device_extension_table supported_extensions;
-   panvk_arch_dispatch(arch, get_physical_device_extensions, device,
+   panvk_arch_dispatch(arch, get_physical_device_extensions, device, instance,
                        &supported_extensions);
 
    struct vk_features supported_features;
@@ -833,8 +837,14 @@ get_image_format_features(struct panvk_physical_device *physical_device,
        * each have their own, separate filters, so these two bits make sense
        * for multi-planar formats only.
        */
-      features |= VK_FORMAT_FEATURE_2_DISJOINT_BIT |
-                  VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER_BIT;
+      features |= VK_FORMAT_FEATURE_2_DISJOINT_BIT;
+
+      /* YUV texturing only support unified filtering across planes. */
+      unsigned arch = pan_arch(physical_device->kmod.dev->props.gpu_id);
+      if (!panvk_image_use_yuv_tex(arch, format)) {
+         features |=
+            VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER_BIT;
+      }
    }
 
    return features;
@@ -971,6 +981,8 @@ panvk_GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice,
       formatProperties3->bufferFeatures = buffer;
    }
 
+   const uint32_t plane_count = vk_format_get_plane_count(format);
+
    PAN_SUPPORTED_MODIFIERS(supported);
    uint64_t afbc_modifiers[ARRAY_SIZE(supported)];
    uint32_t afbc_modifier_count = 0;
@@ -994,12 +1006,15 @@ panvk_GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice,
                               &list->drmFormatModifierCount);
 
       if (optimal_features) {
+         /* Multi-planar AFBC is not supported. */
+         assert(!afbc_modifier_count || plane_count == 1);
+
          for (uint32_t i = 0; i < afbc_modifier_count; i++) {
             vk_outarray_append_typed(VkDrmFormatModifierPropertiesEXT, &out,
                                        mod_props)
             {
                mod_props->drmFormatModifier = afbc_modifiers[i];
-               mod_props->drmFormatModifierPlaneCount = 1;
+               mod_props->drmFormatModifierPlaneCount = plane_count;
                mod_props->drmFormatModifierTilingFeatures = optimal_features;
             }
          }
@@ -1010,7 +1025,7 @@ panvk_GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice,
                                     mod_props)
          {
             mod_props->drmFormatModifier = DRM_FORMAT_MOD_LINEAR;
-            mod_props->drmFormatModifierPlaneCount = 1;
+            mod_props->drmFormatModifierPlaneCount = plane_count;
             mod_props->drmFormatModifierTilingFeatures = linear_features;
          }
       }
@@ -1026,12 +1041,15 @@ panvk_GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice,
                               &list2->drmFormatModifierCount);
 
       if (optimal_features2) {
+         /* Multi-planar AFBC is not supported. */
+         assert(!afbc_modifier_count || plane_count == 1);
+
          for (uint32_t i = 0; i < afbc_modifier_count; i++) {
             vk_outarray_append_typed(VkDrmFormatModifierProperties2EXT, &out,
                                        mod_props)
             {
                mod_props->drmFormatModifier = afbc_modifiers[i];
-               mod_props->drmFormatModifierPlaneCount = 1;
+               mod_props->drmFormatModifierPlaneCount = plane_count;
                mod_props->drmFormatModifierTilingFeatures =
                   optimal_features2;
             }
@@ -1043,7 +1061,7 @@ panvk_GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice,
                                     mod_props)
          {
             mod_props->drmFormatModifier = DRM_FORMAT_MOD_LINEAR;
-            mod_props->drmFormatModifierPlaneCount = 1;
+            mod_props->drmFormatModifierPlaneCount = plane_count;
             mod_props->drmFormatModifierTilingFeatures = linear_features2;
          }
       }

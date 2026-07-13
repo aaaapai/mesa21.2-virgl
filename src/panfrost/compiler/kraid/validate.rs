@@ -13,51 +13,67 @@ fn validate_instr(instr: &Instr, ssa_vals: &mut FxHashSet<SSAValue>) {
         }
 
         if src.swizzle.is_word_swizzle() {
-            assert!(src_type.bits().unwrap().get() == 64);
+            assert_eq!(src_type.bits(), 64);
         }
 
-        if src_type.comps().unwrap().get() == 1 {
-            if src_type.bits().unwrap().get() == 8 {
+        if src_type.comps() == 1 {
+            if src_type.bits() == 8 {
                 assert!(src.replicates_byte());
-            } else if src_type.bits().unwrap().get() == 16 {
+            } else if src_type.bits() == 16 {
                 assert!(src.replicates_half());
             }
         }
 
-        match &src.src_ref {
-            SrcRef::SSA(vec) => {
-                let src_ref_bytes = vec.bytes();
-                if src_ref_bytes > 8 {
-                    assert!(src.swizzle == Swizzle::NONE);
-                } else {
-                    let src_ref_byte_mask = u8::MAX >> (8 - src_ref_bytes);
-                    assert!(src.swizzle.bytes_read() & !src_ref_byte_mask == 0);
+        let src_bytes = src_type.total_bytes();
+        if src_type == DataType::SR || src_bytes > 8 {
+            assert!(src.swizzle == Swizzle::NONE);
+        } else {
+            let src_ref_byte_mask = match &src.src_ref {
+                SrcRef::Zero => 0xff,
+                SrcRef::Imm32(_) => 0xf,
+                SrcRef::FAU(fau) => {
+                    if fau.load64 {
+                        0xff
+                    } else {
+                        0xf
+                    }
                 }
-            }
-            SrcRef::Reg(reg) => match reg.range {
-                RegRange::Half0 => {
-                    assert!(src.swizzle.bytes_read() & !0b0011 == 0);
-                }
-                RegRange::Half1 => {
-                    assert!(src.swizzle.bytes_read() & !0b1100 == 0);
-                }
-                RegRange::Regs(n) => match n {
-                    1 => assert!(src.swizzle.bytes_read() & !0x0f == 0),
-                    2 => (), // Not much we can assert here
-                    _ => assert!(src.swizzle == Swizzle::NONE),
+                SrcRef::SSA(vec) => u8::MAX >> (8 - vec.bytes()),
+                SrcRef::Reg(reg) => match reg.range {
+                    RegRange::Byte0 => 0b0001,
+                    RegRange::Byte1 => 0b0010,
+                    RegRange::Byte2 => 0b0100,
+                    RegRange::Byte3 => 0b1000,
+                    RegRange::Half0 => 0b0011,
+                    RegRange::Half1 => 0b1100,
+                    RegRange::Regs(n) => u8::MAX >> (8 - (n * 4)),
                 },
-            },
-            _ => (), // Nothing to validate
+            };
+            let swizzle_byte_mask = src.swizzle.bytes_read(src_bytes);
+            assert!(swizzle_byte_mask & !src_ref_byte_mask == 0);
         }
     }
 
     for (dst, dst_type) in instr.dsts_types() {
-        let dst_ref_bytes = dst.bytes_written();
-        let dst_type_bytes = dst_type.bits().unwrap().get() / 8;
-        assert!(dst_type_bytes <= dst_ref_bytes);
-        assert_eq!(dst_type_bytes.div_ceil(4), dst_ref_bytes.div_ceil(4));
+        if dst.dst_ref.is_none() {
+            continue;
+        }
 
-        if let Dst::SSA(ssa) = dst {
+        let dst_type_bits = dst_type.bits();
+        let dst_type_comps = dst_type.comps();
+        if dst_type_bits >= 32 {
+            assert_eq!(dst.lanes, DstLanes::All);
+            let nregs = (dst_type_bits * dst_type_comps).div_ceil(32);
+            assert_eq!(nregs * 4, dst.dst_ref.bytes_written());
+        } else {
+            let dst_type_bytes =
+                (dst_type_bits * dst_type_comps).next_power_of_two() / 8;
+            let lane_bytes = dst.lanes.bytes(dst_type_bytes);
+            assert!(dst_type_bytes <= lane_bytes * 8);
+            assert_eq!(lane_bytes, dst.dst_ref.bytes_written());
+        }
+
+        if let DstRef::SSA(ssa) = &dst.dst_ref {
             for val in ssa {
                 ssa_vals.insert(*val);
             }
@@ -72,9 +88,24 @@ impl Shader<'_> {
             blocks.insert(bb.label);
         }
 
+        let mut allow_reg_in = true;
+        let mut allow_non_reg_out = true;
         let mut ssa_vals: FxHashSet<SSAValue> = Default::default();
-        for bb in &self.blocks {
+        for (bi, bb) in self.blocks.iter().enumerate() {
             for i in &bb.instrs {
+                if matches!(&i.op, Op::RegIn(_)) {
+                    assert!(bi == 0);
+                    assert!(allow_reg_in);
+                } else if !matches!(&i.op, Op::Nop(_)) {
+                    allow_reg_in = false;
+                }
+
+                if matches!(&i.op, Op::RegOut(_)) {
+                    allow_non_reg_out = false;
+                } else if !matches!(&i.op, Op::Nop(_)) {
+                    assert!(allow_non_reg_out);
+                }
+
                 validate_instr(&i, &mut ssa_vals);
             }
         }

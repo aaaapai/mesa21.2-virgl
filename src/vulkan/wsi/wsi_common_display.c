@@ -1295,33 +1295,45 @@ wsi_display_surface_get_support(VkIcdSurfaceBase *surface,
 static VkResult
 wsi_display_surface_get_capabilities(VkIcdSurfaceBase *surface_base,
                                      struct wsi_device *wsi_device,
-                                     VkSurfaceCapabilitiesKHR* caps)
+                                     VkSurfaceCapabilities2KHR* caps)
 {
    VkIcdSurfaceDisplay *surface = (VkIcdSurfaceDisplay *) surface_base;
    wsi_display_mode *mode = wsi_display_mode_from_handle(surface->displayMode);
 
-   caps->currentExtent.width = mode->hdisplay;
-   caps->currentExtent.height = mode->vdisplay;
+   caps->surfaceCapabilities.currentExtent.width = mode->hdisplay;
+   caps->surfaceCapabilities.currentExtent.height = mode->vdisplay;
 
-   caps->minImageExtent = (VkExtent2D) { 1, 1 };
-   caps->maxImageExtent = (VkExtent2D) {
+   caps->surfaceCapabilities.minImageExtent = (VkExtent2D) { 1, 1 };
+   caps->surfaceCapabilities.maxImageExtent = (VkExtent2D) {
       wsi_device->maxImageDimension2D,
       wsi_device->maxImageDimension2D,
    };
 
-   caps->supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+   caps->surfaceCapabilities.supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 
-   caps->minImageCount = 2;
-   caps->maxImageCount = 0;
+   caps->surfaceCapabilities.minImageCount = 2;
+   caps->surfaceCapabilities.maxImageCount = 0;
 
-   caps->supportedTransforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-   caps->currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-   caps->maxImageArrayLayers = 1;
-   caps->supportedUsageFlags = wsi_caps_get_image_usage();
+   caps->surfaceCapabilities.supportedTransforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+   caps->surfaceCapabilities.currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+   caps->surfaceCapabilities.maxImageArrayLayers = 1;
+   VkImageUsageFlags image_usage = wsi_caps_get_image_usage();
 
    VK_FROM_HANDLE(vk_physical_device, pdevice, wsi_device->pdevice);
    if (pdevice->supported_extensions.EXT_attachment_feedback_loop_layout)
-      caps->supportedUsageFlags |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
+      image_usage |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
+
+   VkSwapchainFlagsSurfaceCapabilitiesEXT *surface_caps = vk_find_struct(caps, SWAPCHAIN_FLAGS_SURFACE_CAPABILITIES_EXT);
+   if (surface_caps && pdevice->supported_extensions.EXT_multisampled_render_to_swapchain)
+      surface_caps->swapchainSupportedFlags |= VK_SWAPCHAIN_CREATE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_BIT_EXT;
+
+   VkImageUsageFlags2CreateInfoKHR *usage2 =
+      vk_find_struct(caps->pNext, IMAGE_USAGE_FLAGS_2_CREATE_INFO_KHR);
+   if (usage2) {
+      usage2->usage = image_usage;
+   } else {
+      caps->surfaceCapabilities.supportedUsageFlags = image_usage;
+   }
 
    return VK_SUCCESS;
 }
@@ -1343,7 +1355,7 @@ wsi_display_surface_get_capabilities2(VkIcdSurfaceBase *icd_surface,
    VkResult result;
 
    result = wsi_display_surface_get_capabilities(icd_surface, wsi_device,
-                                                 &caps->surfaceCapabilities);
+                                                 caps);
    if (result != VK_SUCCESS)
       return result;
 
@@ -3093,11 +3105,11 @@ _wsi_display_queue_next(struct wsi_swapchain *drv_chain)
          /* Ensure we have some kind of timebase to work from. */
          if (connector->has_vblank && !connector->last_frame) {
             int ret = drmCrtcGetSequence(wsi->fd, connector->crtc_id, &connector->last_frame, &connector->last_nsec);
-            if (ret == -EOPNOTSUPP) {
+            if (ret) {
                connector->has_vblank = false;
                connector->last_frame = 0;
                connector->last_nsec = 0;
-               wsi_display_debug("Driver without vblank + event dispatch. Fallback to non-vblank timing.\n");
+               wsi_display_debug("Driver without vblank + event dispatch: %s. Fallback to non-vblank timing.\n", strerror(errno));
             }
          }
 
@@ -3175,7 +3187,10 @@ _wsi_display_queue_next(struct wsi_swapchain *drv_chain)
             /* On a VRR display, applications can request frame times which are fractional,
              * and there is no good way to target absolute time with atomic commits it seems ... */
             int64_t target_ns = target_relative_ns + (int64_t)base_time_ns;
-            image->minimum_ns = target_ns;
+
+            /* For VRR, reported present time must be at least target_ns, to stabilize vrr timing. */
+            if (is_vrr)
+               image->minimum_ns = target_ns;
 
             /* Account for some minimum delay in submitting a page flip until it's processed and sleep jitter.
              * We will compensate for the difference if there is any, so that we don't report completion
@@ -4539,15 +4554,12 @@ wsi_GetSwapchainCounterEXT(VkDevice _device,
       return VK_SUCCESS;
    }
 
-   uint64_t nsec;
+   /* Note: Resist the urge to use query results to update connector->last_nsec/last_frame,
+    * it will lead to races with page_flip_handler2 and potentially wrong present timestamps! */
    int ret = drmCrtcGetSequence(wsi->fd, connector->crtc_id,
-                                pCounterValue, &nsec);
-   if (ret) {
+                                pCounterValue, NULL);
+   if (ret)
       *pCounterValue = 0;
-   } else {
-      connector->last_frame = *pCounterValue;
-      connector->last_nsec = nsec;
-   }
 
    return VK_SUCCESS;
 }

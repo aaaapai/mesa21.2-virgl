@@ -95,7 +95,7 @@ endif
 
 libanv_drirc_files = custom_target(
   'libanv_drirc',
-  input : ['anv_drirc_gen.py', drirc_gen, join_paths(dir_source_root, 'src/util/00-anv-defaults.conf')],
+  input : ['anv_drirc_gen.py', drirc_gen, '00-anv-defaults.conf'],
   output : ['anv_drirc.c', 'anv_drirc.h'],
   command : [prog_python, '@INPUT0@',
              '-p', join_paths(dir_source_root, 'src/util/'),
@@ -195,6 +195,7 @@ libanv_files = files(
   'anv_buffer.c',
   'anv_buffer_view.c',
   'anv_cmd_buffer.c',
+  'anv_debug.c',
   'anv_descriptor_set.c',
   'anv_device.c',
   'anv_dgc_layout.c',
@@ -245,8 +246,7 @@ libanv_files = files(
   'anv_va.c',
   'anv_video.c',
   'anv_wsi.c',
-  'bvh/anv_bvh.h',
-  'bvh/anv_build_interface.h',
+  'bvh/anv_bvh_defines.h',
 )
 
 anv_deps = [

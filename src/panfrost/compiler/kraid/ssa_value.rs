@@ -13,9 +13,7 @@ type SSARefInnerLong = LowerBoundedU32Array<9, 7>;
 /// An SSA value
 #[repr(transparent)]
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct SSAValue {
-    packed: SSAValueInner,
-}
+pub struct SSAValue(SSAValueInner);
 
 impl SSAValue {
     /// Returns an SSA value with the given register file and index
@@ -23,19 +21,24 @@ impl SSAValue {
         assert!(idx < (1 << 30) - u32::from(SSAValueInner::MIN));
         let packed = idx + u32::from(SSAValueInner::MIN);
         let mut packed = LowerBoundedU32::new(packed).unwrap();
-        assert!(bits == 16 || bits == 32);
+        assert!(bits == 8 || bits == 16 || bits == 32);
         packed |= (bits.ilog2() - 3) << 30;
-        SSAValue { packed }
+        SSAValue(packed)
     }
 
     /// Returns the index of this SSA value
     pub fn idx(&self) -> u32 {
-        (self.packed.get() & 0x3fffffff) - u32::from(SSAValueInner::MIN)
+        (self.0.get() & 0x3fffffff) - u32::from(SSAValueInner::MIN)
     }
 
     /// Returns the number of bits in this SSA value
     pub fn bits(&self) -> u8 {
-        8 << (self.packed.get() >> 30)
+        8 << (self.0.get() >> 30)
+    }
+
+    /// Returns the number of bytes in this SSA value
+    pub fn bytes(&self) -> u8 {
+        1 << (self.0.get() >> 30)
     }
 }
 
@@ -48,9 +51,13 @@ impl IntoBitIndex for SSAValue {
 
 impl fmt::Display for SSAValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        debug_assert!(self.bits() == 16 || self.bits() == 32);
-        let h = if self.bits() == 16 { ".h" } else { "" };
-        write!(f, "%{}{h}", self.idx())
+        let m = match self.bits() {
+            8 => ":b",
+            16 => ":h",
+            32 => "",
+            _ => panic!("Invalid SSA value bits"),
+        };
+        write!(f, "%{}{m}", self.idx())
     }
 }
 
@@ -67,13 +74,11 @@ enum SSARefInner {
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
-pub struct SSARef {
-    v: SSARefInner,
-}
+pub struct SSARef(SSARefInner);
 
 impl SSARef {
     pub fn as_slice(&self) -> &[SSAValue] {
-        let slice = match &self.v {
+        let slice = match &self.0 {
             SSARefInner::Short(arr) => arr.as_slice(),
             SSARefInner::Long(arr) => {
                 Self::cold();
@@ -85,7 +90,7 @@ impl SSARef {
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [SSAValue] {
-        let slice = match &mut self.v {
+        let slice = match &mut self.0 {
             SSARefInner::Short(arr) => arr.as_mut_slice(),
             SSARefInner::Long(arr) => {
                 Self::cold();
@@ -97,7 +102,7 @@ impl SSARef {
     }
 
     pub fn comps(&self) -> u8 {
-        match &self.v {
+        match &self.0 {
             SSARefInner::Short(arr) => arr.len() as u8,
             SSARefInner::Long(arr) => arr.len() as u8,
         }
@@ -105,7 +110,7 @@ impl SSARef {
 
     pub fn bytes(&self) -> u8 {
         if self.comps() == 1 {
-            self[0].bits() / 8
+            self[0].bytes()
         } else {
             for ssa in self {
                 debug_assert_eq!(ssa.bits(), 32);
@@ -120,6 +125,37 @@ impl SSARef {
 
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, SSAValue> {
         self.as_mut_slice().iter_mut()
+    }
+
+    fn try_from_iter(
+        iter: impl IntoIterator<Item = SSAValue>,
+    ) -> Result<Self, &'static str> {
+        let iter = iter.into_iter().map(|x| x.0);
+        let max = iter.size_hint().1;
+
+        let inner = if max.is_some_and(|m| m <= SSARefInnerShort::MAX_LEN) {
+            let inner: SSARefInnerShort = iter.collect();
+            if inner.is_empty() {
+                return Err("Empty SSARefs are not allowed");
+            }
+            SSARefInner::Short(inner)
+        } else {
+            // If we don't know how many components we have, collect into a
+            // temporary SSARefInnerLong.
+            let mut inner = SSARefInnerLong::new();
+            for ssa in iter {
+                inner.try_push(ssa)?;
+            }
+            if inner.is_empty() {
+                return Err("Empty SSARefs are not allowed");
+            } else if inner.len() <= SSARefInnerShort::MAX_LEN {
+                SSARefInner::Short(inner.into_iter().collect())
+            } else {
+                SSARefInner::Long(Box::new(inner))
+            }
+        };
+
+        Ok(SSARef(inner))
     }
 
     #[cold]
@@ -220,28 +256,17 @@ impl<const N: usize> From<[SSAValue; N]> for SSARef {
     }
 }
 
+impl FromIterator<SSAValue> for SSARef {
+    fn from_iter<T: IntoIterator<Item = SSAValue>>(iter: T) -> Self {
+        SSARef::try_from_iter(iter).unwrap()
+    }
+}
+
 impl TryFrom<&[SSAValue]> for SSARef {
     type Error = &'static str;
 
     fn try_from(arr: &[SSAValue]) -> Result<Self, &'static str> {
-        assert!(arr.len() > 0);
-        // SAFETY: SSAValue is reprt(transparent)
-        let lb_slice: &[SSAValueInner] = unsafe { std::mem::transmute(arr) };
-
-        if lb_slice.len() <= SSARefInnerShort::MAX_LEN {
-            let Ok(v) = lb_slice.try_into() else {
-                panic!("We already checked the array length");
-            };
-            Ok(Self {
-                v: SSARefInner::Short(v),
-            })
-        } else {
-            SSARef::cold();
-            let v = lb_slice.try_into()?;
-            Ok(Self {
-                v: SSARefInner::Long(Box::new(v)),
-            })
-        }
+        SSARef::try_from_iter(arr.iter().copied())
     }
 }
 
@@ -249,6 +274,21 @@ impl TryFrom<&[SSAValue]> for SSARef {
 const _: () = {
     debug_assert!(size_of::<SSARef>() == 16);
 };
+
+pub trait AllocSSA {
+    /// Allocates an SSA value.
+    fn alloc_ssa(&mut self, bits: u8) -> SSAValue;
+
+    /// Allocates a vector of SSA values that can hold `bits` bits
+    fn alloc_ref(&mut self, bits: u16) -> SSARef {
+        if bits <= 32 {
+            self.alloc_ssa(bits.next_power_of_two() as u8).into()
+        } else {
+            let comps = bits.div_ceil(32);
+            SSARef::from_iter((0..comps).map(|_| self.alloc_ssa(32)))
+        }
+    }
+}
 
 /// An allocator for SSA values.
 ///
@@ -260,9 +300,8 @@ pub struct SSAValueAllocator {
     count: u32,
 }
 
-impl SSAValueAllocator {
-    /// Allocates an SSA value.
-    pub fn alloc(&mut self, bits: u8) -> SSAValue {
+impl AllocSSA for SSAValueAllocator {
+    fn alloc_ssa(&mut self, bits: u8) -> SSAValue {
         let idx = self.count;
         self.count += 1;
         SSAValue::new(idx, bits)
@@ -275,18 +314,23 @@ mod tests {
 
     #[test]
     fn test_ssa_queries() {
-        for bits in [16, 32] {
+        for bits in [8, 16, 32] {
             let ssa = SSAValue::new(42, bits);
             assert_eq!(ssa.idx(), 42);
             assert_eq!(ssa.bits(), bits);
+            assert_eq!(ssa.bytes(), bits / 8);
         }
     }
 
     #[test]
     fn test_ssa_print() {
+        let ssa = SSAValue::new(42, 8);
+        assert_eq!(format!("{}", ssa), format!("%42:b"));
+        assert_eq!(format!("{:?}", ssa), format!("%42:b"));
+
         let ssa = SSAValue::new(42, 16);
-        assert_eq!(format!("{}", ssa), format!("%42.h"));
-        assert_eq!(format!("{:?}", ssa), format!("%42.h"));
+        assert_eq!(format!("{}", ssa), format!("%42:h"));
+        assert_eq!(format!("{:?}", ssa), format!("%42:h"));
 
         let ssa = SSAValue::new(42, 32);
         assert_eq!(format!("{}", ssa), format!("%42"));
@@ -296,9 +340,28 @@ mod tests {
     #[test]
     fn test_ssa_alloc() {
         let mut alloc: SSAValueAllocator = Default::default();
-        let ssa1 = alloc.alloc(16);
-        let ssa2 = alloc.alloc(32);
-        assert_eq!(format!("{}", ssa1), "%0.h");
-        assert_eq!(format!("{}", ssa2), "%1");
+        let ssa1 = alloc.alloc_ssa(8);
+        let ssa2 = alloc.alloc_ssa(16);
+        let ssa3 = alloc.alloc_ssa(32);
+        assert_eq!(format!("{}", ssa1), "%0:b");
+        assert_eq!(format!("{}", ssa2), "%1:h");
+        assert_eq!(format!("{}", ssa3), "%2");
+    }
+
+    #[test]
+    fn test_ref_alloc() {
+        let mut alloc: SSAValueAllocator = Default::default();
+        let ssa1 = alloc.alloc_ref(8);
+        let ssa2 = alloc.alloc_ref(16);
+        let ssa3 = alloc.alloc_ref(24);
+        let ssa4 = alloc.alloc_ref(32);
+        let ssa5 = alloc.alloc_ref(64);
+        let ssa6 = alloc.alloc_ref(128);
+        assert_eq!(format!("{}", ssa1), "%0:b");
+        assert_eq!(format!("{}", ssa2), "%1:h");
+        assert_eq!(format!("{}", ssa3), "%2");
+        assert_eq!(format!("{}", ssa4), "%3");
+        assert_eq!(format!("{}", ssa5), "%4..6");
+        assert_eq!(format!("{}", ssa6), "%6..10");
     }
 }

@@ -182,8 +182,8 @@ radv_finish_address_binding_report(struct radv_device *device)
    struct radv_instance *instance = radv_physical_device_instance(pdev);
    struct radv_address_binding_tracker *tracker = device->addr_binding_tracker;
 
-   util_dynarray_foreach (&tracker->reports, struct radv_address_binding_report *, iter) {
-      vk_free(&instance->vk.alloc, (*iter)->object_name);
+   util_dynarray_foreach (&tracker->reports, struct radv_address_binding_report, iter) {
+      vk_free(&instance->vk.alloc, iter->object_name);
    }
    util_dynarray_fini(&tracker->reports);
    simple_mtx_destroy(&tracker->mtx);
@@ -1172,6 +1172,7 @@ radv_trap_handler_init(struct radv_device *device)
          },
       .gfx10_oob_select = V_008F0C_OOB_SELECT_RAW,
       .stride = 4, /* Used for VGPRs dump. */
+      .has_desc_resource_level = pdev->info.compiler_info.has_desc_resource_level,
    };
 
    ac_build_buffer_descriptor(pdev->info.gfx_level, &ac_state, desc);

@@ -396,6 +396,7 @@ compute_update_async_threads_limit(struct anv_cmd_buffer *cmd_buffer,
 
    intel_compute_engine_async_threads_limit(devinfo, dispatch->threads,
                                             slm_or_barrier_enabled,
+                                            prog_data->uses_fence,
                                             &pixel_async_compute_thread_limit,
                                             &z_pass_async_compute_thread_limit,
                                             &np_z_async_throttle_settings);
@@ -472,25 +473,41 @@ cmd_buffer_post_dispatch_wa(struct anv_cmd_buffer *cmd_buffer)
    genX(cmd_buffer_post_dispatch_wa)(cmd_buffer);
 
    struct anv_cmd_compute_state *comp_state = &cmd_buffer->state.compute;
+   const struct anv_shader *shader = comp_state->shader;
    const struct anv_instance *instance = cmd_buffer->device->physical->instance;
 
    /* Workaround WaW hazards in applications that clear a buffer and start
     * writing to it immediately without a barrier between the clear & write
     * operations.
     */
-   if (instance->drirc.debug.barrier_post_typed_clear_shader &&
-       (comp_state->shader->bind_map.inferred_behavior & ANV_PIPELINE_BEHAVIOR_CLEAR_TYPED)) {
+   if ((instance->drirc.debug.barrier_post_typed_clear_shader &&
+        (shader->bind_map.inferred_behavior & ANV_PIPELINE_BEHAVIOR_CLEAR_TYPED)) ||
+       shader->workaround.force_typed_barrier_after_dispatch_to_top) {
       anv_add_pending_pipe_bits(cmd_buffer,
                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                 VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                                 ANV_PIPE_HDC_PIPELINE_FLUSH_BIT,
                                 "clear shader typed L1 flush app wa");
+   } else if (shader->workaround.force_typed_barrier_after_dispatch_to_compute) {
+      anv_add_pending_pipe_bits(cmd_buffer,
+                                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                ANV_PIPE_HDC_PIPELINE_FLUSH_BIT,
+                                "clear shader typed L1 flush app wa");
    }
-   if (instance->drirc.debug.barrier_post_untyped_clear_shader &&
-       (comp_state->shader->bind_map.inferred_behavior & ANV_PIPELINE_BEHAVIOR_CLEAR_UNTYPED)) {
+   if ((instance->drirc.debug.barrier_post_untyped_clear_shader &&
+        (comp_state->shader->bind_map.inferred_behavior & ANV_PIPELINE_BEHAVIOR_CLEAR_UNTYPED)) ||
+       shader->workaround.force_untyped_barrier_after_dispatch_to_top) {
       anv_add_pending_pipe_bits(cmd_buffer,
                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                 VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                                ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT |
+                                ANV_PIPE_HDC_PIPELINE_FLUSH_BIT,
+                                "clear shader untyped L1 flush app wa");
+   } else if (shader->workaround.force_untyped_barrier_after_dispatch_to_compute) {
+      anv_add_pending_pipe_bits(cmd_buffer,
+                                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                 ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT |
                                 ANV_PIPE_HDC_PIPELINE_FLUSH_BIT,
                                 "clear shader untyped L1 flush app wa");
@@ -514,7 +531,7 @@ emit_indirect_compute_walker(struct anv_cmd_buffer *cmd_buffer,
    uint64_t indirect_addr64 = anv_address_physical(indirect_addr);
 
    uint64_t push_addr64 = anv_address_physical(
-      anv_state_pool_state_address(&cmd_buffer->device->general_state_pool,
+      anv_state_pool_state_address(anv_device_get_general_state_pool(cmd_buffer->device),
                                    comp_state->base.push_constants_state));
    struct compute_walker_inline_params_val inline_value = {
       .bind_map = &comp_state->shader->bind_map,
@@ -573,7 +590,7 @@ emit_compute_walker(struct anv_cmd_buffer *cmd_buffer,
    compute_update_async_threads_limit(cmd_buffer, prog_data, &dispatch);
 
    uint64_t push_addr64 = anv_address_physical(
-      anv_state_pool_state_address(&cmd_buffer->device->general_state_pool,
+      anv_state_pool_state_address(anv_device_get_general_state_pool(cmd_buffer->device),
                                    comp_state->base.push_constants_state));
    struct compute_walker_inline_params_val inline_value = {
       .bind_map = &comp_state->shader->bind_map,
@@ -916,8 +933,7 @@ genX(cmd_buffer_ray_query_globals)(struct anv_cmd_buffer *cmd_buffer)
             .bo = device->ray_query_bo[idx],
             .offset = (i + 1) * (device->ray_query_bo[idx]->size / 2),
          },
-         .AsyncRTStackSize =
-            cmd_buffer->state.rt.scratch.layout.ray_stack_stride / 64,
+         .AsyncRTStackSize = BRW_RT_SIZEOF_RAY_QUERY / 64,
          .NumDSSRTStacks = stack_ids_per_dss,
          .MaxBVHLevels = BRW_RT_MAX_BVH_LEVELS,
          .Flags = RT_DEPTH_TEST_LESS_EQUAL,

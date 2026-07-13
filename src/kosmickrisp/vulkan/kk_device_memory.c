@@ -112,8 +112,6 @@ kk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
    bool import_host = host_info && host_info->handleType;
 
    if (import_metal || import_host) {
-      assert(metal_info->handleType ==
-             VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT);
       mem->bo = CALLOC_STRUCT(kk_bo);
       if (!mem->bo) {
          result = vk_errorf(&dev->vk.base, VK_ERROR_OUT_OF_DEVICE_MEMORY, "%m");
@@ -121,6 +119,9 @@ kk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
       }
 
       if (import_metal) {
+         assert(metal_info->handleType ==
+                VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT);
+
          /* We only support heaps since that's the backing for all our memory
           * and simplifies implementation */
          mem->bo->mtl_handle = mtl_retain(metal_info->handle);

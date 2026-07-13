@@ -12,6 +12,7 @@
 #include "bifrost/valhall/disassemble.h"
 #include "midgard/disassemble.h"
 #include "midgard/midgard_compile.h"
+#include "kraid/kraid.h"
 
 #include "panfrost/model/pan_model.h"
 
@@ -33,9 +34,54 @@ pan_want_debug_info(unsigned arch)
       return false;
 }
 
-const nir_shader_compiler_options *
-pan_get_nir_shader_compiler_options(unsigned arch, bool merge_wg)
+#ifdef WITH_PANFROST_RUST
+#define USE_KRAID_INTERNAL (1ull << 31)
+
+static const struct debug_named_value pan_use_kraid_flags[] = {
+   { "cs", 1 << MESA_SHADER_COMPUTE, "Use Kraid for compute shaders" },
+   { "fs", 1 << MESA_SHADER_FRAGMENT, "Use Kraid for fragment shaders" },
+   { "vs", 1 << MESA_SHADER_VERTEX, "Use Kraid for vertex shaders" },
+   { "internal", USE_KRAID_INTERNAL, "Use Kraid for internal shaders" },
+   { "all", ~0, "Use Kraid for all shader stages" },
+   DEBUG_NAMED_VALUE_END,
+};
+
+DEBUG_GET_ONCE_FLAGS_OPTION(kraid_stages, "PAN_USE_KRAID",
+                            pan_use_kraid_flags, 0)
+#endif
+
+bool
+pan_use_kraid(unsigned arch, mesa_shader_stage stage, bool internal)
 {
+#ifdef WITH_PANFROST_RUST
+   if (arch < 9)
+      return false;
+
+   uint64_t use_kraid = debug_get_option_kraid_stages();
+   if (internal && !(use_kraid & USE_KRAID_INTERNAL))
+      return false;
+
+   return use_kraid & (1 << stage);
+#else
+   return false;
+#endif
+}
+
+const nir_shader_compiler_options *
+pan_get_nir_shader_compiler_options(unsigned arch,
+                                    mesa_shader_stage stage,
+                                    bool merge_wg)
+{
+#ifdef WITH_PANFROST_RUST
+   /* Only return the Kraid options if we're also using it for internal
+    * shaders.  We have no internal/external flag here so we have to assume
+    * the worst case.  Kraid can generally handle Bifrost NIR but Bifrost
+    * can't handle Kraid NIR.
+    */
+   if (pan_use_kraid(arch, stage, false) && pan_use_kraid(arch, stage, true))
+      return kraid_get_nir_shader_compiler_options(arch, merge_wg);
+#endif
+
    switch (arch) {
    case 4:
    case 5:

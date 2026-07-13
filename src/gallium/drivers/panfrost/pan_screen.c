@@ -39,6 +39,7 @@
 #include "pan_trace.h"
 
 #include "pan_context.h"
+#include "panfrost_perfetto.h"
 
 #define DEFAULT_MAX_AFBC_PACKING_RATIO 90
 
@@ -1047,9 +1048,7 @@ panfrost_create_screen(int fd, const struct pipe_screen_config *config,
       return NULL;
    }
 
-   unsigned core_id_range;
-   unsigned core_count =
-      pan_query_core_count(&dev->kmod.dev->props, &core_id_range);
+   unsigned core_count = pan_query_core_count(&dev->kmod.dev->props);
 
    snprintf(screen->renderer_string, sizeof(screen->renderer_string),
             "%s MC%u (Panfrost)", dev->model->name, core_count);
@@ -1142,7 +1141,7 @@ panfrost_create_screen(int fd, const struct pipe_screen_config *config,
 
    for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
       screen->base.nir_options[i] =
-         pan_get_nir_shader_compiler_options(dev->arch, false);
+         pan_get_nir_shader_compiler_options(dev->arch, i, false);
 
    switch (dev->arch) {
    case 4:
@@ -1177,6 +1176,11 @@ panfrost_create_screen(int fd, const struct pipe_screen_config *config,
       panfrost_destroy_screen(&(screen->base));
       return NULL;
    }
+
+#ifdef HAVE_PERFETTO
+   if (dev->arch >= 10)
+      panfrost_perfetto_init(dev);
+#endif
 
    return &screen->base;
 }

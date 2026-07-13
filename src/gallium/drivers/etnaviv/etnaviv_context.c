@@ -117,7 +117,7 @@ etna_context_destroy(struct pipe_context *pctx)
    if (ctx->flush_resources)
       _mesa_set_destroy(ctx->flush_resources, NULL);
 
-   util_copy_framebuffer_state(&ctx->framebuffer_s, NULL);
+   util_copy_framebuffer_state(&ctx->framebuffer_s.base, NULL);
 
    if (ctx->blitter)
       util_blitter_destroy(ctx->blitter);
@@ -173,6 +173,12 @@ etna_get_vs(struct etna_context *ctx, struct etna_shader_key* const key)
 {
    const struct etna_shader_variant *old = ctx->shader.vs;
 
+   key->tex_is_128bit = ctx->tex_is_128bit[MESA_SHADER_VERTEX];
+
+   if (key->tex_is_128bit)
+      for (unsigned i = 0; i < ctx->screen->specs.vertex_sampler_count; i++)
+         key->sampler_companion[i] = ctx->sampler_companion[MESA_SHADER_VERTEX][i];
+
    ctx->shader.vs = etna_shader_variant(ctx->shader.bind_vs, key, &ctx->base.debug, true);
 
    if (!ctx->shader.vs)
@@ -189,13 +195,23 @@ etna_get_fs(struct etna_context *ctx, struct etna_shader_key* const key)
 {
    const struct etna_shader_variant *old = ctx->shader.fs;
 
-   /* update the key if we need to run nir_lower_sample_tex_compare(..). */
-   if (ctx->screen->info->halti < 2 &&
-       (ctx->dirty & (ETNA_DIRTY_SAMPLERS | ETNA_DIRTY_SAMPLER_VIEWS))) {
+   /* update the key if we need to run nir_lower_sample_tex_compare(..).
+    * halti < 2 has no HW shadow compare. halti >= 2 has it, but depth32f is
+    * emulated as D24S8 and the float compare ref must not be clamped to the
+    * D24 range, so it must compare in the shader (and not clamp the ref). */
+   if (ctx->dirty & (ETNA_DIRTY_SAMPLERS | ETNA_DIRTY_SAMPLER_VIEWS)) {
 
       for (unsigned int i = 0; i < ctx->num_fragment_sampler_views; i++) {
          if (ctx->sampler[i]->compare_mode == PIPE_TEX_COMPARE_NONE)
             continue;
+
+         const bool emulated_z32f = format_is_emulated_z32f(ctx->sampler_view[i]->format);
+
+         if (ctx->screen->info->halti >= 2 && !emulated_z32f)
+            continue;
+
+         if (emulated_z32f)
+            key->shadow_compare_no_clamp = 1;
 
          key->has_sample_tex_compare = 1;
          key->num_texture_states = ctx->num_fragment_sampler_views;
@@ -208,6 +224,12 @@ etna_get_fs(struct etna_context *ctx, struct etna_shader_key* const key)
          key->tex_compare_func[i] = ctx->sampler[i]->compare_func;
       }
    }
+
+   key->tex_is_128bit = ctx->tex_is_128bit[MESA_SHADER_FRAGMENT];
+
+   if (key->tex_is_128bit)
+      for (unsigned i = 0; i < ctx->screen->specs.fragment_sampler_count; i++)
+         key->sampler_companion[i] = ctx->sampler_companion[MESA_SHADER_FRAGMENT][i];
 
    ctx->shader.fs = etna_shader_variant(ctx->shader.bind_fs, key, &ctx->base.debug, true);
 
@@ -273,7 +295,10 @@ etna_reset_gpu_state(struct etna_context *ctx)
                      COND(!DBG_ENABLED(ETNA_DBG_NO_TEXDESC), VIVS_NTE_DESCRIPTOR_CONTROL_ENABLE));
       etna_set_state(stream, VIVS_FE_HALTI5_UNK007D8, 0x00000002);
       etna_set_state(stream, VIVS_PS_SAMPLER_BASE, 0x00000000);
-      etna_set_state(stream, VIVS_VS_SAMPLER_BASE, 0x00000020);
+
+      if (!screen->specs.unified_samplers)
+         etna_set_state(stream, VIVS_VS_SAMPLER_BASE, 0x00000020);
+
       etna_set_state(stream, VIVS_SH_CONFIG, VIVS_SH_CONFIG_RTNE_ROUNDING);
    }
 
@@ -344,7 +369,7 @@ etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
 
    struct etna_context *ctx = etna_context(pctx);
    struct etna_screen *screen = ctx->screen;
-   struct pipe_framebuffer_state *pfb = &ctx->framebuffer_s;
+   struct pipe_framebuffer_state *pfb = &ctx->framebuffer_s.base;
    uint32_t draw_mode;
    unsigned i;
 
@@ -433,6 +458,11 @@ etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
          }
       }
    }
+
+   key.rt_is_128bit = ctx->framebuffer_s.rt_is_128bit;
+   key.has_128bit_rt = !!key.rt_is_128bit;
+   for (i = 0; i < ARRAY_SIZE(key.rt_companion); i++)
+      key.rt_companion[i] = ctx->framebuffer_s.rt_companion[i];
 
    if (!etna_get_vs(ctx, &key) || !etna_get_fs(ctx, &key)) {
       BUG("compiled shaders are not okay");

@@ -24,6 +24,7 @@ extern int jay_debug;
 bool jay_nir_lower_bool(nir_shader *nir);
 bool jay_nir_opt_sel_zero(nir_shader *nir);
 bool jay_nir_lower_fsign(nir_shader *nir);
+bool jay_nir_lower_bfloat_math(nir_shader *nir);
 
 void jay_populate_prog_data(const struct intel_device_info *devinfo,
                             nir_shader *nir,
@@ -34,18 +35,18 @@ unsigned jay_process_nir(const struct intel_device_info *devinfo,
                          nir_shader *nir,
                          union brw_any_prog_data *prog_data,
                          union brw_any_prog_key *key,
-                         debug_archiver *archiver);
+                         debug_archiver *archiver,
+                         bool *track_helpers);
 
 void jay_compute_liveness(jay_function *f);
 void jay_calculate_register_demands(jay_function *f);
 
-void jay_spill(jay_function *func, unsigned limit);
+void jay_spill(jay_function *func, enum jay_file file, unsigned limit);
 void jay_partition_grf(jay_shader *shader);
 void jay_print_partition(struct jay_partition *p);
 void jay_register_allocate(jay_shader *s);
 void jay_assign_flags(jay_shader *s);
 void jay_assign_accumulators(jay_shader *s);
-void jay_repair_ssa(jay_function *func);
 
 const char *jay_file_prefix(enum jay_file file);
 void jay_print_type(FILE *f, enum jay_type t);
@@ -84,26 +85,26 @@ void jay_schedule_pressure(jay_shader *s);
 
 void jay_lower_pre_ra(jay_shader *s);
 void jay_lower_post_ra(jay_shader *s);
+void jay_lower_helpers(jay_shader *s);
 void jay_lower_spill(jay_function *func);
 void jay_lower_simd_width(jay_shader *s);
 void jay_lower_scoreboard(jay_shader *s);
 void jay_lower_scoreboard_trivial(jay_shader *s);
-void jay_insert_fp_mode(jay_shader *shader, uint32_t api, uint32_t float_sizes);
+void
+jay_lower_post_sched(jay_shader *shader, uint32_t api, uint32_t float_sizes);
+
+gen_pipe jay_inferred_sync_pipe(const struct intel_device_info *devinfo,
+                                const jay_inst *I);
+gen_pipe jay_inst_exec_pipe(const struct intel_device_info *devinfo,
+                            jay_inst *I);
+
+unsigned jay_latency(jay_shader *s, jay_inst *I);
+unsigned jay_estimate_cycles(jay_function *f);
 
 struct jay_shader_bin *jay_to_binary(jay_shader *s,
                                      void *const_data,
                                      size_t const_data_size,
                                      bool debug);
-
-static inline unsigned
-jay_gpr_limit(jay_shader *shader)
-{
-   /* If testing spilling, set limit tightly. */
-   bool test = (jay_debug & JAY_DBG_SPILL);
-   test &= shader->stage != MESA_SHADER_VERTEX;
-
-   return test ? 13 : shader->num_regs[GPR];
-}
 
 /*
  * Check whether the Early EOT feature is possibly enabled. This feature was

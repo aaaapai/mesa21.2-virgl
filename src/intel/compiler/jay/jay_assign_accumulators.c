@@ -136,7 +136,9 @@ can_access_accum(jay_shader *shader, jay_inst *I, signed src)
    /* "No Accumulator usage for Control Flow, Math, Send, DPAS instructions." */
    if (jay_op_is_control_flow(I->op) ||
        I->op == JAY_OPCODE_MATH ||
-       I->op == JAY_OPCODE_SEND) {
+       I->op == JAY_OPCODE_SEND ||
+       I->op == JAY_OPCODE_DPAS ||
+       I->op == JAY_OPCODE_SLICE_REPACK) {
       return false;
    }
 

@@ -1,6 +1,12 @@
 # Copyright © 2026 Collabora, Ltd.
 # SPDX-License-Identifier: MIT
 
+dep_bitflags = dependency('bitflags',
+  version : '>= 2.9.1',
+  fallback : ['bitflags-2-rs', 'dep_bitflags'],
+  required : true,
+)
+
 dep_paste = dependency('paste',
   version : '>= 1.0.14',
   fallback : ['paste-1-rs', 'dep_paste'],
@@ -17,6 +23,7 @@ dep_xml_rs = dependency('xml',
   version: '>= 1.2.1',
   fallback: ['xml-rs', 'dep_xml_rs'],
   required: true,
+  native: true,
 )
 
 _kraid_bindings_deps = [
@@ -39,6 +46,7 @@ _kraid_bindings_rs = rust.bindgen(
     '--allowlist-type', 'pan_.*',
     '--allowlist-function', 'pan_.*',
     '--allowlist-function', 'kraid_.*',
+    '--allowlist-var', 'BI_VA_LOD_MODE_.*',
     '--no-prepend-enum-name',
     '--with-derive-default',
   ],
@@ -49,6 +57,9 @@ _libkraid_binding_wrappers = static_library(
   'kraid_binding_wrappers',
   ['bindings.h', _kraid_bindings_rs[1]],
   gnu_symbol_visibility : 'hidden',
+  include_directories : [
+    fs.relative_to(meson.project_build_root(), meson.current_source_dir()),
+  ],
   c_args : [
     pre_args,
     cc.get_supported_arguments('-Wno-missing-prototypes'),
@@ -78,6 +89,7 @@ _libkraid_proc_rs = static_library(
   ],
   rust_args : rust_global_args,
   rust_abi : 'rust',
+  native : true,
 )
 
 _libkraid_proc_macros_rs = rust.proc_macro(
@@ -107,6 +119,7 @@ libpanfrost_kraid = static_library(
     '-Clink-arg=-Wno-unused-command-line-argument',
   ],
   dependencies : [
+    dep_bitflags,
     dep_paste,
     dep_rustc_hash,
     idep_compiler_rs,
@@ -132,16 +145,23 @@ endif
 # with the sanitizers because meson doesn't know to pass -fsanitize to the
 # Rust linker.  See also https://github.com/mesonbuild/meson/issues/11741
 if with_tests and get_option('b_sanitize') == 'none'
+  subdir('hw_runner')
+
   rust.test(
-    'kraid',
+    'kraid_test',
     libpanfrost_kraid,
     args : [
       # Don't run HW tests by default
       '--skip', 'hw_tests::',
     ],
     suite : ['panfrost'],
-    # This is needed to ensure we link against glibc
-    # See also https://gitlab.freedesktop.org/mesa/mesa/-/issues/11632
-    rust_args: ['-C', 'default-linker-libraries'],
+    rust_args: [
+      # This is needed to ensure we link against glibc
+      # See also https://gitlab.freedesktop.org/mesa/mesa/-/issues/11632
+      '-C', 'default-linker-libraries',
+      # Meson adds --test but no --cfg test, do it manually to help rust-analyzer
+      '--cfg', 'test',
+    ],
+    dependencies : [idep_acorn_rs, idep_kraid_hw_runner_rs],
   )
 endif

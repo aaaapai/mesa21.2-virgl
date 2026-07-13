@@ -457,7 +457,7 @@ r600_nir_lower_atomics(nir_shader *shader)
 using r600::r600_lower_fs_out_to_vector;
 using r600::r600_lower_ubo_to_align16;
 
-int
+unsigned
 r600_glsl_type_size(const struct glsl_type *type, bool is_bindless)
 {
    return glsl_count_vec4_slots(type, false, is_bindless);
@@ -704,7 +704,7 @@ r600_finalize_nir_common(nir_shader *nir, enum amd_gfx_level gfx_level)
 
    NIR_PASS(_, nir, r600_nir_lower_trigen, gfx_level);
    NIR_PASS(_, nir, nir_lower_phis_to_scalar, NULL, NULL);
-   NIR_PASS(_, nir, nir_lower_undef_to_zero);
+   NIR_PASS(_, nir, nir_lower_undef_to_zero, NULL);
 
    struct nir_lower_tex_options lower_tex_options = {0};
    lower_tex_options.lower_txp = ~0u;

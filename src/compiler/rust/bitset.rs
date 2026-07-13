@@ -61,7 +61,10 @@ macro_rules! impl_into_from_bit_index {
     ($t:ident) => {
         impl IntoBitIndex for $t {
             fn into_bit_index(self) -> usize {
-                usize::from(self)
+                const _: () = {
+                    assert!(size_of::<$t>() <= size_of::<usize>());
+                };
+                self as usize
             }
         }
 
@@ -77,6 +80,8 @@ macro_rules! impl_into_from_bit_index {
 
 impl_into_from_bit_index!(u8);
 impl_into_from_bit_index!(u16);
+#[cfg(any(target_pointer_width = "32", target_pointer_width = "64"))]
+impl_into_from_bit_index!(u32);
 impl_into_from_bit_index!(usize);
 
 #[derive(Clone, Copy)]
@@ -133,16 +138,117 @@ impl Add<usize> for BitIndex {
     }
 }
 
-#[inline]
-fn find_next_set(words: &[u32], start: BitIndex) -> Option<BitIndex> {
-    if start.word >= words.len() {
-        return None;
+struct WordIdxMaskIter {
+    word_idx: usize,
+    mask: u32,
+    end: BitIndex,
+}
+
+impl WordIdxMaskIter {
+    const fn new(start: BitIndex, end: BitIndex) -> WordIdxMaskIter {
+        WordIdxMaskIter {
+            word_idx: start.word,
+            mask: u32::MAX << start.bit,
+            end,
+        }
     }
 
+    const fn next_const(&mut self) -> Option<(usize, u32)> {
+        if self.word_idx < self.end.word {
+            let item = (self.word_idx, self.mask);
+            self.mask = u32::MAX;
+            self.word_idx += 1;
+            Some(item)
+        } else if self.word_idx == self.end.word {
+            let mask = self.mask & !(u32::MAX << self.end.bit);
+            if mask != 0 {
+                let item = (self.word_idx, mask);
+                self.mask = 0;
+                self.word_idx += 1;
+                Some(item)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
+impl Iterator for WordIdxMaskIter {
+    type Item = (usize, u32);
+
+    fn next(&mut self) -> Option<(usize, u32)> {
+        self.next_const()
+    }
+}
+
+impl std::iter::FusedIterator for WordIdxMaskIter {}
+
+const fn any_set_in_range(
+    words: &[u32],
+    start: BitIndex,
+    end: BitIndex,
+) -> bool {
+    let mut iter = WordIdxMaskIter::new(start, end);
+    while let Some((word, mask)) = iter.next_const() {
+        if words[word] & mask != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+const fn all_set_in_range(
+    words: &[u32],
+    start: BitIndex,
+    end: BitIndex,
+) -> bool {
+    let mut iter = WordIdxMaskIter::new(start, end);
+    while let Some((word, mask)) = iter.next_const() {
+        if (!words[word]) & mask != 0 {
+            return false;
+        }
+    }
+    true
+}
+
+const fn count_set_in_range(
+    words: &[u32],
+    start: BitIndex,
+    end: BitIndex,
+) -> usize {
+    let mut count = 0_usize;
+    let mut iter = WordIdxMaskIter::new(start, end);
+    while let Some((word, mask)) = iter.next_const() {
+        count += (words[word] & mask).count_ones() as usize;
+    }
+    count
+}
+
+const fn set_range(words: &mut [u32], start: BitIndex, end: BitIndex) {
+    let mut iter = WordIdxMaskIter::new(start, end);
+    while let Some((word, mask)) = iter.next_const() {
+        words[word] |= mask;
+    }
+}
+
+const fn unset_range(words: &mut [u32], start: BitIndex, end: BitIndex) {
+    let mut iter = WordIdxMaskIter::new(start, end);
+    while let Some((word, mask)) = iter.next_const() {
+        words[word] &= !mask;
+    }
+}
+
+#[inline]
+fn find_next_set(
+    word_fn: impl Fn(usize) -> Option<u32>,
+    start: BitIndex,
+) -> Option<BitIndex> {
     let mut word = start.word;
     let mut mask = u32::MAX << start.bit;
-    while word < words.len() {
-        let bit = (words[word] & mask).trailing_zeros();
+    loop {
+        let bit = (word_fn(word)? & mask).trailing_zeros();
         if bit < 32 {
             return Some(BitIndex {
                 word,
@@ -152,31 +258,168 @@ fn find_next_set(words: &[u32], start: BitIndex) -> Option<BitIndex> {
         mask = u32::MAX;
         word += 1;
     }
+}
 
-    None
+fn every_nth_bit(n: usize) -> u32 {
+    assert!(0 < n && n < 32);
+    assert!(n.is_power_of_two());
+    u32::MAX / ((1 << n) - 1)
 }
 
 #[inline]
-fn find_next_unset(words: &[u32], start: BitIndex) -> BitIndex {
-    if start.word >= words.len() {
-        return start;
-    }
+fn find_small_aligned_set_range(
+    word_fn: impl Fn(usize) -> Option<u32>,
+    start: BitIndex,
+    count: usize,
+    align_mul: usize,
+    align_offset: usize,
+) -> Option<BitIndex> {
+    debug_assert!(align_mul <= 16);
+    debug_assert!(align_offset + count <= align_mul);
+    debug_assert!(count > 0);
+    let every_n = every_nth_bit(align_mul) << align_offset;
 
-    let mut word = start.word;
-    let mut mask = !(u32::MAX << start.bit);
-    while word < words.len() {
-        let bit = (words[word] | mask).trailing_ones();
-        if bit < 32 {
-            return BitIndex {
-                word,
-                bit: bit as u8,
-            };
+    let mut word_idx = start.word;
+    let mut mask = u32::MAX << start.bit;
+    loop {
+        let word = u64::from(word_fn(word_idx)? & mask);
+        let every_n_64 = u64::from(every_n);
+
+        // If every bit in a sequence is set, then adding one to the bottom
+        // bit will cause it to carry past the top bit. Carry-in for a bit
+        // is true if the bit in the addition result does not match the same
+        // bit in a ^ b. We do this in u64 to handle the case where we carry
+        // past the top bit.
+        let carry = (word + every_n_64) ^ (word ^ every_n_64);
+        let found = u32::try_from(carry >> count).unwrap() & every_n;
+
+        if found != 0 {
+            return Some(BitIndex {
+                word: word_idx,
+                bit: found.trailing_zeros() as u8,
+            });
         }
-        mask = 0;
-        word += 1;
-    }
 
-    BitIndex::from_word(words.len())
+        mask = u32::MAX;
+        word_idx += 1;
+    }
+}
+
+#[inline]
+fn find_large_aligned_set_range(
+    word_fn: impl Fn(usize) -> Option<u32>,
+    start: BitIndex,
+    count: usize,
+    align_mul: usize,
+    align_offset: usize,
+) -> Option<BitIndex> {
+    debug_assert!(count > 0);
+    debug_assert!(align_mul >= 32);
+    debug_assert!(align_offset < align_mul);
+
+    let start = start.flatten();
+    let start = if start < align_offset {
+        align_offset
+    } else {
+        (start - align_offset).next_multiple_of(align_mul) + align_offset
+    };
+
+    let word_stride = align_mul / 32;
+    let mut cur = BitIndex::from(start);
+    loop {
+        let mut fail_word_idx = None;
+        for (word_idx, mask) in WordIdxMaskIter::new(cur, cur + count) {
+            let word = word_fn(word_idx)?;
+            if (!word) & mask != 0 {
+                fail_word_idx = Some(word_idx);
+                break;
+            }
+        }
+        let Some(fail_word_idx) = fail_word_idx else {
+            return Some(cur);
+        };
+
+        cur.word += word_stride;
+
+        // If we found unset bits at fail_word, then we can't find a set
+        // range any earlier than that.
+        while cur.word < fail_word_idx {
+            cur.word += word_stride;
+        }
+    }
+}
+
+#[inline]
+fn find_aligned_set_range(
+    word_fn: impl Fn(usize) -> Option<u32>,
+    start: BitIndex,
+    count: usize,
+    align_mul: usize,
+    align_offset: usize,
+) -> Option<BitIndex> {
+    assert!(count > 0);
+    assert!(align_mul.is_power_of_two());
+    assert!(align_offset < align_mul);
+    if align_mul >= 32 {
+        find_large_aligned_set_range(
+            word_fn,
+            start,
+            count,
+            align_mul,
+            align_offset,
+        )
+    } else if align_offset + count <= align_mul {
+        find_small_aligned_set_range(
+            word_fn,
+            start,
+            count,
+            align_mul,
+            align_offset,
+        )
+    } else {
+        let search_count = align_mul - align_offset;
+        debug_assert!(search_count < count);
+
+        let mut cur = start;
+        loop {
+            let idx = find_small_aligned_set_range(
+                &word_fn,
+                cur,
+                search_count,
+                align_mul,
+                align_offset,
+            )?;
+
+            // That only checked for the first search_count bits.  Nowe we
+            // have to check for the rest.
+            let mut fail_word_idx = None;
+            for (word_idx, mask) in WordIdxMaskIter::new(idx, idx + count) {
+                let word = word_fn(word_idx)?;
+                if (!word) & mask != 0 {
+                    fail_word_idx = Some(word_idx);
+                    break;
+                }
+            }
+            let Some(fail_word_idx) = fail_word_idx else {
+                return Some(idx);
+            };
+
+            cur = idx + align_mul;
+
+            // If we found unset bits at fail_word, then we can't find a set
+            // range any earlier than that.  However, the next set range may be
+            // in words[fail_word_idx], just later in the word so we can't
+            // increment any higher.
+            if cur.word < fail_word_idx {
+                debug_assert!(align_mul <= 16);
+                debug_assert!(align_offset < 16);
+                cur = BitIndex {
+                    word: fail_word_idx,
+                    bit: align_offset as u8,
+                };
+            }
+        }
+    }
 }
 
 /// A set implemented as an array of bits, able to be used as constant data
@@ -184,7 +427,7 @@ fn find_next_unset(words: &[u32], start: BitIndex) -> BitIndex {
 /// The fixed size W is in units of 32-bit words.  This is due to a Rust
 /// restriction which prevents us from doing math on constants which size
 /// arrays.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ConstBitSet<const W: usize, K = usize> {
     words: [u32; W],
     phantom: PhantomData<K>,
@@ -215,6 +458,16 @@ impl<const W: usize, K> ConstBitSet<W, K> {
             w += 1;
         }
         true
+    }
+
+    pub const fn len(&self) -> usize {
+        let mut count = 0;
+        let mut w = 0_usize;
+        while w < W {
+            count += self.words[w].count_ones() as usize;
+            w += 1;
+        }
+        count
     }
 }
 
@@ -301,24 +554,11 @@ macro_rules! impl_const_bit_set {
                     "ConstBitSet index out of bounds",
                 );
 
-                if range.start >= range.end {
-                    return;
+                if range.start < range.end {
+                    let start = BitIndex::from_flat_index(range.start as usize);
+                    let end = BitIndex::from_flat_index(range.end as usize);
+                    set_range(&mut self.words, start, end);
                 }
-
-                let start = BitIndex::from_flat_index(range.start as usize);
-                let end = BitIndex::from_flat_index(range.end as usize);
-
-                let mut word = start.word;
-                let mut mask = u32::MAX << start.bit;
-                while word < end.word {
-                    self.words[word] |= mask;
-                    mask = u32::MAX;
-                    word += 1;
-                }
-
-                debug_assert!(word == end.word);
-                mask &= !(u32::MAX << end.bit);
-                self.words[word] |= mask;
             }
 
             pub const fn remove(&mut self, key: $K) -> bool {
@@ -484,61 +724,144 @@ impl<K: FromBitIndex> BitSet<K> {
     pub fn iter(&self) -> impl '_ + Iterator<Item = K> {
         BitSetIter::new(&self.words)
     }
+
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(K) -> bool,
+    {
+        let mut cur = BitIndex::ZERO;
+        loop {
+            let word_fn = |w| self.words.get(w).cloned();
+            let Some(set) = find_next_set(word_fn, cur) else {
+                return;
+            };
+
+            if !f(K::from_bit_index(set.into())) {
+                self.words[set.word] &= !(1_u32 << set.bit);
+            }
+
+            cur = set + 1;
+        }
+    }
 }
 
 impl BitSet<usize> {
+    /// Returns true if any bits in the given range are set
+    pub fn any_set_in_range(&self, mut range: Range<usize>) -> bool {
+        range.end = range.end.min(self.words.len() * 32);
+        any_set_in_range(&self.words, range.start.into(), range.end.into())
+    }
+
+    /// Returns true if all the bits in the given range are set.
+    /// Returns true for empty ranges.
+    pub fn all_set_in_range(&self, range: Range<usize>) -> bool {
+        if range.is_empty() {
+            true
+        } else if range.end > self.words.len() * 32 {
+            false
+        } else {
+            all_set_in_range(&self.words, range.start.into(), range.end.into())
+        }
+    }
+
+    /// Returns true if any bits in the given range are unset.
+    pub fn any_unset_in_range(&self, range: Range<usize>) -> bool {
+        !self.all_set_in_range(range)
+    }
+
+    /// Returns true if all the bits in the given range are unset.
+    /// Returns true for empty ranges.
+    pub fn all_unset_in_range(&self, range: Range<usize>) -> bool {
+        !self.any_set_in_range(range)
+    }
+
+    /// Returns the number of bits set in the given range.
+    pub fn count_set_in_range(&self, mut range: Range<usize>) -> usize {
+        range.end = range.end.min(self.words.len() * 32);
+        count_set_in_range(&self.words, range.start.into(), range.end.into())
+    }
+
+    pub fn set_range(&mut self, range: Range<usize>) {
+        if !range.is_empty() {
+            let end_m1 = BitIndex::from(range.end - 1);
+            self.reserve_words(end_m1.word + 1);
+            set_range(&mut self.words, range.start.into(), range.end.into());
+        }
+    }
+
+    pub fn unset_range(&mut self, mut range: Range<usize>) {
+        range.end = range.end.min(self.words.len() * 32);
+        unset_range(&mut self.words, range.start.into(), range.end.into());
+    }
+
+    pub fn next_set(&self, start: usize) -> Option<usize> {
+        let word_fn = |w| self.words.get(w).cloned();
+        find_next_set(word_fn, start.into()).map(BitIndex::into)
+    }
+
     pub fn next_unset(&self, start: usize) -> usize {
-        find_next_unset(&self.words, start.into()).into()
+        let word_fn = |w| {
+            // NOT the result to turn find_next_set() into find_next_unset().
+            // Letting it run past the end and returning Some(!0) ensures that
+            // we will always find an unset bit
+            Some(!self.words.get(w).cloned().unwrap_or(0))
+        };
+        find_next_set(word_fn, start.into()).unwrap().into()
+    }
+
+    /// Search for a set of `count` consecutive elements that in the set. The
+    /// found set must obey the alignment requirements specified by
+    /// align_offset and align_mul. All elements in the found set will be >=
+    /// start. Returns the least element of the found set.
+    ///
+    /// align_mul must be a power of two <= 16
+    pub fn find_aligned_set_range(
+        &self,
+        start: usize,
+        count: usize,
+        align_mul: usize,
+        align_offset: usize,
+    ) -> Option<usize> {
+        let word_fn = |w| self.words.get(w).cloned();
+        find_aligned_set_range(
+            word_fn,
+            start.into(),
+            count,
+            align_mul,
+            align_offset,
+        )
+        .map(BitIndex::into)
     }
 
     /// Search for a set of `count` consecutive elements that are not present in
     /// the set. The found set must obey the alignment requirements specified by
     /// align_offset and align_mul. All elements in the found set will be >=
-    /// start_point. Returns the least element of the found set.
+    /// start. Returns the least element of the found set.
     ///
     /// align_mul must be a power of two <= 16
     pub fn find_aligned_unset_range(
         &self,
-        start_point: usize,
+        start: usize,
         count: usize,
         align_mul: usize,
         align_offset: usize,
     ) -> usize {
-        assert!(align_mul <= 16);
-        assert!(align_offset + count <= align_mul);
-        assert!(count > 0);
-        let every_n = every_nth_bit(align_mul) << align_offset;
-
-        let mut word_idx = start_point / 32;
-        let mut mask = !(u32::MAX << (start_point % 32));
-        loop {
-            let word = mask | self.words.get(word_idx).unwrap_or(&0);
-
-            let unset_word = u64::from(!word);
-            let every_n_64 = u64::from(every_n);
-            // If every bit in a sequence is set, then adding one to the bottom
-            // bit will cause it to carry past the top bit. Carry-in for a bit
-            // is true if the bit in the addition result does not match the same
-            // bit in a ^ b. We do this in u64 to handle the case where we carry
-            // past the top bit.
-            let carry = (unset_word + every_n_64) ^ (unset_word ^ every_n_64);
-            let found = u32::try_from(carry >> count).unwrap() & every_n;
-
-            if found != 0 {
-                return word_idx * 32
-                    + usize::try_from(found.trailing_zeros()).unwrap();
-            }
-
-            word_idx += 1;
-            mask = 0;
-        }
+        let word_fn = |w| {
+            // NOT the result to turn find_aligned_set_range() into
+            // find_aligned_unset_range().  Letting it run past the end and
+            // returning Some(!0) ensures that we will always find a unset bit
+            Some(!self.words.get(w).cloned().unwrap_or(0))
+        };
+        find_aligned_set_range(
+            word_fn,
+            start.into(),
+            count,
+            align_mul,
+            align_offset,
+        )
+        .unwrap()
+        .into()
     }
-}
-
-fn every_nth_bit(n: usize) -> u32 {
-    assert!(0 < n && n < 32);
-    assert!(n.is_power_of_two());
-    u32::MAX / ((1 << n) - 1)
 }
 
 impl<K> BitSet<K> {
@@ -611,6 +934,37 @@ impl FromIterator<usize> for BitSet {
         res
     }
 }
+
+impl<K> PartialEq<BitSet<K>> for BitSet<K> {
+    fn eq(&self, other: &BitSet<K>) -> bool {
+        if self.words.len() <= other.words.len() {
+            for i in 0..self.words.len() {
+                if self.words[i] != other.words[i] {
+                    return false;
+                }
+            }
+            for i in self.words.len()..other.words.len() {
+                if other.words[i] != 0 {
+                    return false;
+                }
+            }
+        } else {
+            for i in 0..other.words.len() {
+                if self.words[i] != other.words[i] {
+                    return false;
+                }
+            }
+            for i in other.words.len()..self.words.len() {
+                if self.words[i] != 0 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+impl<K> Eq for BitSet<K> {}
 
 #[expect(clippy::len_without_is_empty)]
 pub trait BitSetStreamTrait {
@@ -806,7 +1160,8 @@ impl<'a, K: FromBitIndex> Iterator for BitSetIter<'a, K> {
     type Item = K;
 
     fn next(&mut self) -> Option<K> {
-        if let Some(idx) = find_next_set(self.words, self.idx) {
+        let word_fn = |w| self.words.get(w).cloned();
+        if let Some(idx) = find_next_set(word_fn, self.idx) {
             self.idx = idx + 1;
             Some(K::from_bit_index(idx.into()))
         } else {
@@ -863,6 +1218,131 @@ mod tests {
     }
 
     #[test]
+    fn test_any_set_in_range() {
+        let set: BitSet<usize> = Default::default();
+        assert!(!set.any_set_in_range(0..64));
+
+        let set: BitSet<usize> = [15, 31, 64].into_iter().collect();
+        assert!(!set.any_set_in_range(0..14));
+        assert!(!set.any_set_in_range(16..31));
+        assert!(!set.any_set_in_range(32..64));
+        assert!(!set.any_set_in_range(72..128));
+        assert!(set.any_set_in_range(5..16));
+        assert!(set.any_set_in_range(5..20));
+        assert!(set.any_set_in_range(15..20));
+        assert!(set.any_set_in_range(0..32));
+        assert!(set.any_set_in_range(31..33));
+        assert!(set.any_set_in_range(60..65));
+    }
+
+    #[test]
+    fn test_all_set_in_range() {
+        let mut set: BitSet<usize> = Default::default();
+        set.set_range(15..45);
+        assert!(!set.all_set_in_range(0..32));
+        assert!(set.all_set_in_range(16..24));
+        assert!(!set.all_set_in_range(30..50));
+
+        // Empty ranges return true for all_*
+        assert!(set.all_set_in_range(50..50));
+    }
+
+    #[test]
+    fn test_any_unnset_in_range() {
+        let set: BitSet<usize> = Default::default();
+        assert!(set.any_unset_in_range(0..64));
+
+        let mut set: BitSet<usize> = Default::default();
+        set.set_range(0..65);
+        for i in [15, 31, 64] {
+            set.remove(i);
+        }
+        assert!(!set.any_unset_in_range(0..14));
+        assert!(!set.any_unset_in_range(16..31));
+        assert!(!set.any_unset_in_range(32..64));
+        assert!(set.any_unset_in_range(5..16));
+        assert!(set.any_unset_in_range(5..20));
+        assert!(set.any_unset_in_range(15..20));
+        assert!(set.any_unset_in_range(0..32));
+        assert!(set.any_unset_in_range(31..33));
+        assert!(set.any_unset_in_range(60..65));
+
+        // Test past the end
+        assert!(set.any_unset_in_range(100..120));
+    }
+
+    #[test]
+    fn test_all_unset_in_range() {
+        let set: BitSet<usize> = [15, 31, 64].into_iter().collect();
+        assert!(set.all_unset_in_range(0..15));
+        assert!(set.all_unset_in_range(16..31));
+        assert!(set.all_unset_in_range(32..64));
+        assert!(!set.all_unset_in_range(0..30));
+        assert!(!set.all_unset_in_range(30..42));
+
+        // Empty ranges return true for all_*
+        assert!(set.all_unset_in_range(50..50));
+
+        // Test past the end
+        assert!(set.all_unset_in_range(100..120));
+    }
+
+    #[test]
+    fn test_count_set_in_range() {
+        let set: BitSet<usize> = [15, 16, 31, 64].into_iter().collect();
+        assert_eq!(set.count_set_in_range(0..15), 0);
+        assert_eq!(set.count_set_in_range(17..31), 0);
+        assert_eq!(set.count_set_in_range(32..64), 0);
+        assert_eq!(set.count_set_in_range(0..30), 2);
+        assert_eq!(set.count_set_in_range(30..42), 1);
+        assert_eq!(set.count_set_in_range(0..65), 4);
+
+        // Empty ranges return 0
+        assert_eq!(set.count_set_in_range(50..50), 0);
+
+        // Test past the end
+        assert_eq!(set.count_set_in_range(100..120), 0);
+    }
+
+    #[test]
+    fn test_set_range() {
+        for range in [0..4, 17..35, 32..35, 65..7] {
+            let mut set: BitSet<usize> = Default::default();
+            set.set_range(range.clone());
+            for i in 0..96 {
+                assert_eq!(set.contains(i), range.contains(&i));
+            }
+        }
+    }
+
+    #[test]
+    fn test_unset_range() {
+        for range in [0..4, 17..35, 32..35, 65..7] {
+            let mut set: BitSet<usize> = Default::default();
+            set.set_range(0..96);
+            set.unset_range(range.clone());
+            for i in 0..96 {
+                assert_eq!(set.contains(i), !range.contains(&i));
+            }
+        }
+    }
+
+    #[test]
+    fn test_iter() {
+        let bits = [0, 3, 11, 12, 13, 24, 30, 31, 32, 63, 65];
+        let mut set: BitSet<usize> = Default::default();
+        for i in &bits {
+            set.insert(*i);
+        }
+
+        let mut iter = set.iter();
+        for i in &bits {
+            assert_eq!(iter.next(), Some(*i));
+        }
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
     fn test_next_unset() {
         for test_range in
             &[0..0, 42..1337, 1337..1337, 31..32, 32..33, 63..64, 64..65]
@@ -877,6 +1357,22 @@ mod tests {
             }
             assert_eq!(set.next_unset(test_range.start), test_range.end);
         }
+    }
+
+    #[test]
+    fn test_eq() {
+        let a: BitSet<usize> = [15, 31, 64].into_iter().collect();
+        let mut b: BitSet<usize> = Default::default();
+        assert!(a != b);
+        b.insert(15);
+        b.insert(31);
+        assert!(a != b);
+        b.insert(64);
+        assert!(a == b);
+        b.insert(206);
+        assert!(a != b);
+        b.remove(206);
+        assert!(a == b);
     }
 
     #[test]
@@ -1000,27 +1496,50 @@ mod tests {
         }
     }
 
+    fn slow_find_aligned_unset_range(
+        bitset: &BitSet<usize>,
+        start: usize,
+        count: usize,
+        align_mul: usize,
+        align_offset: usize,
+    ) -> usize {
+        assert!(align_mul.is_power_of_two());
+        assert!(align_offset < align_mul);
+        let mut cur = ((start / align_mul) * align_mul) + align_offset;
+        if cur < start {
+            cur += align_mul
+        }
+        loop {
+            if bitset.all_unset_in_range(cur..(cur + count)) {
+                return cur;
+            }
+            cur += align_mul
+        }
+    }
+
     #[test]
     fn test_find_aligned_unset_range() {
-        let a: BitSet =
-            [0, 4, 5, 6, 7, 61, 128, 129, 130].into_iter().collect();
+        let a: BitSet = [0, 4, 5, 6, 7, 61, 128, 129, 130, 250]
+            .into_iter()
+            .collect();
 
-        /* (start, count, align_mul, align_offset) */
-        assert_eq!(a.find_aligned_unset_range(0, 1, 1, 0), 1);
-        assert_eq!(a.find_aligned_unset_range(4, 1, 1, 0), 8);
-        assert_eq!(a.find_aligned_unset_range(128, 1, 1, 0), 131);
-        assert_eq!(a.find_aligned_unset_range(0, 4, 4, 0), 8);
-        assert_eq!(a.find_aligned_unset_range(128, 4, 4, 0), 132);
-        assert_eq!(a.find_aligned_unset_range(0, 3, 4, 1), 1);
-        assert_eq!(a.find_aligned_unset_range(0, 3, 8, 1), 1);
-        assert_eq!(a.find_aligned_unset_range(0, 4, 8, 1), 9);
-        assert_eq!(a.find_aligned_unset_range(0, 2, 2, 0), 2);
-        assert_eq!(a.find_aligned_unset_range(2, 2, 2, 0), 2);
-        assert_eq!(a.find_aligned_unset_range(3, 2, 2, 0), 8);
-        assert_eq!(a.find_aligned_unset_range(0, 2, 4, 2), 2);
-        assert_eq!(a.find_aligned_unset_range(3, 2, 4, 2), 10);
-        assert_eq!(a.find_aligned_unset_range(40, 16, 16, 0), 64);
-        assert_eq!(a.find_aligned_unset_range(1337, 1, 1, 0), 1337);
-        assert_eq!(a.find_aligned_unset_range(161, 1, 2, 0), 162);
+        for am in [1, 2, 4, 8, 16, 32, 64] {
+            for ao in [0, 1, 2, 3, 7, 15, 29, 47] {
+                if ao >= am {
+                    continue;
+                }
+                let rem = am - ao;
+
+                for c in [1, 2, 5, 9, 17, 32, 37, rem, am, am * 2] {
+                    let mut s = 0;
+                    while s < 300 {
+                        let i = a.find_aligned_unset_range(s, c, am, ao);
+                        let j = slow_find_aligned_unset_range(&a, s, c, am, ao);
+                        assert_eq!(i, j);
+                        s = i + 1;
+                    }
+                }
+            }
+        }
     }
 }

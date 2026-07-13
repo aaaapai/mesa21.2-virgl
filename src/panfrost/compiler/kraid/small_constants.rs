@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use crate::ir::*;
+use crate::model::SmallConstantTable;
 
 fn try_fold_src(src: &mut Src, sc: &SmallConstant, sc_swz: Swizzle) -> bool {
     let Some(swz) = sc_swz.swizzle(src.swizzle) else {
@@ -13,11 +14,17 @@ fn try_fold_src(src: &mut Src, sc: &SmallConstant, sc_swz: Swizzle) -> bool {
     true
 }
 
-fn try_lower_src(src: &mut Src, sc_table: &[SmallConstant]) -> bool {
+fn try_lower_src(
+    src: &mut Src,
+    src_type: DataType,
+    sc_table: &SmallConstantTable,
+) -> bool {
     let SrcRef::Imm32(imm32) = src.src_ref else {
         return false;
     };
-    let imm_bytes_read = src.swizzle.bytes_read();
+    let imm32 = u32::from(imm32);
+
+    let imm_bytes_read = src.swizzle.bytes_read(src_type.total_bytes());
 
     if imm_bytes_read.count_ones() == 1 {
         let imm_byte = imm_bytes_read.trailing_zeros();
@@ -55,11 +62,11 @@ fn try_lower_src(src: &mut Src, sc_table: &[SmallConstant]) -> bool {
 
 impl Shader<'_> {
     pub fn lower_small_constants(&mut self) {
-        let sc_table = self.model.small_constants();
+        let sc_table = &self.model.fau().small_constants;
         for b in self.blocks.iter_mut() {
             for i in b.instrs.iter_mut() {
-                for src in i.srcs_mut() {
-                    try_lower_src(src, sc_table);
+                for (src, src_type) in i.srcs_types_mut() {
+                    try_lower_src(src, src_type, sc_table);
                 }
             }
         }

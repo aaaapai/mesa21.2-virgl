@@ -26,7 +26,7 @@ emit_swsb(const intel_device_info *devinfo, FILE *fp, gen_swsb swsb,
 
    if (swsb.regdist) {
       const char *pipe = "";
-      if (devinfo && devinfo->verx10 >= 125) {
+      if (!devinfo || devinfo->verx10 >= 125) {
          pipe = gen_pipe_to_string(swsb.pipe);
          if (!pipe)
             pipe = "?";
@@ -123,7 +123,8 @@ struct gen_printer {
       const char *const *annotations = params->annotations;
       const char *const *label_annotations = params->label_annotations;
 
-      labels = collect_labels(insts, num_insts);
+      if (!(flags & GEN_PRINT_NO_LABELS))
+         labels = collect_labels(insts, num_insts);
 
       unsigned next_label = 0;
       int next_error = 0;
@@ -427,7 +428,7 @@ private:
       case GEN_FORMAT_BASIC_THREE_SRC:
       case GEN_FORMAT_DPAS_THREE_SRC: {
          const unsigned num_sources = gen_inst_num_sources(devinfo, inst);
-         const bool has_dst = gen_inst_has_dst(inst_format, inst->opcode);
+         const bool has_dst = gen_inst_has_dst(inst->opcode);
 
          if (inst->opcode == GEN_OP_WAIT) {
             field_sep(DST_COLUMN);

@@ -119,13 +119,17 @@ struct kk_pipeline_handles {
    };
 };
 
+struct msl_compile_data {
+   char *code;
+   char *entrypoint_name;
+};
+
 struct kk_shader {
    struct vk_shader vk;
 
    struct kk_pipeline_handles pipeline;
    struct kk_shader_info info;
-   char *msl_shaders[MESA_SHADER_STAGES];
-   char *entrypoint_names[MESA_SHADER_STAGES];
+   struct msl_compile_data msl_data[MESA_SHADER_STAGES];
 };
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(kk_shader, vk.base, VkShaderEXT,

@@ -31,6 +31,7 @@ _compiler_binding_types = [
   'gl_tess_spacing',
   'gl_varying_slot',
   'gl_vert_attrib',
+  'glsl_sampler_dim',
   'glsl_type',
   'glsl_matrix_layout',
   'nir_.*',
@@ -171,6 +172,18 @@ if with_tests and get_option('b_sanitize') == 'none'
     ],
   )
 endif
+
+_libacorn_rs = static_library(
+  'acorn',
+  files('acorn/lib.rs'),
+  gnu_symbol_visibility : 'hidden',
+  rust_abi : 'rust',
+  rust_args : _compiler_rust_args,
+)
+
+idep_acorn_rs = declare_dependency(
+  link_with : _libacorn_rs,
+)
 
 idep_compiler_rs = declare_dependency(
   link_with : _libcompiler_rs,

@@ -214,7 +214,6 @@ bool cik_sdma_copy_texture(struct si_context *sctx, struct si_texture *sdst, str
                .y = 0,
                .z = 0,
             },
-         .bpp = bpp,
          .pitch = src_pitch,
          .slice_pitch = src_slice_pitch,
       };
@@ -230,7 +229,6 @@ bool cik_sdma_copy_texture(struct si_context *sctx, struct si_texture *sdst, str
                .y = 0,
                .z = 0,
             },
-         .bpp = bpp,
          .pitch = dst_pitch,
          .slice_pitch = dst_slice_pitch,
       };

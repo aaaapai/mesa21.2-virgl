@@ -79,7 +79,7 @@ to_gen_operand(
    gen_operand R;
    unsigned reg = d.reg, count = jay_num_values(d);
    unsigned offset_B = 0, grf = 0;
-   assert(!hi || d.file == GPR);
+   assert(!hi || d.file == GPR || d.file == FLAG);
 
    if (count && (d.file == GPR || d.file == UGPR)) {
       struct jay_register_block block =
@@ -95,7 +95,7 @@ to_gen_operand(
       /* Immediates have size restrictions but can zero extend */
       if (jay_type_size_bits(type) == 64) {
          type = jay_type_resize(type, 32);
-      } else if (I->op == JAY_OPCODE_BFN) {
+      } else if (jay_num_isa_srcs(I) == 3) {
          assert(jay_as_uint(d) <= UINT16_MAX);
          type = JAY_TYPE_U16;
       }
@@ -139,6 +139,11 @@ to_gen_operand(
          /* Packed floats have restrictions on mixed sizes.  Use <2>. */
          if (I->type == JAY_TYPE_F16 && jay_type_size_bits(src0_type) != 16) {
             assert(jay_num_values(d) == 1 && "must not vectorize mixed float");
+            R = gen_restride(R, 4, 2, 2);
+         }
+
+         /* bf16 destination has stride restrictions */
+         if (I->type == JAY_TYPE_BF16 && jay_num_values(d) == 1) {
             R = gen_restride(R, 4, 2, 2);
          }
       }
@@ -189,7 +194,8 @@ to_gen_operand(
        * SIMD1 instructions and are never SIMD split.
        */
       assert(simd_offs == 0 || idx >= 0);
-      unsigned offs_B = d.reg * (f->shader->dispatch_width / 8);
+      unsigned offs_B =
+         (d.reg * (f->shader->dispatch_width / 8)) + (hi ? 2 : 0);
       R = gen_flag(offs_B / 2);
    } else if (d.file == J_ADDRESS) {
       R = gen_address(d.reg);
@@ -230,7 +236,7 @@ quad_swizzle(const struct intel_device_info *devinfo,
    return gen_element_offset(devinfo, r, map[swizzle].element);
 }
 
-#define OP(jay, hw, num)      [JAY_OPCODE_##jay] = { GEN_OP_##hw, num }
+#define OP(jay, hw, num) [JAY_OPCODE_##jay] = { GEN_OP_##hw, num }
 
 static const struct {
    enum gen_opcode op;
@@ -259,6 +265,7 @@ static const struct {
    OP(DP4A_SS, DP4A, 3),
    OP(DP4A_SU, DP4A, 3),
    OP(DP4A_UU, DP4A, 3),
+   OP(DPAS, DPAS, 3),
    OP(ELSE, ELSE, 0),
    OP(ENDIF, ENDIF, 0),
    OP(EXPAND_QUAD, MOV, 2),
@@ -284,7 +291,8 @@ static const struct {
    OP(MUL, MUL, 2),
    OP(NOT, NOT, 1),
    OP(NOP, NOP, 0),
-   OP(OFFSET_PACKED_PIXEL_COORDS, ADD, 1),
+   OP(OFFSET_PACKED_PIXEL_COORDS, ADD, 2),
+   OP(COARSE_PIXEL_CORNERS, AND, 1),
    OP(OR, OR, 2),
    OP(QUAD_SWIZZLE, MOV, 1),
    OP(RELOC, MOV, 0),
@@ -299,10 +307,12 @@ static const struct {
    OP(SHR_ODD_SUBSPANS_BY_4, SHR, 1),
    OP(SHR, SHR, 2),
    OP(SHUFFLE, MOV, 2),
+   OP(VECTOR_EXTRACT, MOV, 2),
    OP(SYNC, SYNC, 1),
    OP(WHILE, WHILE, 0),
    OP(XOR, XOR, 2),
    OP(ZIP_UGPR16, MOV, 0),
+   OP(SLICE_REPACK, MOV, 1),
    /* clang-format on */
 };
 
@@ -391,9 +401,9 @@ emit(struct jay_codegen *jc,
    case JAY_OPCODE_DESWIZZLE_ODD: {
       bool hi = simd_offs == 0 ? true : jay_deswizzle_odd_src2_hi(I);
       gen->chan_offset = 0;
-      gen->src[0] = gen_byte_offset(jc->devinfo,
-                                    to_gen_operand(f, I, simd_offs, 0, false),
-                                    hi ? 64 : 0);
+      gen->src[0] =
+         gen_byte_offset(jc->devinfo, to_gen_operand(f, I, simd_offs, 0, false),
+                         hi ? 64 : 0);
       break;
    }
 
@@ -524,7 +534,18 @@ emit(struct jay_codegen *jc,
       gen->chan_offset = 0;
       gen->dst = gen_retype(gen->dst, GEN_TYPE_UW);
       gen->src[0] = gen_retype(gen->src[0], GEN_TYPE_UW);
-      gen->src[1] = gen_imm_uv(0x11100100);
+      gen->src[1] =
+         jay_is_imm(I->src[1]) ?
+            gen_imm_uv(0x11100100) :
+            gen_restride(gen_retype(gen->src[1], GEN_TYPE_UW), 0, 8, 1);
+      break;
+
+   case JAY_OPCODE_COARSE_PIXEL_CORNERS:
+      gen->exec_size = 16;
+      gen->chan_offset = 0;
+      gen->dst = gen_retype(gen->dst, GEN_TYPE_UW);
+      gen->src[0] = gen_retype(gen->src[0], GEN_TYPE_UW);
+      gen->src[1] = gen_imm_uv(0xfff00f00);
       break;
 
    case JAY_OPCODE_LANE_ID_8:
@@ -557,25 +578,58 @@ emit(struct jay_codegen *jc,
       break;
 
    case JAY_OPCODE_SHUFFLE:
-      if (idx_in_macro == 0) {
-         assert(I->src[0].file == GPR && jay_num_values(I->src[0]) == 1);
-         struct jay_register_block block =
-            jay_lookup_block(&f->shader->partition, I->src[0].reg, GPR);
+      assert(I->src[0].file == GPR && jay_num_values(I->src[0]) == 1);
+      FALLTHROUGH;
+   case JAY_OPCODE_VECTOR_EXTRACT: {
+      /* Use a dedicated address register for 1x1 indirects to avoid
+       * interfering with a0.0 and a0.2 users. This affects UGPR spilling.
+       */
+      bool VxH = !jay_is_uniform(I->src[1]);
+      unsigned addr = VxH ? 0 : 4;
 
-         unsigned offset_B =
-            (block.start_grf * jc->devinfo->grf_size) +
-            ((I->src[0].reg - block.start_gpr) * 4 * f->shader->dispatch_width);
+      if (idx_in_macro == 0) {
+         struct jay_register_block block =
+            jay_lookup_block(&f->shader->partition, I->src[0].reg,
+                             I->src[0].file);
+         unsigned reg_width =
+            4 * (I->src[0].file == UGPR ? 1 : f->shader->dispatch_width);
+         unsigned offset_B = block.start_grf * jc->devinfo->grf_size +
+                             (I->src[0].reg - block.start_gpr) * reg_width;
 
          gen->opcode = GEN_OP_ADD;
-         gen->dst = gen_address(0);
+         gen->dst = gen_address(addr);
          gen->src[0] = gen_subscript(jc->devinfo, gen->src[1], GEN_TYPE_UW, 0);
          gen->src[1] = gen_imm_uw(offset_B);
+
+         if (!VxH) {
+            /* 1x1 indirects only need a single address register */
+            gen->exec_size = 1;
+            gen->no_mask = true;
+         }
       } else {
-         gen->src[0] = gen_grf(0, 0);
+         gen->src[0] = gen_grf(0, addr);
          gen->src[0].type = GEN_TYPE_UD;
          gen->src[0].indirect = true;
-         gen->src[0].region.vstride = GEN_VSTRIDE_ONE_DIMENSIONAL;
          gen->src[0].addr_imm = 0;
+
+         if (VxH) {
+            gen->src[0].region.vstride = GEN_VSTRIDE_ONE_DIMENSIONAL;
+         } else if (I->op == JAY_OPCODE_VECTOR_EXTRACT &&
+                    I->src[0].file == GPR) {
+            gen->src[0] = gen_restride(gen->src[0],
+                                       32 / jay_type_size_bits(I->type), 1, 0);
+         } else {
+            gen->src[0] = gen_restride(gen->src[0], 0, 1, 0);
+         }
+      }
+      break;
+   }
+
+   case JAY_OPCODE_HALT:
+      if (jay_halt_predicate_all(I)) {
+         assert(I->predication);
+         gen->pred_control =
+            jc->devinfo->ver >= 20 ? GEN_PREDICATE_XE2_ALL : GEN_PREDICATE_ALLV;
       }
       break;
 
@@ -591,6 +645,45 @@ emit(struct jay_codegen *jc,
       jc->final_halt_offset = jc->num_insts - 1;
       gen->opcode = GEN_OP_HALT;
       break;
+
+   case JAY_OPCODE_DPAS: {
+      gen_reg_type acc_type = to_gen_reg_type(jay_dpas_acc_type(I));
+      gen_reg_type src_type = to_gen_reg_type(jay_dpas_src_type(I));
+
+      gen->dst = gen_retype(gen->dst, acc_type);
+      gen->src[0] = gen_retype(gen->src[0], acc_type);
+      gen->src[1] = gen_retype(gen->src[1], src_type);
+      gen->src[2] = gen_retype(gen->src[2], src_type);
+
+      gen->dpas.sdepth = jay_dpas_sdepth(I);
+      gen->dpas.rcount = jay_dpas_rcount(I);
+      gen->exec_size = jc->devinfo->ver >= 20 ? 16 : 8;
+      break;
+   }
+
+   case JAY_OPCODE_SLICE_REPACK: {
+      const unsigned elem_bits = 32 >> jay_slice_repack_factor_log2(I);
+      const unsigned unpacked_B = idx_in_macro * gen->exec_size * 4;
+      const unsigned packed_B = idx_in_macro * gen->exec_size * (elem_bits / 8);
+      gen_reg_type t = to_gen_reg_type(jay_type(JAY_TYPE_U, elem_bits));
+
+      gen_operand *unpacked = &gen->src[0];
+      gen_operand *packed = &gen->dst;
+
+      if (jay_slice_repack_unpack(I))
+         SWAP(unpacked, packed);
+
+      *packed = gen_retype(gen_byte_offset(jc->devinfo, *packed, packed_B), t);
+      *unpacked =
+         gen_retype(gen_byte_offset(jc->devinfo, *unpacked, unpacked_B), t);
+
+      if (elem_bits == 16)
+         *unpacked = gen_restride(*unpacked, 4, 2, 2);
+      else if (elem_bits == 8)
+         *unpacked = gen_restride(*unpacked, 8, 2, 4);
+
+      break;
+   }
 
    default:
       break;
@@ -660,7 +753,7 @@ jay_to_binary(jay_shader *s,
    /* TODO: Multifunction properly */
    jay_foreach_function(s, f) {
       jay_foreach_block(f, block) {
-         if (block->loop_header) {
+         if (block->physical_loop_header) {
             util_dynarray_append(&jc.loop_stack, jc.num_insts);
          }
 

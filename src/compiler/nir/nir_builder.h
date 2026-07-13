@@ -62,9 +62,9 @@ nir_builder_create(nir_function_impl *impl)
 static inline nir_builder
 nir_builder_at(nir_cursor cursor)
 {
-   nir_cf_node *current_block = &nir_cursor_current_block(cursor)->cf_node;
+   nir_block *current_block = nir_cursor_current_block(cursor);
 
-   nir_builder b = nir_builder_create(nir_cf_node_get_function(current_block));
+   nir_builder b = nir_builder_create(current_block->impl);
    b.cursor = cursor;
    return b;
 }
@@ -743,7 +743,7 @@ nir_mov_alu(nir_builder *build, nir_alu_src src, unsigned num_components)
  * but if it has to insert one to handle non-alu, it's return instead of NULL.
  */
 nir_def *
-nir_def_rewrite_uses_with_alu_src(nir_builder *build, nir_def *def, nir_alu_src src, unsigned num_components);
+nir_def_rewrite_uses_with_alu_src(nir_builder *build, nir_def *def, nir_alu_src src);
 
 /**
  * Construct a mov that reswizzles the source's components.

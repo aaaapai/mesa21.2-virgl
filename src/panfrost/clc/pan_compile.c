@@ -85,7 +85,7 @@ optimize(nir_shader *nir)
       NIR_PASS(progress, nir, nir_opt_deref);
       NIR_PASS(progress, nir, nir_opt_copy_prop_vars);
       NIR_PASS(progress, nir, nir_opt_undef);
-      NIR_PASS(progress, nir, nir_lower_undef_to_zero);
+      NIR_PASS(progress, nir, nir_lower_undef_to_zero, NULL);
 
       NIR_PASS(progress, nir, nir_opt_shrink_vectors, true);
       NIR_PASS(progress, nir, nir_opt_loop_unroll);
@@ -352,6 +352,15 @@ main(int argc, const char **argv)
          nir_shader *s = nir_precompiled_build_variant(
             libfunc, MESA_SHADER_COMPUTE, v, get_compiler_options(target_arch),
             &opt, load_kernel_input);
+
+         blake3_hasher blake3_ctx;
+         _mesa_blake3_init(&blake3_ctx);
+         _mesa_blake3_update(&blake3_ctx, &nir->info.source_blake3,
+                             sizeof(nir->info.source_blake3));
+         _mesa_blake3_update(&blake3_ctx, &libfunc->name,
+                             strlen(libfunc->name));
+         _mesa_blake3_update(&blake3_ctx, &v, sizeof(v));
+         _mesa_blake3_final(&blake3_ctx, s->info.source_blake3);
 
          uint64_t target_gpu_id = (target_arch & 0xf) << 28;
 

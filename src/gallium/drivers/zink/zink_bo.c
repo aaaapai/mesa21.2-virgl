@@ -296,7 +296,8 @@ bo_create_internal(struct zink_screen *screen,
    bo->type = ZINK_BO_REAL;
    bo->base.placement = mem_type_idx;
    bo->base.usage = flags;
-   bo->unique_id = p_atomic_inc_return(&screen->pb.next_bo_unique_id);
+   if (!bo->unique_id)
+      bo->unique_id = p_atomic_inc_return(&screen->pb.next_bo_unique_id);
 
    return bo;
 
@@ -598,7 +599,8 @@ zink_bo_create(struct zink_screen *screen, uint64_t size, unsigned alignment, en
       bo->base.size = size;
       memset(&bo->reads, 0, sizeof(bo->reads));
       memset(&bo->writes, 0, sizeof(bo->writes));
-      bo->unique_id = p_atomic_inc_return(&screen->pb.next_bo_unique_id);
+      if (!bo->unique_id)
+         bo->unique_id = p_atomic_inc_return(&screen->pb.next_bo_unique_id);
       assert(alignment <= 1 << bo->base.alignment_log2);
 
       return &bo->base;

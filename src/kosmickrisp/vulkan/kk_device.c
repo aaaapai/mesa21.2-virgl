@@ -14,7 +14,9 @@
 #include "kk_shader.h"
 
 #include "kosmickrisp/bridge/mtl_bridge.h"
+#include "kosmickrisp/bridge/ns_process_info.h"
 
+#include "kk_dispatch_cmd.h"
 #include "vk_cmd_enqueue_entrypoints.h"
 #include "vk_common_entrypoints.h"
 
@@ -238,6 +240,12 @@ kk_parse_device_environment_options(struct kk_device *dev)
       int index = atoi(list);
       dev->disabled_workarounds |= BITFIELD64_BIT(index);
    }
+
+   /* Workarounds resolved on macOS 27 */
+   if (ns_is_os_version_at_least(27, 0, 0)) {
+      dev->disabled_workarounds |= BITFIELD64_MASK(7);
+      dev->disabled_workarounds |= BITFIELD64_BIT(12);
+   }
 }
 
 static VkResult
@@ -264,8 +272,7 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
       return vk_error(pdev, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    /* Fill the dispatch table we will expose to the users */
-   vk_device_dispatch_table_from_entrypoints(
-      &dev->exposed_dispatch_table, &vk_cmd_enqueue_device_entrypoints, true);
+   dev->exposed_dispatch_table = kk_device_cmd_trampolines;
    vk_device_dispatch_table_from_entrypoints(&dev->exposed_dispatch_table,
                                              &kk_device_entrypoints, false);
    vk_device_dispatch_table_from_entrypoints(&dev->exposed_dispatch_table,

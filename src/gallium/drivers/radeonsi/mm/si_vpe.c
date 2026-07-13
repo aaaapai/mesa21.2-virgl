@@ -761,12 +761,9 @@ si_vpe_set_surface_info(struct vpe_video_processor *vpeproc,
 
    struct vpe_plane_dcc_param *dcc_param = &surface_info->dcc;
    dcc_param->enable                     = false;
-   dcc_param->src.meta_pitch             = 0;
-   dcc_param->src.independent_64b_blks   = false;
-   dcc_param->src.dcc_ind_blk            = 0;
-   dcc_param->src.meta_pitch_c           = 0;
-   dcc_param->src.independent_64b_blks_c = false;
-   dcc_param->src.dcc_ind_blk_c          = 0;
+   dcc_param->internal_dcc.dcc_indp_blk  = 0;
+   dcc_param->internal_dcc.meta_pitch    = 0;
+   dcc_param->internal_dcc.meta_offset   = 0;
 
    return VPE_STATUS_OK;
 }
@@ -921,7 +918,7 @@ si_vpe_set_stream_in_param(struct vpe_video_processor *vpeproc,
    color_adj->hue                      = 0.0;
    color_adj->saturation               = 1.0;
 
-   switch (process_properties->orientation & 0xF) {
+   switch (process_properties->orientation & 0x7) {
    case PIPE_VIDEO_VPP_ROTATION_90:
       stream->rotation = VPE_ROTATION_ANGLE_90;
       break;

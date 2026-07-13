@@ -42,19 +42,23 @@ struct var_info {
    bool simd               :1;
    bool read_by_predication:1;
    bool free_canonical     :1;
-   unsigned pad            :1;
+   bool balloted           :1;
 } PACKED;
 static_assert(sizeof(struct var_info) == 1);
 
 struct flag_ra {
    jay_builder *b;
-   BITSET_WORD *ballot_blocks;
    jay_block *block;
    struct var_info *vars;
    unsigned nr_vars;
    uint32_t flag_to_global[JAY_MAX_FLAGS];
    uint32_t flag_to_local[JAY_MAX_FLAGS];
    unsigned roundrobin;
+
+   /* Bit mask of flags that are zero in inactive lanes. These are the flags
+    * that can safely be used for ballots.
+    */
+   BITSET_DECLARE(inactive_are_0, JAY_MAX_FLAGS);
 };
 
 static jay_def
@@ -66,25 +70,16 @@ assign_flag(struct flag_ra *ra,
             bool ballot,
             jay_def *tie)
 {
-   assert(!ballot || BITSET_TEST(ra->ballot_blocks, ra->block->index));
-
    jay_def canonical = canonicalize_flag(flag);
    jay_def tmp = jay_alloc_def(ra->b, file, 1);
 
    unsigned num_flags = jay_num_regs(ra->b->shader, FLAG);
-   tmp.reg = tie ? tie->reg : ballot ? 0 : ((ra->roundrobin++) % num_flags);
-
-   /* Uniform access (via a UFLAG or an inverse-ballot) would clobber the zero
-    * for a ballot. We could refine this further but this should be ok for now.
-    */
-   if (!ballot &&
-       tmp.reg == 0 &&
-       BITSET_TEST(ra->ballot_blocks, ra->block->index)) {
-
-      assert(!tie);
-      tmp.reg = 1;
-      ra->roundrobin++;
+   if (ra->b->shader->helpers_tracked) {
+      /* Helper tracking uses the last flag by definition */
+      num_flags--;
    }
+
+   tmp.reg = tie ? tie->reg : ballot ? 0 : ((ra->roundrobin++) % num_flags);
 
    if (jay_index(canonical) < ra->nr_vars) {
       ra->vars[jay_index(canonical)] = (struct var_info) {
@@ -182,6 +177,31 @@ rewrite_without_flag(struct flag_ra *ra, jay_inst *I, unsigned s, bool in_flag)
 }
 
 static void
+legalize_ballot(struct flag_ra *ra, jay_inst *I, bool ballot)
+{
+   ra->b->cursor = jay_before_inst(I);
+
+   if (ballot && !BITSET_TEST(ra->inactive_are_0, I->cond_flag.reg)) {
+      jay_ZERO_FLAG(ra->b, I->cond_flag.reg);
+      BITSET_SET(ra->inactive_are_0, I->cond_flag.reg);
+   }
+}
+
+static void
+track_write(struct flag_ra *ra, jay_inst *I)
+{
+   /* We might be writing non-zero bits to inactive lanes */
+   if (jay_is_flag(I->dst)) {
+      BITSET_CLEAR(ra->inactive_are_0, I->dst.reg);
+   }
+
+   /* If lane 0 is inactive, UFLAG clobbers an inactive lane */
+   if (I->cond_flag.file == UFLAG) {
+      BITSET_CLEAR(ra->inactive_are_0, I->cond_flag.reg);
+   }
+}
+
+static void
 assign_block(struct flag_ra *ra)
 {
    jay_builder *b = ra->b;
@@ -192,6 +212,17 @@ assign_block(struct flag_ra *ra)
          I->op = JAY_OPCODE_MOV;
          I->type = JAY_TYPE_U32;
          I->dst = canonicalize_flag(I->dst);
+         continue;
+      } else if (I->op == JAY_OPCODE_SEND &&
+                 jay_send_skip_helpers(I) &&
+                 jay_is_no_mask(I)) {
+
+         /* jay_lower_helpers will clobber flag 0 to handle this case, see the
+          * logic there. Evict whatever was there.
+          */
+         ra->flag_to_global[0] = 0;
+         BITSET_CLEAR(ra->inactive_are_0, 0);
+         assert(!I->predication);
          continue;
       } else if (I->type == JAY_TYPE_U1) {
          /* Boolean logic turns into bitwise logic on the canonical form */
@@ -235,7 +266,7 @@ assign_block(struct flag_ra *ra)
          bool in_flag =
             ra->flag_to_global[ra->vars[index].flag] == index &&
             ((file == UFLAG) ? ra->vars[index].uflag : ra->vars[index].simd) &&
-            (!ballot || ra->vars[index].flag == 0);
+            (!ballot || BITSET_TEST(ra->inactive_are_0, ra->vars[index].flag));
 
          /* If we don't actually need the flag, we're done. */
          if (rewrite_without_flag(ra, I, s, in_flag)) {
@@ -247,12 +278,14 @@ assign_block(struct flag_ra *ra)
             jay_def tmp =
                assign_flag(ra, I->src[s], file, false, false, ballot, NULL);
 
+            legalize_ballot(ra, I, ballot);
+
             /* XXX: We need a more systematic approach to modifiers :/ */
-            b->cursor = jay_before_inst(I);
             jay_def d = I->src[s];
             d.negate = false;
-            jay_CMP(b, JAY_TYPE_U32, GEN_CONDITION_NE, tmp,
-                    canonicalize_flag(d), 0);
+            jay_inst *cmp = jay_CMP(b, JAY_TYPE_U32, GEN_CONDITION_NE, tmp,
+                                    canonicalize_flag(d), 0);
+            track_write(ra, cmp);
          }
 
          /* ...and rewrite to use the flag */
@@ -273,10 +306,12 @@ assign_block(struct flag_ra *ra)
          jay_def canonical = canonicalize_flag(I->dst);
          I->dst =
             assign_flag(ra, I->dst, I->dst.file, false, false, false, NULL);
+         track_write(ra, I);
          jay_SEL(b, JAY_TYPE_U32, canonical, ~0, 0, I->dst);
       }
 
       if (!jay_is_null(I->cond_flag)) {
+         bool balloted = ra->vars[jay_index(I->cond_flag)].balloted;
          jay_def *tie = I->predication ? jay_inst_get_predicate(I) : NULL;
          I->broadcast_flag =
             ra->vars[jay_index(I->cond_flag)].read_by_predication &&
@@ -287,7 +322,7 @@ assign_block(struct flag_ra *ra)
          jay_def canonical = canonicalize_flag(I->cond_flag);
          I->cond_flag =
             assign_flag(ra, I->cond_flag, I->cond_flag.file, I->broadcast_flag,
-                        I->op == JAY_OPCODE_CMP, false, tie);
+                        I->op == JAY_OPCODE_CMP, balloted, tie);
 
          if (I->op == JAY_OPCODE_CMP) {
             assert(jay_is_null(I->dst));
@@ -323,14 +358,12 @@ assign_block(struct flag_ra *ra)
                assign_flag(ra, cmp->cond_flag, cmp->cond_flag.file,
                            false /* broadcast */, true /* free_canonical */,
                            false /* ballot */, NULL);
+            track_write(ra, cmp);
          }
-      }
-   }
 
-   /* Ballots require zeroing the ballot flag (f0) */
-   b->cursor = jay_before_block(ra->block);
-   if (BITSET_TEST(ra->ballot_blocks, ra->block->index)) {
-      jay_ZERO_FLAG(b, 0);
+         legalize_ballot(ra, I, balloted);
+         track_write(ra, I);
+      }
    }
 }
 
@@ -374,7 +407,6 @@ jay_assign_flags(jay_shader *s)
       uint32_t nr_vars = f->ssa_alloc;
       struct var_info *map = calloc(nr_vars, sizeof(map[0]));
       uint32_t *def_to_block = calloc(nr_vars, sizeof(def_to_block));
-      BITSET_WORD *ballot_blocks = BITSET_CALLOC(f->num_blocks);
 
       jay_foreach_inst_in_func(f, block, I) {
          if (!jay_is_null(I->cond_flag)) {
@@ -393,8 +425,7 @@ jay_assign_flags(jay_shader *s)
                 jay_src_type(I, s) != JAY_TYPE_U1 &&
                 s < I->num_srcs - I->predication) {
 
-               assert(block->index < f->num_blocks);
-               BITSET_SET(ballot_blocks, block->index);
+               map[jay_index(I->src[s])].balloted = true;
             }
          }
       }
@@ -405,7 +436,6 @@ jay_assign_flags(jay_shader *s)
             .b = &b,
             .vars = map,
             .nr_vars = nr_vars,
-            .ballot_blocks = ballot_blocks,
             .block = block,
          };
 
