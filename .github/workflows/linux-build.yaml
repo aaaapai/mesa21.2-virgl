@@ -26,6 +26,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
+          # 尝试安装 libclc-22-dev，若失败则回退到 libclc-dev
+          sudo apt install -y libclc-22-dev || sudo apt install -y libclc-dev
           sudo apt install -y \
             ninja-build pkg-config \
             ccache \
