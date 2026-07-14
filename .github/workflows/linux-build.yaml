@@ -1,4 +1,4 @@
-name: Build Mesa for Linux (x86_64) with Static libc++
+name: Build Mesa for Linux (x86_64) with Static Linking
 
 on:
   workflow_dispatch:
@@ -12,10 +12,15 @@ jobs:
     steps:
       - uses: actions/checkout@main
 
+      - name: Setup LLVM 22
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 22
+
       - name: ccache
         uses: jianmingyong/ccache-action@main
         with:
-          ccache-key-prefix: ccache_mesa_linux_static_libcxx
+          ccache-key-prefix: ccache_mesa_static
           max-size: 3G
 
       - name: Install dependencies
@@ -23,8 +28,7 @@ jobs:
           sudo apt update
           sudo apt install -y \
             meson ninja-build pkg-config \
-            clang lld ccache \
-            llvm-dev libllvm-21-dev \
+            ccache \
             libc++-dev libc++abi-dev \
             libx11-dev libxext-dev libxdamage-dev libxfixes-dev libxrandr-dev \
             libxcb-glx0-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev \
@@ -53,7 +57,7 @@ jobs:
             -Dgbm=enabled \
             -Dglx=enabled \
             -Dopengl=true \
-            -Dshared-llvm=enabled \
+            -Dshared-llvm=disabled \
             -Dcpp_rtti=true \
             -Dllvm=enabled \
             -Ddefault_library=shared \
@@ -66,5 +70,5 @@ jobs:
       - name: Upload libraries
         uses: actions/upload-artifact@main
         with:
-          name: libmesa_linux_x86_64_static_libcxx
+          name: libmesa_linux_x86_64_static
           path: /tmp/build
