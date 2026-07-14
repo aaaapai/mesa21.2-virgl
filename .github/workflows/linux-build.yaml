@@ -12,17 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@main
 
-      - name: Setup LLVM 22
-        uses: ZhongRuoyu/setup-llvm@v0
-        with:
-          llvm-version: 22
-
-      - name: ccache
-        uses: jianmingyong/ccache-action@main
-        with:
-          ccache-key-prefix: ccache_mesa_static
-          max-size: 3G
-
       - name: Install dependencies
         run: |
           sudo apt update
@@ -41,6 +30,17 @@ jobs:
             libclc-22-dev libllvmspirvlib-dev \
             python3-pip
           pip3 install --upgrade meson mako
+
+      - name: Setup LLVM 22
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 22
+
+      - name: ccache
+        uses: jianmingyong/ccache-action@main
+        with:
+          ccache-key-prefix: ccache_mesa_static
+          max-size: 3G
 
       - name: Build Mesa
         run: |
