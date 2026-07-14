@@ -61,8 +61,7 @@ jobs:
             -Dcpp_rtti=true \
             -Dllvm=enabled \
             -Ddefault_library=shared \
-            -Dglvnd=true \
-            -Dlibglvnd=true
+            -Dglvnd=enabled
           meson compile -C build -j $(nproc)
           meson install -C build
           cd ..
