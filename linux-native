@@ -1,0 +1,66 @@
+[binaries]
+ar = 'llvm-ar'
+c = ['ccache', 'clang']
+cpp = ['ccache', 'clang++']
+nm = 'llvm-nm'
+llvm-config = 'llvm-config'
+ld = 'lld'
+strip = 'llvm-strip'
+pkg-config = '/usr/bin/pkg-config'
+
+[built-in options]
+c_args = [
+  '-O3',
+  '-fPIC', '-DPIC',
+  '-fwhole-program-vtables',
+  '-mllvm', '-polly',
+  '-flto=thin',
+  '-fdata-sections',
+  '-ffunction-sections',
+  '-fmerge-all-constants',
+  '-march=native',
+  '-DHAVE_STRUCT_TIMESPEC',
+  '-D_GNU_SOURCE',
+  '-pipe',
+  '-fno-semantic-interposition',
+  '-mllvm', '-polly-vectorizer=stripmine',
+  '-mllvm', '-polly-invariant-load-hoisting',
+  '-mllvm', '-polly-run-inliner',
+  '-mllvm', '-polly-run-dce',
+  '-mllvm', '-polly-detect-keep-going',
+  '-mllvm', '-polly-ast-use-context',
+  '-mllvm', '-polly-parallel',
+  '-Wno-macro-redefined',
+  '-Wno-error'
+]
+
+c_link_args = [
+  '-fuse-ld=lld',
+  '-flto=thin',
+  '-Wl,--gc-sections',
+  '-Wl,--lto-O3',
+  '-Wl,-O3',
+  '-Wl,--as-needed',
+  '-Wl,--exclude-libs,ALL'
+]
+
+cpp_args = c_args + [
+  '-stdlib=libc++',
+  '-Wno-error'
+]
+
+cpp_link_args = c_link_args + [
+  '-stdlib=libc++',
+  '-static-libc++',
+  '-static-libc++abi'
+]
+
+[properties]
+skip_sanity_check = true
+cpp_rtti = true
+
+[host_machine]
+system = 'linux'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'
