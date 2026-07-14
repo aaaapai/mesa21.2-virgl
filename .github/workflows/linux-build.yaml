@@ -11,7 +11,12 @@ jobs:
       CXX: clang++
     steps:
       - uses: actions/checkout@main
-   
+
+      - name: Setup LLVM 22
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 22
+
       - name: Install dependencies
         run: |
           sudo apt update
@@ -36,11 +41,6 @@ jobs:
           sudo dpkg -i libllvmspirvlib-22-dev_22.1.0-1ubuntu1_amd64.deb
           sudo apt-get install -f -y
 
-
-      - name: Setup LLVM 22
-        uses: ZhongRuoyu/setup-llvm@v0
-        with:
-          llvm-version: 22
 
       - name: ccache
         uses: jianmingyong/ccache-action@main
