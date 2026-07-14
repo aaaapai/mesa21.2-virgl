@@ -18,7 +18,6 @@ cpp_args = [ '-O3', '-fPIC', '-DPIC', '-fwhole-program-vtables', '-mllvm', '-pol
   '-fdata-sections',
   '-ffunction-sections',
   '-fmerge-all-constants',
-  '-march=native',
   '-DHAVE_STRUCT_TIMESPEC',
   '-D_GNU_SOURCE',
   '-pipe',
@@ -50,8 +49,11 @@ cpp_link_args = [
   '-Wl,--as-needed',
   '-Wl,--exclude-libs,ALL',
   '-stdlib=libc++',
-  '-static-libc++',
-  '-static-libc++abi']
+  '-Wl,-Bstatic',
+  '-lc++',
+  '-lc++abi',
+  '-Wl,-Bdynamic'
+]
 
 [properties]
 skip_sanity_check = true
