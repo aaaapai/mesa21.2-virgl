@@ -1,0 +1,70 @@
+name: Build Mesa for Linux (x86_64) with Static libc++
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@main
+
+      - name: ccache
+        uses: jianmingyong/ccache-action@main
+        with:
+          ccache-key-prefix: ccache_mesa_linux_static_libcxx
+          max-size: 3G
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            meson ninja-build pkg-config \
+            clang lld ccache \
+            llvm-dev libllvm-22-dev \
+            libc++-dev libc++abi-dev \
+            libx11-dev libxext-dev libxdamage-dev libxfixes-dev libxrandr-dev \
+            libxcb-glx0-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev \
+            libxshmfence-dev libxxf86vm-dev \
+            libwayland-dev wayland-protocols \
+            libdrm-dev libdrm-intel-dev \
+            libgl1-mesa-dev \
+            libvulkan-dev \
+            libelf-dev libzstd-dev libpciaccess-dev libxml2-dev libunwind-dev \
+            python3-pip
+          pip3 install mako
+
+      - name: Build Mesa
+        run: |
+          git clone --depth 1 https://gitlab.freedesktop.org/mesa/mesa.git
+          cd mesa
+          meson setup build \
+            --prefix=/tmp/build \
+            --wrap-mode=nofallback \
+            --native-file=../linux-native \
+            --buildtype release \
+            -Dplatforms=x11,wayland \
+            -Dgallium-drivers=zink,iris \
+            -Dvulkan-drivers=anv \
+            -Degl=enabled \
+            -Dgbm=enabled \
+            -Dglx=enabled \
+            -Dopengl=true \
+            -Dshared-llvm=enabled \
+            -Dcpp_rtti=true \
+            -Dllvm=enabled \
+            -Ddefault_library=shared \
+            -Dglvnd=true \
+            -Dlibglvnd=true
+          meson compile -C build -j $(nproc)
+          meson install -C build
+          cd ..
+
+      - name: Upload libraries
+        uses: actions/upload-artifact@main
+        with:
+          name: libmesa_linux_x86_64_static_libcxx
+          path: /tmp/build
