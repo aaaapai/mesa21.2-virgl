@@ -27,7 +27,7 @@ jobs:
             libvulkan-dev \
             libelf-dev libzstd-dev libpciaccess-dev libxml2-dev \
             glslang-tools \
-            libclc-22-dev libllvmspirvlib-20-dev \
+            libclc-20-dev libllvmspirvlib-20-dev \
             python3-pip
           pip3 install --upgrade meson mako
 
