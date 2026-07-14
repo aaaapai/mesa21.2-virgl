@@ -11,7 +11,7 @@ jobs:
       CXX: clang++
     steps:
       - uses: actions/checkout@main
-
+   
       - name: Install dependencies
         run: |
           sudo apt update
@@ -27,9 +27,15 @@ jobs:
             libvulkan-dev \
             libelf-dev libzstd-dev libpciaccess-dev libxml2-dev \
             glslang-tools \
-            libclc-20-dev libllvmspirvlib-20-dev \
+            libclc-20-dev \
             python3-pip
           pip3 install --upgrade meson mako
+          wget http://mirror.eu.ossplanet.net/ubuntu/ubuntu/pool/universe/s/spirv-llvm-translator-22/libllvmspirvlib22.1_22.1.0-1ubuntu1_amd64.deb
+          wget http://mirror.eu.ossplanet.net/ubuntu/ubuntu/pool/universe/s/spirv-llvm-translator-22/libllvmspirvlib-22-dev_22.1.0-1ubuntu1_amd64.deb
+          sudo dpkg -i libllvmspirvlib22.1_22.1.0-1ubuntu1_amd64.deb
+          sudo dpkg -i libllvmspirvlib-22-dev_22.1.0-1ubuntu1_amd64.deb
+          sudo apt-get install -f -y
+
 
       - name: Setup LLVM 22
         uses: ZhongRuoyu/setup-llvm@v0
