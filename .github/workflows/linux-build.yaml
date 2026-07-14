@@ -25,6 +25,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+         sudo add-apt-repository universe
          sudo apt update
          sudo apt install -y \
            ninja-build pkg-config \
