@@ -43,12 +43,10 @@ jobs:
 
       - name: Build Mesa
         run: |
-          git clone --depth 1 https://gitlab.freedesktop.org/mesa/mesa.git
-          cd mesa
           meson setup build \
             --prefix=/tmp/build \
             --wrap-mode=nofallback \
-            --native-file=../linux-native \
+            --native-file=linux-native \
             --buildtype release \
             -Dplatforms=x11,wayland \
             -Dgallium-drivers=zink,iris \
@@ -64,7 +62,6 @@ jobs:
             -Dglvnd=enabled
           meson compile -C build -j $(nproc)
           meson install -C build
-          cd ..
 
       - name: Upload libraries
         uses: actions/upload-artifact@main
