@@ -55,7 +55,7 @@ jobs:
             -Dvulkan-drivers=intel \
             -Degl=enabled \
             -Dgbm=enabled \
-            -Dglx=enabled \
+            -Dglx=dri \
             -Dopengl=true \
             -Dshared-llvm=disabled \
             -Dcpp_rtti=true \
