@@ -37,7 +37,7 @@ jobs:
             libdrm-dev \
             libgl1-mesa-dev \
             libvulkan-dev \
-            libelf-dev libzstd-dev libpciaccess-dev libxml2-dev libunwind-dev \
+            libelf-dev libzstd-dev libpciaccess-dev libxml2-dev \
             python3-pip
           pip3 install mako
 
