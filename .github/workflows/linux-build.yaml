@@ -67,8 +67,7 @@ jobs:
             -Dllvm=enabled \
             -Ddefault_library=shared \
             -Dglvnd=enabled \
-            -Dgallium-rusticl=false \
-            -Dspirv-tools=disabled
+            -Dgallium-rusticl=false
           meson compile -C build -j $(nproc)
           meson install -C build
 
