@@ -34,7 +34,7 @@ jobs:
             libxcb-glx0-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev \
             libxshmfence-dev libxxf86vm-dev \
             libwayland-dev wayland-protocols \
-            libdrm-dev libclc-22-dev \
+            libdrm-dev \
             libgl1-mesa-dev \
             libvulkan-dev \
             libelf-dev libzstd-dev libpciaccess-dev libxml2-dev \
@@ -60,7 +60,79 @@ jobs:
             -Dcpp_rtti=true \
             -Dllvm=enabled \
             -Ddefault_library=shared \
-            -Dglvnd=enabled
+            -Dglvnd=enabled \
+            -Dgallium-rusticl=false
+          meson compile -C build -j $(nproc)
+          meson install -C build
+
+      - name: Upload libraries
+        uses: actions/upload-artifact@main
+        with:
+          name: libmesa_linux_x86_64_static
+          path: /tmp/builname: Build Mesa for Linux (x86_64) with Static Linking
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@main
+
+      - name: Setup LLVM 22
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 22
+
+      - name: ccache
+        uses: jianmingyong/ccache-action@main
+        with:
+          ccache-key-prefix: ccache_mesa_static
+          max-size: 3G
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            ninja-build pkg-config \
+            ccache \
+            libc++-dev libc++abi-dev \
+            libx11-dev libxext-dev libxdamage-dev libxfixes-dev libxrandr-dev \
+            libxcb-glx0-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev \
+            libxshmfence-dev libxxf86vm-dev \
+            libwayland-dev wayland-protocols \
+            libdrm-dev \
+            libgl1-mesa-dev \
+            libvulkan-dev \
+            libelf-dev libzstd-dev libpciaccess-dev libxml2-dev \
+            glslang-tools \
+            python3-pip
+          pip3 install --upgrade meson mako
+
+      - name: Build Mesa
+        run: |
+          meson setup build \
+            --prefix=/tmp/build \
+            --wrap-mode=nofallback \
+            --native-file=linux-native \
+            --buildtype release \
+            -Dplatforms=x11,wayland \
+            -Dgallium-drivers=zink,iris \
+            -Dvulkan-drivers=intel \
+            -Degl=enabled \
+            -Dgbm=enabled \
+            -Dglx=dri \
+            -Dopengl=true \
+            -Dshared-llvm=disabled \
+            -Dcpp_rtti=true \
+            -Dllvm=enabled \
+            -Ddefault_library=shared \
+            -Dglvnd=enabled \
+            -Dgallium-rusticl=false
           meson compile -C build -j $(nproc)
           meson install -C build
 
