@@ -44,12 +44,40 @@ c_link_args = [
   '-Wl,--exclude-libs,ALL'
 ]
 
-cpp_args = c_args + [
-  '-stdlib=libc++',
-  '-Wno-error'
+cpp_args = [
+  '-O3',
+  '-fPIC', '-DPIC',
+  '-fwhole-program-vtables',
+  '-mllvm', '-polly',
+  '-flto=thin',
+  '-fdata-sections',
+  '-ffunction-sections',
+  '-fmerge-all-constants',
+  '-march=native',
+  '-DHAVE_STRUCT_TIMESPEC',
+  '-D_GNU_SOURCE',
+  '-pipe',
+  '-fno-semantic-interposition',
+  '-mllvm', '-polly-vectorizer=stripmine',
+  '-mllvm', '-polly-invariant-load-hoisting',
+  '-mllvm', '-polly-run-inliner',
+  '-mllvm', '-polly-run-dce',
+  '-mllvm', '-polly-detect-keep-going',
+  '-mllvm', '-polly-ast-use-context',
+  '-mllvm', '-polly-parallel',
+  '-Wno-macro-redefined',
+  '-Wno-error',
+  '-stdlib=libc++'
 ]
 
-cpp_link_args = c_link_args + [
+cpp_link_args = [
+  '-fuse-ld=lld',
+  '-flto=thin',
+  '-Wl,--gc-sections',
+  '-Wl,--lto-O3',
+  '-Wl,-O3',
+  '-Wl,--as-needed',
+  '-Wl,--exclude-libs,ALL',
   '-stdlib=libc++',
   '-static-libc++',
   '-static-libc++abi'
