@@ -26,7 +26,6 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          # 移除 meson（将用 pip 安装），保留其他依赖
           sudo apt install -y \
             ninja-build pkg-config \
             ccache \
@@ -40,7 +39,6 @@ jobs:
             libvulkan-dev \
             libelf-dev libzstd-dev libpciaccess-dev libxml2-dev \
             python3-pip
-          # 安装最新 Meson 和 Mako
           pip3 install --upgrade meson mako
 
       - name: Build Mesa
@@ -54,7 +52,7 @@ jobs:
             --buildtype release \
             -Dplatforms=x11,wayland \
             -Dgallium-drivers=zink,iris \
-            -Dvulkan-drivers=anv \
+            -Dvulkan-drivers=intel \
             -Degl=enabled \
             -Dgbm=enabled \
             -Dglx=enabled \
