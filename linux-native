@@ -52,8 +52,7 @@ cpp_link_args = [
   '-Wl,-Bstatic',
   '-lc++',
   '-lc++abi',
-  '-Wl,-Bdynamic'
-]
+  '-Wl,-Bdynamic']
 
 [properties]
 skip_sanity_check = true
